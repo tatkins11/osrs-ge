@@ -36,6 +36,17 @@ export function Controls({ filters, setFilters }: { filters: Filters; setFilters
           onChange={(e) => setFilters({ ...filters, minRoi: (Number(e.target.value) || 0) / 100 })}
         />
       </div>
+      <div className="ctrl small" title="Invest tab: minimum 0-100 value-buy confidence">
+        <label>Min conf</label>
+        <input value={filters.minConfidence} onChange={upd("minConfidence")} />
+      </div>
+      <div className="ctrl small" title="Invest tab: minimum % below the established fair-value level">
+        <label>Min disc %</label>
+        <input
+          value={+(filters.minDiscount * 100).toFixed(0)}
+          onChange={(e) => setFilters({ ...filters, minDiscount: (Number(e.target.value) || 0) / 100 })}
+        />
+      </div>
       <div className="ctrl small">
         <label>Z buy ≤</label>
         <input value={filters.zBuy} onChange={upd("zBuy")} />
