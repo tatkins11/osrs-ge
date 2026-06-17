@@ -36,6 +36,7 @@ from .signals import (
     full_table,
     market_signals,
     reversion_table,
+    volume_table,
 )
 from .tax import EXEMPT_ITEM_NAMES
 
@@ -61,6 +62,7 @@ def get_thresholds(
     min_price: int = Query(1_000, ge=0),
     max_price: int = Query(2_147_483_647, ge=0),
     crash_pct: float = Query(0.18, gt=0, lt=1),
+    vol_spike: float = Query(3.0, gt=1),
     z_buy: float = Query(-1.5),
     z_sell: float = Query(1.5),
     max_alloc_frac: float = Query(0.15, gt=0, le=1),
@@ -75,6 +77,7 @@ def get_thresholds(
         min_price=min_price,
         max_price=max_price,
         crash_pct=crash_pct,
+        vol_spike=vol_spike,
         z_buy=z_buy,
         z_sell=z_sell,
         bankroll=bankroll,
@@ -122,6 +125,12 @@ def signals_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Quer
 @app.get("/api/crashes")
 def crashes_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1, le=2000)) -> list[dict]:
     return crash_table(th, limit=limit)
+
+
+@app.get("/api/volume")
+def volume_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1, le=2000)) -> list[dict]:
+    """Items with unusual recent volume — an early-warning 'in play' screen."""
+    return volume_table(th, limit=limit)
 
 
 @app.get("/api/sectors")

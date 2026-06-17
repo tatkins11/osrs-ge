@@ -41,6 +41,7 @@ class Thresholds:
     max_price: int = 2_147_483_647            # price-range ceiling (default = no cap)
     crash_pct: float = 0.18                   # crash = this far below the established (7d median) level
     crash_recover_to: float = 0.95            # recovery target as a fraction of the established level
+    vol_spike: float = 3.0                    # "unusual volume": last 24h >= this multiple of a typical day
     z_buy: float = -1.5
     z_strong_buy: float = -2.5
     z_sell: float = 1.5
@@ -214,7 +215,7 @@ TABLE_COLS = [
     "buy_price", "sell_price", "mid",
     "tax", "gross_margin", "net_margin", "roi",
     "profit_per_cycle", "realistic_profit", "units_per_4h", "sugg_units", "sugg_capital", "sugg_profit", "affordable",
-    "high_vol", "low_vol", "vol_side", "vol_daily_7d", "margin_uptime", "margin_median_7d", "price_age_min",
+    "high_vol", "low_vol", "vol_side", "vol_daily_7d", "vol_24h", "vol_ratio", "chg_24h", "margin_uptime", "margin_median_7d", "price_age_min",
     "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "mr_exp_profit", "confidence",
     "established", "drawdown", "crash_target", "crash_exp_margin", "crash_exp_roi", "crash_exp_profit", "is_crash",
@@ -255,6 +256,24 @@ def crash_table(th: Thresholds | None = None, con=None, limit: int = 100) -> lis
         return []
     d = d[d["is_crash"] & (d["crash_exp_profit"].fillna(0) >= th.min_profit)]
     d = d.sort_values("crash_exp_profit", ascending=False).head(limit)
+    return _records(d, TABLE_COLS)
+
+
+def volume_table(th: Thresholds | None = None, con=None, limit: int = 100) -> list[dict]:
+    """Items 'in play': last-24h volume >= vol_spike x a typical day. An early-warning
+    screen (news / meta shift / manipulation), not a standalone buy signal — chg_24h
+    shows which way it's moving so far."""
+    th = th or Thresholds()
+    d = market_signals(th, con)
+    if d.empty:
+        return []
+    d = d[
+        (d["vol_ratio"].fillna(0) >= th.vol_spike)
+        & (d["vol_daily_7d"].fillna(0) >= 100)
+        & (d["mid"].fillna(0) >= th.min_price)
+        & (d["mid"].fillna(0) <= th.max_price)
+    ]
+    d = d.sort_values("vol_ratio", ascending=False).head(limit)
     return _records(d, TABLE_COLS)
 
 

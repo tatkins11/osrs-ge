@@ -22,6 +22,9 @@ export interface Row {
   low_vol?: number | null;
   vol_side?: number | null;
   vol_daily_7d?: number | null;
+  vol_24h?: number | null;
+  vol_ratio?: number | null;
+  chg_24h?: number | null;
   price_age_min?: number | null;
   mean_7d?: number | null;
   sd_7d?: number | null;
@@ -127,6 +130,7 @@ export const getFlips = (f: Filters, limit = 250) => get<Row[]>(`/api/flips?${qs
 export const getSignals = (f: Filters, limit = 250) => get<Row[]>(`/api/signals?${qs(f)}&limit=${limit}`);
 export const getItems = (f: Filters) => get<Row[]>(`/api/items?${qs(f)}`);
 export const getCrashes = (f: Filters, limit = 200) => get<Row[]>(`/api/crashes?${qs(f)}&limit=${limit}`);
+export const getVolume = (f: Filters, limit = 200) => get<Row[]>(`/api/volume?${qs(f)}&limit=${limit}`);
 export const getItem = (id: number, f: Filters) => get<ItemDetail>(`/api/item/${id}?${qs(f)}`);
 export const getItemSeries = (id: number, timestep: string) =>
   get<{ timestep: string; series: SeriesPoint[] }>(`/api/item/${id}/series?timestep=${encodeURIComponent(timestep)}`);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getCrashes, getFlips, getItems, getMeta, getSectors, getSignals, type Filters, type Meta, type Row, type SectorsResponse } from "./api";
+import { getCrashes, getFlips, getItems, getMeta, getSectors, getSignals, getVolume, type Filters, type Meta, type Row, type SectorsResponse } from "./api";
 import { gpShort } from "./format";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
@@ -8,8 +8,9 @@ import { MarketTable } from "./components/MarketTable";
 import { Portfolio } from "./components/Portfolio";
 import { SectorGrid } from "./components/SectorGrid";
 import { SectorPanel } from "./components/SectorPanel";
+import { VolumeTable } from "./components/VolumeTable";
 
-type Tab = "flips" | "signals" | "crashes" | "sectors" | "all" | "portfolio";
+type Tab = "flips" | "signals" | "crashes" | "movers" | "sectors" | "all" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -27,6 +28,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "flips", label: "Flips" },
   { id: "signals", label: "Signals" },
   { id: "crashes", label: "Crashes" },
+  { id: "movers", label: "Movers" },
   { id: "sectors", label: "Sectors" },
   { id: "all", label: "All items" },
   { id: "portfolio", label: "Portfolio" },
@@ -74,6 +76,7 @@ export default function App() {
         tab === "flips" ? getFlips(filters)
         : tab === "signals" ? getSignals(filters)
         : tab === "crashes" ? getCrashes(filters)
+        : tab === "movers" ? getVolume(filters)
         : getItems(filters);
       req
         .then((r) => {
@@ -195,8 +198,17 @@ export default function App() {
                   "Buy now", place a sell offer near "Target".
                 </div>
               )}
+              {tab === "movers" && (
+                <div className="exp-banner">
+                  Unusual volume — items trading well above their normal daily volume (news, a meta shift, or
+                  manipulation). An early-warning watchlist, <b>not a buy signal</b>: check the 24h change for
+                  direction, then open the item to dig in.
+                </div>
+              )}
               {tab === "crashes" ? (
                 <CrashTable rows={shown} selectedId={selected} onSelect={setSelected} />
+              ) : tab === "movers" ? (
+                <VolumeTable rows={shown} selectedId={selected} onSelect={setSelected} />
               ) : (
                 <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
               )}

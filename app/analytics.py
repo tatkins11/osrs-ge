@@ -49,6 +49,8 @@ SELECT
     max(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 30 DAY) AS max_30d,
     avg(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 30 DAY) AS mean_30d,
     avg(b.vol)         FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS vol_hourly_7d,
+    sum(b.vol)         FILTER (WHERE b.ts >= mx.t - INTERVAL 24 HOUR) AS vol_24h,
+    arg_max(b.mid, b.ts) FILTER (WHERE b.ts <= mx.t - INTERVAL 24 HOUR) AS mid_1d_ago,
     -- margin persistence: fraction of the past week the flip was profitable, and its typical size
     avg(CASE WHEN b.flip_margin > 0 THEN 1.0 ELSE 0.0 END) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_uptime,
     median(b.flip_margin) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_median_7d,
@@ -102,6 +104,12 @@ def market_table(con=None, bankroll: int = DEFAULT_BANKROLL) -> pd.DataFrame:
     df["volatility_7d"] = np.where(df["mean_7d"] > 0, sd / df["mean_7d"], np.nan)
     df["vol_hourly_7d"] = df["vol_hourly_7d"].astype("float64")
     df["vol_daily_7d"] = df["vol_hourly_7d"] * 24.0
+
+    # unusual-volume: last 24h traded vs a typical day; + the 24h price change for direction
+    df["vol_24h"] = df["vol_24h"].astype("float64")
+    df["vol_ratio"] = np.where(df["vol_daily_7d"] > 0, df["vol_24h"] / df["vol_daily_7d"], np.nan)
+    md1 = df["mid_1d_ago"].astype("float64")
+    df["chg_24h"] = np.where(md1 > 0, (df["mid"] - md1) / md1, np.nan)
 
     now = pd.Timestamp(utcnow())
     last_trade = df[["high_time", "low_time"]].max(axis=1)
