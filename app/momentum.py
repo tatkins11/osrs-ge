@@ -47,30 +47,36 @@ def _load(con, timestep: str) -> pd.DataFrame:
     ).df()
 
 
-def backtest_item(mid, hi, lo, ma_window, entry_buf, stop_pct, max_hold,
-                  exempt, fill="spread") -> list[dict]:
+def backtest_item(mid, hi, lo, window, entry_buf, stop_pct, max_hold,
+                  exempt, fill="spread", mode="ma") -> list[dict]:
+    """mode="ma": enter when price > MA*(1+buf), exit on dip below MA / stop / timeout
+       mode="breakout": enter on a new `window`-bar high, HOLD through dips (exit only
+       on stop / timeout) -- tests "winners keep winning" without MA-whipsaw."""
     n = len(mid)
-    if n < ma_window + 5:
+    if n < window + 5:
         return []
     s = pd.Series(mid, dtype="float64")
-    ma = s.rolling(ma_window, min_periods=max(3, ma_window // 2)).mean().to_numpy()
+    mp = max(3, window // 2)
+    ma = s.rolling(window, min_periods=mp).mean().to_numpy()
+    prior_high = s.shift(1).rolling(window, min_periods=mp).max().to_numpy()
 
     trades: list[dict] = []
     in_pos = False
     entry_i = entry_mid = buy_p = 0.0
     for i in range(n):
-        if np.isnan(ma[i]) or ma[i] <= 0:
+        ref = ma[i] if mode == "ma" else prior_high[i]
+        if np.isnan(ref) or ref <= 0:
             continue
         if not in_pos:
-            # enter once price is clearly above the trend line (buffer avoids whipsaw churn)
-            if mid[i] > ma[i] * (1 + entry_buf):
+            enter = (mid[i] > ma[i] * (1 + entry_buf)) if mode == "ma" else (mid[i] >= prior_high[i])
+            if enter:
                 in_pos = True
                 entry_i, entry_mid = i, mid[i]
                 buy_p = hi[i] if (fill == "spread" and not np.isnan(hi[i])) else mid[i]
         else:
             hold = i - entry_i
             reason = ""
-            if mid[i] < ma[i]:
+            if mode == "ma" and not np.isnan(ma[i]) and mid[i] < ma[i]:
                 reason = "trend_break"
             elif mid[i] <= entry_mid * (1 - stop_pct):
                 reason = "stop"
@@ -84,8 +90,8 @@ def backtest_item(mid, hi, lo, ma_window, entry_buf, stop_pct, max_hold,
     return trades
 
 
-def run(timestep="24h", ma_window=20, entry_buf=0.02, stop_pct=0.15, max_hold=60,
-        fill="spread", min_gp_vol=50_000_000.0, min_price=1000.0,
+def run(timestep="24h", window=20, entry_buf=0.02, stop_pct=0.15, max_hold=60,
+        fill="spread", mode="ma", min_gp_vol=50_000_000.0, min_price=1000.0,
         hist=None, items=None, con=None) -> pd.DataFrame:
     if hist is None or items is None:
         own = con is None
@@ -106,8 +112,8 @@ def run(timestep="24h", ma_window=20, entry_buf=0.02, stop_pct=0.15, max_hold=60
             continue
         exempt = bool(items.loc[iid, "exempt"]) if iid in items.index else False
         for t in backtest_item(g["mid"].to_numpy(float), g["avg_high"].to_numpy(float),
-                               g["avg_low"].to_numpy(float), ma_window, entry_buf,
-                               stop_pct, max_hold, exempt, fill):
+                               g["avg_low"].to_numpy(float), window, entry_buf,
+                               stop_pct, max_hold, exempt, fill, mode):
             t["item_id"] = int(iid)
             t["name"] = items.loc[iid, "name"] if iid in items.index else str(iid)
             rows.append(t)
@@ -144,6 +150,7 @@ def main() -> None:
     ap.add_argument("--stop-pct", type=float, default=0.15)
     ap.add_argument("--max-hold", type=int, default=60)
     ap.add_argument("--fill", default="spread", choices=["spread", "mid"])
+    ap.add_argument("--mode", default="ma", choices=["ma", "breakout"])
     ap.add_argument("--min-gp-vol", type=float, default=50_000_000.0)
     ap.add_argument("--min-price", type=float, default=1000.0)
     ap.add_argument("--sweep", action="store_true")
@@ -158,9 +165,9 @@ def main() -> None:
         con.close()
 
     base = dict(timestep=args.timestep, entry_buf=args.entry_buf, stop_pct=args.stop_pct,
-                max_hold=args.max_hold, fill=args.fill, min_gp_vol=args.min_gp_vol,
+                max_hold=args.max_hold, fill=args.fill, mode=args.mode, min_gp_vol=args.min_gp_vol,
                 min_price=args.min_price, hist=hist, items=items)
-    print(f"Momentum (trend-following) on {args.timestep} -- fill={args.fill} "
+    print(f"Momentum mode={args.mode} on {args.timestep} -- fill={args.fill} "
           f"({'CONSERVATIVE: pay the spread' if args.fill == 'spread' else 'optimistic: mid'}), "
           f"entry_buf {args.entry_buf}, stop {args.stop_pct}, max_hold {args.max_hold}; "
           f"liquid >= {args.min_gp_vol:,.0f} gp/day, price >= {args.min_price:,.0f}.\n")
@@ -168,7 +175,7 @@ def main() -> None:
     if args.sweep:
         print(f"{'MA win':>7}{'trades':>8}{'items':>7}{'win':>8}{'avg ret':>9}{'median':>9}{'med days':>10}{'brk%':>7}{'PF':>7}")
         for mw in (7, 14, 20, 30, 50):
-            s = summarize(run(ma_window=mw, **base), tsh)
+            s = summarize(run(window=mw, **base), tsh)
             if s["trades"]:
                 pf = "inf" if s["profit_factor"] == float("inf") else f"{s['profit_factor']:.2f}"
                 print(f"{mw:>7}{s['trades']:>8}{s['items']:>7}{_pct(s['win_rate']):>8}{_pct(s['avg_return']):>9}"
@@ -177,11 +184,11 @@ def main() -> None:
                 print(f"{mw:>7}{0:>8}")
         return
 
-    s = summarize(run(ma_window=args.ma_window, **base), tsh)
+    s = summarize(run(window=args.ma_window, **base), tsh)
     if not s["trades"]:
         print("No trades.")
         return
-    print(f"MA {args.ma_window}: trades {s['trades']} / {s['items']} items | win {_pct(s['win_rate'])} | "
+    print(f"window {args.ma_window}: trades {s['trades']} / {s['items']} items | win {_pct(s['win_rate'])} | "
           f"avg {_pct(s['avg_return'])} median {_pct(s['median_return'])} | hold {s['median_hold_days']:.1f}d | "
           f"PF {s['profit_factor']:.2f}")
 
