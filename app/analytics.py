@@ -133,7 +133,7 @@ def add_indicators(series: pd.DataFrame, window: int = 168, rsi_period: int = 14
     """Add mid, moving average, Bollinger bands, z-score and RSI. ``window`` in rows
     (168 hourly rows == 7 days)."""
     s = series.sort_values("ts").reset_index(drop=True).copy()
-    s["mid"] = (s["avg_high"] + s["avg_low"]) / 2.0
+    s["mid"] = (s["avg_high"].astype("float64") + s["avg_low"].astype("float64")) / 2.0
     minp = max(2, window // 4)
     s["ma"] = s["mid"].rolling(window, min_periods=minp).mean()
     s["sd"] = s["mid"].rolling(window, min_periods=minp).std()
@@ -148,7 +148,7 @@ def hour_profile(series: pd.DataFrame) -> pd.DataFrame:
     """Average % deviation from each day's mean, grouped by UTC hour.
     Negative == historically cheap hour (good to buy); positive == expensive."""
     s = series.copy()
-    s["mid"] = (s["avg_high"] + s["avg_low"]) / 2.0
+    s["mid"] = (s["avg_high"].astype("float64") + s["avg_low"].astype("float64")) / 2.0
     s["day"] = s["ts"].dt.normalize()
     daily_mean = s.groupby("day")["mid"].transform("mean")
     s["dev"] = np.where(daily_mean > 0, s["mid"] / daily_mean - 1.0, np.nan)
@@ -160,7 +160,7 @@ def hour_profile(series: pd.DataFrame) -> pd.DataFrame:
 def dow_profile(series: pd.DataFrame) -> pd.DataFrame:
     """Average % deviation from a trailing weekly mean, grouped by day of week (0=Mon)."""
     s = series.sort_values("ts").copy()
-    s["mid"] = (s["avg_high"] + s["avg_low"]) / 2.0
+    s["mid"] = (s["avg_high"].astype("float64") + s["avg_low"].astype("float64")) / 2.0
     weekly_mean = s["mid"].rolling(168, min_periods=24).mean()
     s["dev"] = np.where(weekly_mean > 0, s["mid"] / weekly_mean - 1.0, np.nan)
     s["dow"] = s["ts"].dt.dayofweek
@@ -298,7 +298,7 @@ def _mid_series(hist: pd.DataFrame) -> pd.Series:
     if hist is None or hist.empty:
         return pd.Series(dtype="float64")
     s = hist.sort_values("ts").copy()
-    s["mid"] = (s["avg_high"] + s["avg_low"]) / 2.0
+    s["mid"] = (s["avg_high"].astype("float64") + s["avg_low"].astype("float64")) / 2.0
     return s.dropna(subset=["mid"]).set_index("ts")["mid"]
 
 
