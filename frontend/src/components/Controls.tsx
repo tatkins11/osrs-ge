@@ -1,5 +1,6 @@
 import type { ChangeEvent } from "react";
 import type { Filters } from "../api";
+import { PriceRange } from "./PriceRange";
 
 export function Controls({ filters, setFilters }: { filters: Filters; setFilters: (f: Filters) => void }) {
   const upd = (k: keyof Filters) => (e: ChangeEvent<HTMLInputElement>) =>
@@ -15,10 +16,11 @@ export function Controls({ filters, setFilters }: { filters: Filters; setFilters
         <label>Min profit (gp)</label>
         <input value={filters.minProfit} onChange={upd("minProfit")} />
       </div>
-      <div className="ctrl small">
-        <label>Min price</label>
-        <input value={filters.minPrice} onChange={upd("minPrice")} />
-      </div>
+      <PriceRange
+        minPrice={filters.minPrice}
+        maxPrice={filters.maxPrice}
+        onChange={(min, max) => setFilters({ ...filters, minPrice: min, maxPrice: max })}
+      />
       <div className="ctrl small">
         <label>Min vol</label>
         <input value={filters.minVolume} onChange={upd("minVolume")} />

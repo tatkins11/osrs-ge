@@ -38,6 +38,7 @@ class Thresholds:
     min_roi: float = 0.004                    # 0.4% after tax
     min_profit: int = 500_000                 # min profit per trade (bankroll+limit sized)
     min_price: int = 1_000                    # skip low-value junk below this price
+    max_price: int = 2_147_483_647            # price-range ceiling (default = no cap)
     crash_pct: float = 0.18                   # crash = this far below the established (7d median) level
     crash_recover_to: float = 0.95            # recovery target as a fraction of the established level
     z_buy: float = -1.5
@@ -106,13 +107,14 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     d["flip_ok"] = (
         d["tradeable"]
         & (buy >= th.min_price)
+        & (buy <= th.max_price)
         & (d["net_margin"] >= th.min_net_margin)
         & (d["roi"] >= th.min_roi)
         & (d["realistic_profit"].fillna(0) >= th.min_profit)
     )
 
     # Mean-reversion signals only on liquid, non-junk items.
-    eligible = d["tradeable"] & (d["mid"].fillna(0) >= th.min_price)
+    eligible = d["tradeable"] & (d["mid"].fillna(0) >= th.min_price) & (d["mid"].fillna(0) <= th.max_price)
     z = d["z_7d"]
     conditions = [
         ~eligible,
@@ -159,6 +161,7 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     d["is_crash"] = (
         d["tradeable"]
         & (d["mid"].fillna(0) >= th.min_price)
+        & (d["mid"].fillna(0) <= th.max_price)
         & (d["drawdown"] <= -th.crash_pct)
     )
     crash_buy = d["sell_price"].astype("float64")                 # current insta-buy (what you pay)
@@ -256,8 +259,13 @@ def crash_table(th: Thresholds | None = None, con=None, limit: int = 100) -> lis
 
 
 def full_table(th: Thresholds | None = None, con=None) -> list[dict]:
+    th = th or Thresholds()
     d = market_signals(th, con)
-    return _records(d, TABLE_COLS) if not d.empty else []
+    if d.empty:
+        return []
+    buy = d["buy_price"].fillna(0)
+    d = d[(buy >= th.min_price) & (buy <= th.max_price)]
+    return _records(d, TABLE_COLS)
 
 
 def _fmt(n) -> str:

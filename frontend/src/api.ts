@@ -97,6 +97,7 @@ export interface Filters {
   minRoi: number;
   minProfit: number;
   minPrice: number;
+  maxPrice: number;
   zBuy: number;
   zSell: number;
 }
@@ -109,6 +110,7 @@ function qs(f: Filters): string {
     min_roi: String(f.minRoi),
     min_profit: String(f.minProfit),
     min_price: String(f.minPrice),
+    max_price: String(f.maxPrice),
     z_buy: String(f.zBuy),
     z_sell: String(f.zSell),
   }).toString();

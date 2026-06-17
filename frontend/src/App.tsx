@@ -18,6 +18,7 @@ const DEFAULT_FILTERS: Filters = {
   minRoi: 0.004,
   minProfit: 500_000,
   minPrice: 1_000,
+  maxPrice: 2_147_483_647,
   zBuy: -1.5,
   zSell: 1.5,
 };
