@@ -53,7 +53,8 @@ app.add_middleware(
 def get_thresholds(
     bankroll: int = Query(DEFAULT_BANKROLL, ge=0),
     min_volume: int = Query(DEFAULT_MIN_VOLUME, ge=0),
-    max_age_min: float = Query(90.0, ge=0),
+    min_gp_volume: int = Query(25_000_000, ge=0),
+    max_age_min: float = Query(360.0, ge=0),
     min_margin: int = Query(DEFAULT_MIN_MARGIN),
     min_roi: float = Query(0.004),
     min_profit: int = Query(500_000, ge=0),
@@ -65,6 +66,7 @@ def get_thresholds(
 ) -> Thresholds:
     return Thresholds(
         min_volume=min_volume,
+        min_gp_volume=min_gp_volume,
         max_price_age_min=max_age_min,
         min_net_margin=min_margin,
         min_roi=min_roi,

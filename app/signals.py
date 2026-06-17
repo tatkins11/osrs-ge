@@ -32,7 +32,8 @@ log = logging.getLogger("signals")
 @dataclass
 class Thresholds:
     min_volume: int = DEFAULT_MIN_VOLUME      # min units on the THINNER side
-    max_price_age_min: float = 90.0           # ignore prices staler than this
+    min_gp_volume: int = 25_000_000           # ...OR admit any item turning over this much gp/day (high-value, low unit vol)
+    max_price_age_min: float = 360.0          # ignore prices staler than this (6h; low-volume items trade less often)
     min_net_margin: int = DEFAULT_MIN_MARGIN  # gp, after tax
     min_roi: float = 0.004                    # 0.4% after tax
     min_profit: int = 500_000                 # min profit per trade (bankroll+limit sized)
@@ -75,7 +76,10 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     d = df.copy()
 
     d["vol_side"] = pd.concat([d["high_vol"], d["low_vol"]], axis=1).min(axis=1)
-    d["vol_ok"] = d["vol_side"].fillna(0) >= th.min_volume
+    # gp turnover/day lets high-value, low-unit-volume items (megarares, big gear) qualify
+    # even though they don't trade 100+ units every 5 minutes.
+    d["gp_turnover"] = d["mid"].fillna(0).astype("float64") * d["vol_daily_7d"].fillna(0).astype("float64")
+    d["vol_ok"] = (d["vol_side"].fillna(0) >= th.min_volume) | (d["gp_turnover"] >= th.min_gp_volume)
     d["fresh_ok"] = d["price_age_min"].notna() & (d["price_age_min"] <= th.max_price_age_min)
     d["tradeable"] = d["vol_ok"] & d["fresh_ok"]
 

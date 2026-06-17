@@ -114,7 +114,7 @@ export default function App() {
             </div>
             <div className="hstat">
               <span className="k">Tax</span>
-              <span className="v">{(meta.tax.rate * 100).toFixed(0)}% · cap {gpShort(meta.tax.cap)}</span>
+              <span className="v">{(meta.tax.rate * 100).toFixed(0)}% · max {gpShort(meta.tax.cap)}/item</span>
             </div>
             <div className="hstat">
               <span className="k">History rows</span>
