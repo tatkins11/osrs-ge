@@ -41,6 +41,8 @@ class Thresholds:
     max_price: int = 2_147_483_647            # price-range ceiling (default = no cap)
     crash_pct: float = 0.18                   # crash = this far below the established (7d median) level
     crash_recover_to: float = 0.95            # recovery target as a fraction of the established level
+    value_min_discount: float = 0.08          # value buy: at least this far below the established level
+    value_min_confidence: int = 40            # value buy: minimum 0-100 confidence to surface
     vol_spike: float = 2.0                    # "unusual volume": last 24h >= this multiple of a typical day
     z_buy: float = -1.5
     z_strong_buy: float = -2.5
@@ -172,6 +174,37 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     d["crash_exp_margin"] = net_target - crash_buy               # per item, after tax
     d["crash_exp_roi"] = np.where(crash_buy > 0, d["crash_exp_margin"] / crash_buy, np.nan)
     d["crash_exp_profit"] = d["crash_exp_margin"] * d["buy_limit"].astype("float64")
+
+    # --- value-buy signal: undervalued vs a STABLE established level (the validated reversion edge,
+    # generalised across discount depths + horizons, with a confidence score) ---
+    mean30 = d["mean_30d"].astype("float64")
+    d["value_discount"] = np.where(established > 0, (established - d["mid"]) / established, np.nan)  # +ve = below fair
+    d["level_health"] = np.where(mean30 > 0, established / mean30, np.nan)   # ~1 stable; <1 = the level itself is falling
+    buy_px = d["sell_price"].astype("float64")                              # what you pay to buy now (instabuy)
+    d["value_target"] = established                                         # fair value = 7d established level
+    net_v = established - taxmod.sell_tax_array(established, exempt_arr)
+    d["value_exp_margin"] = net_v - buy_px
+    d["value_exp_roi"] = np.where(buy_px > 0, d["value_exp_margin"] / buy_px, np.nan)
+    d["value_exp_profit"] = d["value_exp_margin"] * d["buy_limit"].astype("float64")
+    gpv = (d["mid"].fillna(0) * d["vol_daily_7d"].fillna(0)).astype("float64")
+    # confidence 0-100: discount depth + how-unusual (z) + cheapness + liquidity + level-health (falling-knife guard)
+    disc = np.clip(d["value_discount"].fillna(0) / 0.30, 0, 1)
+    zc = np.clip((-d["z_7d"].fillna(0) - 1.0) / 2.5, 0, 1)                  # rewards trading >=1sigma below the mean
+    cheap = np.clip(1.0 - d["pct_30d"].fillna(0.5), 0, 1)                   # near the bottom of the 30d range
+    liq = np.clip((np.log10(gpv.clip(lower=1)) - 6.0) / 3.0, 0, 1)         # 1M..1B gp/day
+    health = np.clip((d["level_health"].fillna(0) - 0.75) / 0.25, 0, 1)    # 0.75->0, >=1.0->1 (stable level)
+    d["value_confidence"] = (100 * (0.30 * disc + 0.22 * zc + 0.18 * cheap + 0.15 * liq + 0.15 * health)).round()
+    # horizon by liquidity (study: liquid dislocations revert in days; thin / high-value take longer)
+    d["value_horizon"] = np.select([gpv >= 200_000_000, gpv >= 20_000_000],
+                                    ["1-3 days", "~1 week"], default="2-4 weeks")
+    d["is_value_buy"] = (
+        d["tradeable"]
+        & (buy_px >= th.min_price) & (buy_px <= th.max_price)
+        & (d["value_discount"].fillna(0) >= th.value_min_discount)
+        & (d["value_exp_roi"].fillna(0) >= th.min_roi)
+        & (d["level_health"].fillna(0) >= 0.55)                            # exclude sustained decliners (falling knives)
+        & (d["value_confidence"].fillna(0) >= th.value_min_confidence)
+    )
     return d
 
 
@@ -219,6 +252,8 @@ TABLE_COLS = [
     "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "mr_exp_profit", "confidence",
     "established", "drawdown", "crash_target", "crash_exp_margin", "crash_exp_roi", "crash_exp_profit", "is_crash",
+    "value_discount", "level_health", "value_target", "value_exp_margin", "value_exp_roi", "value_exp_profit",
+    "value_confidence", "value_horizon", "is_value_buy",
     "signal", "flip_ok", "tradeable", "flip_score", "reversion_score",
 ]
 
@@ -275,6 +310,38 @@ def volume_table(th: Thresholds | None = None, con=None, limit: int = 100) -> li
     ]
     d = d.sort_values("vol_ratio", ascending=False).head(limit)
     return _records(d, TABLE_COLS)
+
+
+def invest_table(th: Thresholds | None = None, con=None, limit: int = 100) -> list[dict]:
+    """Buy-only value finder: items undervalued vs a stable established level, ranked by
+    confidence then expected ROI. Each carries a recovery target, upside, and a horizon."""
+    th = th or Thresholds()
+    d = market_signals(th, con)
+    if d.empty:
+        return []
+    d = d[d["is_value_buy"]].sort_values(["value_confidence", "value_exp_roi"], ascending=False).head(limit)
+    recs = _records(d, TABLE_COLS)
+    for r in recs:
+        r["reasons"] = _value_reasons(r)
+    return recs
+
+
+def _value_reasons(r: dict) -> list[str]:
+    out: list[str] = []
+    disc, z, est, mid = r.get("value_discount"), r.get("z_7d"), r.get("established"), r.get("mid")
+    pct30, vold, hz = r.get("pct_30d"), r.get("vol_daily_7d"), r.get("level_health")
+    if disc and est:
+        out.append(f"Trading ~{disc * 100:.0f}% below its 7-day established level (~{est:,.0f} gp)")
+    if z is not None and z < 0:
+        out.append(f"{abs(z):.1f}sigma below its 7-day mean — an unusual dislocation")
+    if pct30 is not None and pct30 < 0.5:
+        out.append(f"Near the bottom of its 30-day range ({pct30 * 100:.0f}th pct)")
+    if hz is not None:
+        out.append("Established level has held vs the 30-day average — a dislocation, not a decline"
+                   if hz >= 0.92 else "Level is somewhat soft vs the 30-day average — watch for further weakness")
+    if vold:
+        out.append(f"~{vold:,.0f} traded/day — liquid enough to enter and exit")
+    return [x for x in out if x]
 
 
 def full_table(th: Thresholds | None = None, con=None) -> list[dict]:

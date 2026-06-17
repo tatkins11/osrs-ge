@@ -34,6 +34,7 @@ from .signals import (
     crash_table,
     flip_table,
     full_table,
+    invest_table,
     market_signals,
     reversion_table,
     volume_table,
@@ -63,6 +64,8 @@ def get_thresholds(
     max_price: int = Query(2_147_483_647, ge=0),
     crash_pct: float = Query(0.18, gt=0, lt=1),
     vol_spike: float = Query(2.0, gt=1),
+    value_min_discount: float = Query(0.08, ge=0, lt=1),
+    value_min_confidence: int = Query(40, ge=0, le=100),
     z_buy: float = Query(-1.5),
     z_sell: float = Query(1.5),
     max_alloc_frac: float = Query(0.15, gt=0, le=1),
@@ -78,6 +81,8 @@ def get_thresholds(
         max_price=max_price,
         crash_pct=crash_pct,
         vol_spike=vol_spike,
+        value_min_discount=value_min_discount,
+        value_min_confidence=value_min_confidence,
         z_buy=z_buy,
         z_sell=z_sell,
         bankroll=bankroll,
@@ -125,6 +130,31 @@ def signals_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Quer
 @app.get("/api/crashes")
 def crashes_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1, le=2000)) -> list[dict]:
     return crash_table(th, limit=limit)
+
+
+@app.get("/api/invest")
+def invest_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1, le=2000)) -> dict:
+    """Value buys (undervalued vs fair value, with confidence + horizon) + SELL signals
+    for items you already hold that have gone rich (above fair value)."""
+    buys = invest_table(th, limit=limit)
+    sells: list[dict] = []
+    port = pf.compute()
+    open_pos = {int(p["item_id"]): p for p in port.get("open_positions", [])}
+    if open_pos:
+        ms = market_signals(th)
+        if not ms.empty:
+            held = ms[ms["item_id"].isin(open_pos.keys())]
+            for rec in _records(held, TABLE_COLS):
+                p = open_pos[rec["item_id"]]
+                est, mid = rec.get("established"), rec.get("mid")
+                z = rec.get("z_7d") or 0.0
+                pct30 = rec.get("pct_30d") or 0.0
+                rich = bool(est and mid and mid >= est * 1.02 and (z >= th.z_sell or pct30 >= 0.75))
+                rec.update(qty=p.get("qty"), avg_cost=p.get("avg_cost"),
+                           unrealized=p.get("unrealized"), unrealized_pct=p.get("unrealized_pct"), sell_ok=rich)
+                if rich:
+                    sells.append(rec)
+    return {"buys": buys, "sells": sells}
 
 
 @app.get("/api/volume")

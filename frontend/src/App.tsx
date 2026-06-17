@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getCrashes, getFlips, getItems, getMeta, getSectors, getSignals, getVolume, type Filters, type Meta, type Row, type SectorsResponse } from "./api";
+import { getCrashes, getFlips, getInvest, getItems, getMeta, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Row, type SectorsResponse } from "./api";
 import { gpShort } from "./format";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
+import { InvestTable } from "./components/InvestTable";
 import { ItemPanel } from "./components/ItemPanel";
 import { MarketTable } from "./components/MarketTable";
 import { Portfolio } from "./components/Portfolio";
@@ -10,7 +11,7 @@ import { SectorGrid } from "./components/SectorGrid";
 import { SectorPanel } from "./components/SectorPanel";
 import { VolumeTable } from "./components/VolumeTable";
 
-type Tab = "flips" | "signals" | "crashes" | "movers" | "sectors" | "all" | "portfolio";
+type Tab = "flips" | "invest" | "crashes" | "movers" | "sectors" | "all" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -26,7 +27,7 @@ const DEFAULT_FILTERS: Filters = {
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "flips", label: "Flips" },
-  { id: "signals", label: "Signals" },
+  { id: "invest", label: "Invest" },
   { id: "crashes", label: "Crashes" },
   { id: "movers", label: "Movers" },
   { id: "sectors", label: "Sectors" },
@@ -49,6 +50,7 @@ export default function App() {
   const [auto, setAuto] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [sectorsData, setSectorsData] = useState<SectorsResponse | null>(null);
+  const [investData, setInvestData] = useState<InvestResponse | null>(null);
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
 
   useEffect(() => {
@@ -72,9 +74,18 @@ export default function App() {
           .finally(() => setLoading(false));
         return;
       }
+      if (tab === "invest") {
+        getInvest(filters)
+          .then((d) => {
+            setInvestData(d);
+            setUpdatedAt(Date.now());
+          })
+          .catch((e) => setErr(String(e)))
+          .finally(() => setLoading(false));
+        return;
+      }
       const req =
         tab === "flips" ? getFlips(filters)
-        : tab === "signals" ? getSignals(filters)
         : tab === "crashes" ? getCrashes(filters)
         : tab === "movers" ? getVolume(filters)
         : getItems(filters);
@@ -143,7 +154,7 @@ export default function App() {
         </div>
         <div className="spacer" />
         <span className="note">
-          {loading ? "loading…" : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : `${shown.length} rows`}
+          {loading ? "loading…" : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : `${shown.length} rows`}
           {updatedAt ? ` · ${new Date(updatedAt).toLocaleTimeString()}` : ""}
           {err ? ` · error: ${err}` : ""}
         </span>
@@ -182,15 +193,29 @@ export default function App() {
               ) : null}
             </div>
           </>
+        ) : tab === "invest" ? (
+          <>
+            <div className="table-wrap">
+              <div className="invest-banner">
+                Value buys — undervalued vs each item's established fair value, ranked by a 0–100 confidence (discount ·
+                how-unusual · cheapness · liquidity · level-health). Higher confidence + shorter horizon = stronger edge;
+                long holds are more speculative. Buy near "Buy at", sell near "Fair value". Log trades in <b>Portfolio</b>
+                to get sell signals on what you hold.
+              </div>
+              <InvestTable
+                buys={investData?.buys ?? []}
+                sells={investData?.sells ?? []}
+                selectedId={selected}
+                onSelect={setSelected}
+              />
+            </div>
+            <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
+              <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
+            </div>
+          </>
         ) : (
           <>
             <div className="table-wrap">
-              {tab === "signals" && (
-                <div className="exp-banner">
-                  ⚠ Experimental — mean-reversion signals are not yet validated (backtests are negative on current data).
-                  Informational only; use the <b>Flips</b> tab for trades.
-                </div>
-              )}
               {tab === "crashes" && (
                 <div className="crash-banner">
                   Crash-&-recover: items ≥18% below their 7-day established level. Backtested ~59% win / profit factor ~2

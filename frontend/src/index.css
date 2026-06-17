@@ -238,6 +238,30 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .sc-foot b { font-weight: 700; }
 .pad { padding: 24px; }
 .flat { color: var(--fg-2); }
+
+/* invest / value-buy page */
+.invest-banner {
+  margin: 8px; padding: 8px 12px; border-radius: 7px; font-size: 12px; line-height: 1.4;
+  background: rgba(78,161,255,.08); border: 1px solid rgba(78,161,255,.3); color: var(--fg-2);
+}
+.invest-banner b { color: var(--accent-2); }
+.conf {
+  display: inline-block; min-width: 24px; padding: 1px 6px; border-radius: 4px; font-weight: 700;
+  font-size: 11px; font-family: var(--mono); text-align: center;
+}
+.conf-hi { background: rgba(37,208,125,.18); color: var(--green); border: 1px solid rgba(37,208,125,.4); }
+.conf-md { background: rgba(245,181,61,.15); color: var(--amber); border: 1px solid rgba(245,181,61,.35); }
+.conf-lo { background: rgba(148,163,184,.12); color: var(--muted); border: 1px solid rgba(148,163,184,.28); }
+.hz-chip {
+  font-size: 10.5px; font-family: var(--mono); color: var(--fg-2);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; white-space: nowrap;
+}
+.sub-head {
+  padding: 7px 10px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--fg-2); background: var(--panel-2); border-bottom: 1px solid var(--border);
+}
+.sub-head.sell { color: var(--red); }
+.sub-head.buy { color: var(--green); margin-top: 6px; }
 .sector-card.market { border-color: rgba(78,161,255,.5); background: linear-gradient(180deg, #0d1a28, var(--panel)); }
 .sector-card.market .sc-label { color: var(--accent-2); }
 

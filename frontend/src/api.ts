@@ -50,6 +50,20 @@ export interface Row {
   crash_exp_roi?: number | null;
   crash_exp_profit?: number | null;
   is_crash?: boolean;
+  value_discount?: number | null;
+  level_health?: number | null;
+  value_target?: number | null;
+  value_exp_margin?: number | null;
+  value_exp_roi?: number | null;
+  value_exp_profit?: number | null;
+  value_confidence?: number | null;
+  value_horizon?: string;
+  is_value_buy?: boolean;
+  qty?: number | null;
+  avg_cost?: number | null;
+  unrealized?: number | null;
+  unrealized_pct?: number | null;
+  sell_ok?: boolean;
   reasons?: string[];
   [k: string]: unknown;
 }
@@ -131,6 +145,12 @@ export const getSignals = (f: Filters, limit = 250) => get<Row[]>(`/api/signals?
 export const getItems = (f: Filters) => get<Row[]>(`/api/items?${qs(f)}`);
 export const getCrashes = (f: Filters, limit = 200) => get<Row[]>(`/api/crashes?${qs(f)}&limit=${limit}`);
 export const getVolume = (f: Filters, limit = 200) => get<Row[]>(`/api/volume?${qs(f)}&limit=${limit}`);
+
+export interface InvestResponse {
+  buys: Row[];
+  sells: Row[];
+}
+export const getInvest = (f: Filters, limit = 150) => get<InvestResponse>(`/api/invest?${qs(f)}&limit=${limit}`);
 export const getItem = (id: number, f: Filters) => get<ItemDetail>(`/api/item/${id}?${qs(f)}`);
 export const getItemSeries = (id: number, timestep: string) =>
   get<{ timestep: string; series: SeriesPoint[] }>(`/api/item/${id}/series?timestep=${encodeURIComponent(timestep)}`);
