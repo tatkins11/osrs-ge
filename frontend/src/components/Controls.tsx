@@ -11,6 +11,14 @@ export function Controls({ filters, setFilters }: { filters: Filters; setFilters
         <label>Bankroll (gp)</label>
         <input value={filters.bankroll} onChange={upd("bankroll")} />
       </div>
+      <div className="ctrl">
+        <label>Min profit (gp)</label>
+        <input value={filters.minProfit} onChange={upd("minProfit")} />
+      </div>
+      <div className="ctrl small">
+        <label>Min price</label>
+        <input value={filters.minPrice} onChange={upd("minPrice")} />
+      </div>
       <div className="ctrl small">
         <label>Min vol</label>
         <input value={filters.minVolume} onChange={upd("minVolume")} />

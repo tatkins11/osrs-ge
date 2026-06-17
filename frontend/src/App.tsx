@@ -12,6 +12,8 @@ const DEFAULT_FILTERS: Filters = {
   minVolume: 100,
   minMargin: 1,
   minRoi: 0.004,
+  minProfit: 500_000,
+  minPrice: 1_000,
   zBuy: -1.5,
   zSell: 1.5,
 };
