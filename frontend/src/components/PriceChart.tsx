@@ -2,10 +2,20 @@ import { useEffect, useRef } from "react";
 import { ColorType, createChart, type UTCTimestamp } from "lightweight-charts";
 import type { SeriesPoint } from "../api";
 
+// Render axis + crosshair in the viewer's LOCAL timezone (lightweight-charts is UTC by default).
+const fmtFull = (t: number) =>
+  new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const tickFmt = (time: unknown, type: number) => {
+  const d = new Date((time as number) * 1000);
+  if (type >= 3) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (type === 2) return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (type === 1) return d.toLocaleDateString([], { month: "short", year: "numeric" });
+  return String(d.getFullYear());
+};
+const gpf = (n: number | null | undefined) => (n == null ? "–" : Math.round(n).toLocaleString());
+
 /** Price history with a 7d/short moving average, Bollinger bands and volume.
- *  type="line": mid-price line. type="candle": OHLC candles where each period's
- *  insta-buy (avg_high) and insta-sell (avg_low) form the wick range and the mid
- *  open->close forms the body. */
+ *  type="line": mid-price line. type="candle": OHLC candles (avg_high/avg_low wicks, mid body). */
 export function PriceChart({
   series,
   type = "line",
@@ -19,7 +29,8 @@ export function PriceChart({
 
   useEffect(() => {
     if (!ref.current || !series?.length) return;
-    const chart = createChart(ref.current, {
+    const el = ref.current;
+    const chart = createChart(el, {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
@@ -29,7 +40,8 @@ export function PriceChart({
       },
       grid: { vertLines: { color: "#15202d" }, horzLines: { color: "#15202d" } },
       rightPriceScale: { borderColor: "#1e2a39" },
-      timeScale: { borderColor: "#1e2a39", timeVisible: true, secondsVisible: false },
+      timeScale: { borderColor: "#1e2a39", timeVisible: true, secondsVisible: false, tickMarkFormatter: tickFmt },
+      localization: { timeFormatter: fmtFull },
       crosshair: { mode: 0 },
     });
 
@@ -51,8 +63,10 @@ export function PriceChart({
         .map((p) => ({ time: t(p), value: (p.high_vol ?? 0) + (p.low_vol ?? 0) }))
     );
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let main: any;
     if (type === "candle") {
-      const candle = chart.addCandlestickSeries({
+      main = chart.addCandlestickSeries({
         upColor: "#25d07d", downColor: "#ff5b6e",
         borderUpColor: "#25d07d", borderDownColor: "#ff5b6e",
         wickUpColor: "#25d07d", wickDownColor: "#ff5b6e",
@@ -68,13 +82,47 @@ export function PriceChart({
         data.push({ time: t(p), open, high, low, close });
         prev = close;
       }
-      candle.setData(data);
+      main.setData(data);
     } else {
-      chart.addLineSeries({ color: "#4ea1ff", lineWidth: 2, priceLineVisible: false }).setData(sel("mid"));
+      main = chart.addLineSeries({ color: "#4ea1ff", lineWidth: 2, priceLineVisible: false });
+      main.setData(sel("mid"));
     }
 
+    // hover info box
+    const tip = document.createElement("div");
+    tip.className = "chart-tip";
+    tip.style.display = "none";
+    el.appendChild(tip);
+    chart.subscribeCrosshairMove((param) => {
+      const pt = param.point;
+      if (!param.time || !pt || pt.x < 0 || pt.y < 0 || pt.x > el.clientWidth || pt.y > el.clientHeight) {
+        tip.style.display = "none";
+        return;
+      }
+      const md = param.seriesData.get(main) as unknown as
+        | { open?: number; high?: number; low?: number; close?: number; value?: number }
+        | undefined;
+      if (!md) {
+        tip.style.display = "none";
+        return;
+      }
+      const vd = param.seriesData.get(vol) as { value?: number } | undefined;
+      const body =
+        type === "candle"
+          ? `O ${gpf(md.open)} · H ${gpf(md.high)} · L ${gpf(md.low)} · C ${gpf(md.close)}`
+          : `Price ${gpf(md.value)}`;
+      const volTxt = vd?.value != null ? ` · Vol ${gpf(vd.value)}` : "";
+      tip.innerHTML = `<div class="tip-t">${fmtFull(param.time as number)}</div><div class="tip-v">${body}${volTxt}</div>`;
+      tip.style.display = "block";
+      tip.style.left = Math.min(pt.x + 14, el.clientWidth - 190) + "px";
+      tip.style.top = Math.max(6, pt.y - 12) + "px";
+    });
+
     chart.timeScale().fitContent();
-    return () => chart.remove();
+    return () => {
+      chart.remove();
+      tip.remove();
+    };
   }, [series, type]);
 
   return <div className={`chart-box ${className}`} ref={ref} />;

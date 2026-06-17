@@ -169,8 +169,9 @@ def dow_profile(series: pd.DataFrame) -> pd.DataFrame:
 
 
 def _epoch_seconds(ts: pd.Series) -> pd.Series:
-    """Unix seconds from naive-UTC datetimes (tz-safe: datetime64 is epoch-based)."""
-    return (ts.astype("int64") // 1_000_000_000)
+    """Unix seconds from naive-UTC datetimes. Resolution-robust: DuckDB/pandas may
+    return datetime64[us] (not [ns]), so a fixed //1e9 would be 1000x off."""
+    return ts.astype("datetime64[s]").astype("int64")
 
 
 def _clean(v):
