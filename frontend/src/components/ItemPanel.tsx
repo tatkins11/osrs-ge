@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { getItem, type Filters, type ItemDetail } from "../api";
+import { getItem, getItemSeries, type Filters, type ItemDetail, type SeriesPoint } from "../api";
 import { fixed, gp, gpShort, num, pct } from "../format";
 import { PriceChart } from "./PriceChart";
 import { ProfileBars } from "./ProfileBars";
@@ -16,9 +16,21 @@ function Tile({ k, v, cls = "" }: { k: string; v: ReactNode; cls?: string }) {
   );
 }
 
-export function ItemPanel({ itemId, filters, onClose }: { itemId: number | null; filters: Filters; onClose: () => void }) {
+export function ItemPanel({
+  itemId,
+  filters,
+  refreshNonce = 0,
+  onClose,
+}: {
+  itemId: number | null;
+  filters: Filters;
+  refreshNonce?: number;
+  onClose: () => void;
+}) {
   const [data, setData] = useState<ItemDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [tf, setTf] = useState("1h");
+  const [tfSeries, setTfSeries] = useState<SeriesPoint[] | null>(null);
 
   useEffect(() => {
     if (itemId == null) {
@@ -34,7 +46,23 @@ export function ItemPanel({ itemId, filters, onClose }: { itemId: number | null;
     return () => {
       cancelled = true;
     };
-  }, [itemId, filters]);
+  }, [itemId, filters, refreshNonce]);
+
+  useEffect(() => {
+    setTf("1h");
+    setTfSeries(null);
+  }, [itemId]);
+
+  useEffect(() => {
+    if (itemId == null || tf === "1h") return;
+    let cancelled = false;
+    getItemSeries(itemId, tf)
+      .then((r) => !cancelled && setTfSeries(r.series))
+      .catch(() => !cancelled && setTfSeries([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId, tf]);
 
   if (itemId == null)
     return (
@@ -113,8 +141,17 @@ export function ItemPanel({ itemId, filters, onClose }: { itemId: number | null;
       </div>
 
       <div className="panel-section">
-        <h4>Price history · 7d MA · Bollinger bands · volume</h4>
-        <PriceChart series={data.series} />
+        <div className="tf-row">
+          <h4>Price history · MA · Bollinger · volume</h4>
+          <div className="tf-toggle">
+            {([["1h", "2wk"], ["6h", "3mo"], ["24h", "1yr"]] as const).map(([v, l]) => (
+              <button key={v} className={`tf ${tf === v ? "active" : ""}`} onClick={() => setTf(v)}>
+                {l}
+              </button>
+            ))}
+          </div>
+        </div>
+        <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} />
       </div>
 
       <div className="panel-section">

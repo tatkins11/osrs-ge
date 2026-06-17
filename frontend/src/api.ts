@@ -111,3 +111,5 @@ export const getFlips = (f: Filters, limit = 250) => get<Row[]>(`/api/flips?${qs
 export const getSignals = (f: Filters, limit = 250) => get<Row[]>(`/api/signals?${qs(f)}&limit=${limit}`);
 export const getItems = (f: Filters) => get<Row[]>(`/api/items?${qs(f)}`);
 export const getItem = (id: number, f: Filters) => get<ItemDetail>(`/api/item/${id}?${qs(f)}`);
+export const getItemSeries = (id: number, timestep: string) =>
+  get<{ timestep: string; series: SeriesPoint[] }>(`/api/item/${id}/series?timestep=${encodeURIComponent(timestep)}`);

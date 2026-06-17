@@ -22,6 +22,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "all", label: "All items" },
 ];
 
+const REFRESH_MS = 60_000;
+
 export default function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [tab, setTab] = useState<Tab>("flips");
@@ -31,10 +33,13 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [search, setSearch] = useState("");
+  const [nonce, setNonce] = useState(0);
+  const [auto, setAuto] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     getMeta().then(setMeta).catch(() => {});
-  }, []);
+  }, [nonce]);
 
   const deb = useRef<number | undefined>(undefined);
   useEffect(() => {
@@ -44,12 +49,21 @@ export default function App() {
       setErr(null);
       const req = tab === "flips" ? getFlips(filters) : tab === "signals" ? getSignals(filters) : getItems(filters);
       req
-        .then(setRows)
+        .then((r) => {
+          setRows(r);
+          setUpdatedAt(Date.now());
+        })
         .catch((e) => setErr(String(e)))
         .finally(() => setLoading(false));
     }, 250);
     return () => window.clearTimeout(deb.current);
-  }, [tab, filters]);
+  }, [tab, filters, nonce]);
+
+  useEffect(() => {
+    if (!auto) return;
+    const id = window.setInterval(() => setNonce((n) => n + 1), REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [auto]);
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -100,8 +114,13 @@ export default function App() {
         <div className="spacer" />
         <span className="note">
           {loading ? "loading…" : `${shown.length} rows`}
+          {updatedAt ? ` · ${new Date(updatedAt).toLocaleTimeString()}` : ""}
           {err ? ` · error: ${err}` : ""}
         </span>
+        <label className="autobox" title={`auto-refresh every ${REFRESH_MS / 1000}s`}>
+          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto
+        </label>
+        <button className="refresh" onClick={() => setNonce((n) => n + 1)} title="Refresh now">↻</button>
       </div>
 
       <div className="main">
@@ -115,7 +134,7 @@ export default function App() {
           <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
         </div>
         <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
-          <ItemPanel itemId={selected} filters={filters} onClose={() => setSelected(null)} />
+          <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
         </div>
       </div>
     </div>

@@ -269,3 +269,24 @@ def analyze_item(item_id: int, con=None, max_points: int = 2000) -> dict | None:
         ]
 
     return out
+
+
+def item_series(item_id: int, timestep: str = "1h", con=None, max_points: int = 2000) -> list[dict]:
+    """Price + indicator series at a chosen timestep, for the chart's timeframe toggle
+    (1h ~= 2 weeks, 6h ~= 3 months, 24h ~= 1 year of backfilled history)."""
+    own = con is None
+    con = con or connect(read_only=True)
+    try:
+        hist = item_history_df(item_id, timestep, con)
+    finally:
+        if own:
+            con.close()
+    if hist.empty:
+        return []
+    window = {"1h": 168, "6h": 28, "24h": 30}.get(timestep, 60)
+    ind = add_indicators(hist, window=window)
+    if len(ind) > max_points:
+        ind = ind.iloc[-max_points:]
+    ind = ind.assign(time=_epoch_seconds(ind["ts"]))
+    cols = ["time", "avg_high", "avg_low", "mid", "ma", "upper", "lower", "z", "rsi", "high_vol", "low_vol"]
+    return [{k: _clean(v) for k, v in rec.items()} for rec in ind[cols].to_dict("records")]

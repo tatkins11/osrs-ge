@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .analytics import analyze_item
+from .analytics import analyze_item, item_series
 from .config import (
     DEFAULT_BANKROLL,
     DEFAULT_MIN_MARGIN,
@@ -118,6 +118,13 @@ def item_detail(item_id: int, th: Thresholds = Depends(get_thresholds)) -> dict:
             sr["reasons"] = _reasons(sr)
             detail["signal_row"] = sr
     return detail
+
+
+@app.get("/api/item/{item_id}/series")
+def item_series_endpoint(item_id: int, timestep: str = Query("1h")) -> dict:
+    if timestep not in {"5m", "1h", "6h", "24h"}:
+        raise HTTPException(status_code=400, detail="invalid timestep")
+    return {"timestep": timestep, "series": item_series(item_id, timestep)}
 
 
 # --- serve the built frontend (if present) ----------------------------------
