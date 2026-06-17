@@ -41,7 +41,7 @@ class Thresholds:
     max_price: int = 2_147_483_647            # price-range ceiling (default = no cap)
     crash_pct: float = 0.18                   # crash = this far below the established (7d median) level
     crash_recover_to: float = 0.95            # recovery target as a fraction of the established level
-    vol_spike: float = 3.0                    # "unusual volume": last 24h >= this multiple of a typical day
+    vol_spike: float = 2.0                    # "unusual volume": last 24h >= this multiple of a typical day
     z_buy: float = -1.5
     z_strong_buy: float = -2.5
     z_sell: float = 1.5

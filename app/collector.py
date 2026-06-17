@@ -19,7 +19,7 @@ import pandas as pd
 
 from .api_client import OsrsPricesClient
 from .config import DEMO_MARKER, POLL_INTERVAL_SECONDS
-from .db import ensure_db, insert_snapshots, stats, upsert_items, utcnow
+from .db import ensure_db, insert_history, insert_snapshots, stats, upsert_items, utcnow
 
 log = logging.getLogger("collector")
 
@@ -70,6 +70,45 @@ def build_snapshot_rows(latest: dict[int, dict], m5: dict[int, dict]) -> pd.Data
     return df
 
 
+def _hist_rows_1h(data: dict[int, dict], ts_epoch: int) -> pd.DataFrame:
+    """Build history rows (timestep='1h') from a /1h bucket payload."""
+    bucket = pd.to_datetime(ts_epoch, unit="s")
+    rows = [
+        {"item_id": iid, "timestep": "1h", "ts": bucket,
+         "avg_high": v.get("avgHighPrice"), "avg_low": v.get("avgLowPrice"),
+         "high_vol": v.get("highPriceVolume"), "low_vol": v.get("lowPriceVolume")}
+        for iid, v in data.items()
+        if v.get("avgHighPrice") is not None or v.get("avgLowPrice") is not None
+    ]
+    return pd.DataFrame(rows)
+
+
+def collect_history_1h(client: OsrsPricesClient, con=None) -> int:
+    """Append the latest 1h bucket to history so short-horizon analytics (Movers,
+    1d changes) stay fresh; the periodic full backfill still handles 6h/24h.
+    Idempotent -- insert_history is ON CONFLICT DO NOTHING."""
+    ts, data = client.get_1h_bucket()
+    if not ts or not data:
+        return 0
+    return insert_history(_hist_rows_1h(data, ts), con=con)
+
+
+def backfill_recent_1h(client: OsrsPricesClient, hours: int = 8) -> int:
+    """One-time gap fill: pull the last `hours` hourly buckets (e.g. on startup, to
+    bridge the gap since the last full backfill)."""
+    now_h = int(time.time()) // 3600 * 3600
+    total = 0
+    for k in range(hours, 0, -1):
+        bucket_ts = now_h - k * 3600
+        try:
+            _, data = client.get_1h_bucket(timestamp=bucket_ts)
+            total += insert_history(_hist_rows_1h(data, bucket_ts))
+        except Exception:
+            log.exception("1h gap-fill bucket %s failed", bucket_ts)
+    log.info("recent 1h history filled: %d rows over %dh", total, hours)
+    return total
+
+
 def collect_once(client: OsrsPricesClient | None = None, con=None) -> int:
     own = client is None
     client = client or OsrsPricesClient()
@@ -79,6 +118,10 @@ def collect_once(client: OsrsPricesClient | None = None, con=None) -> int:
         df = build_snapshot_rows(latest, m5)
         n = insert_snapshots(df, con=con)
         log.info("snapshot stored: %d items (latest=%d, 5m=%d)", n, len(latest), len(m5))
+        try:
+            collect_history_1h(client, con=con)
+        except Exception:
+            log.exception("1h history append failed")
         if DEMO_MARKER.exists():
             DEMO_MARKER.unlink(missing_ok=True)  # real data supersedes any demo seed
         return n
@@ -109,6 +152,10 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
     log.info("collector starting; interval=%ss", interval)
     with OsrsPricesClient() as client:
         refresh_catalog(client)
+        try:
+            backfill_recent_1h(client)
+        except Exception:
+            log.exception("startup 1h gap-fill failed")
         current_day = utcnow().date()
         while True:
             try:

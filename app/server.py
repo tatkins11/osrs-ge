@@ -62,7 +62,7 @@ def get_thresholds(
     min_price: int = Query(1_000, ge=0),
     max_price: int = Query(2_147_483_647, ge=0),
     crash_pct: float = Query(0.18, gt=0, lt=1),
-    vol_spike: float = Query(3.0, gt=1),
+    vol_spike: float = Query(2.0, gt=1),
     z_buy: float = Query(-1.5),
     z_sell: float = Query(1.5),
     max_alloc_frac: float = Query(0.15, gt=0, le=1),

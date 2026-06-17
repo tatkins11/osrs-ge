@@ -118,6 +118,12 @@ class OsrsPricesClient:
         params = {"timestamp": timestamp} if timestamp else None
         return {int(k): v for k, v in self._get("1h", params).get("data", {}).items()}
 
+    def get_1h_bucket(self, timestamp: int | None = None) -> tuple[int | None, dict[int, dict]]:
+        """1-hour averages WITH the bucket's epoch timestamp, for appending to history."""
+        payload = self._get("1h", {"timestamp": timestamp} if timestamp else None)
+        ts = payload.get("timestamp")
+        return ts, {int(k): v for k, v in payload.get("data", {}).items()}
+
     def get_timeseries(self, item_id: int, timestep: str = "5m") -> list[dict]:
         """Up to ~365 points for one item. timestep in {5m, 1h, 6h, 24h}."""
         if timestep not in VALID_TIMESTEPS:
