@@ -20,7 +20,7 @@ API_BASE = "https://prices.runescape.wiki/api/v1/osrs"
 # rather use a Discord handle than an email.
 USER_AGENT = os.getenv(
     "OSRS_GE_USER_AGENT",
-    "osrs-ge-terminal/0.1 (personal flipping research; contact: brian@swp360.com)",
+    "osrs-ge-terminal/0.1 (personal flipping research; contact: tristan@swp360.com)",
 )
 HTTP_TIMEOUT = float(os.getenv("OSRS_GE_HTTP_TIMEOUT", "30"))
 HTTP_RETRIES = int(os.getenv("OSRS_GE_HTTP_RETRIES", "4"))

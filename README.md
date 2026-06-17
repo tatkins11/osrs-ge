@@ -117,7 +117,7 @@ Run the no-network self-test any time: `.venv\Scripts\python.exe scripts\selftes
 
 | Var | Default | Purpose |
 |---|---|---|
-| `OSRS_GE_USER_AGENT` | contains `brian@swp360.com` | **set a real contact** the wiki can reach |
+| `OSRS_GE_USER_AGENT` | contains `tristan@swp360.com` | **set a real contact** the wiki can reach |
 | `OSRS_GE_DB_PATH` | `data/osrs_ge.duckdb` | database location |
 | `OSRS_GE_POLL_INTERVAL` | `300` | collector seconds between snapshots |
 | `OSRS_GE_CA_BUNDLE` | – | path to a CA PEM, if behind a TLS-inspecting proxy |
