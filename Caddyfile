@@ -1,15 +1,11 @@
-# Served on the address in SITE_ADDRESS (your droplet IP for now, e.g.
-# https://203.0.113.5 — or a domain later).
-#
-# `tls internal` = a self-signed certificate: traffic is encrypted, but the
-# browser shows a one-time "not trusted" warning you click past.
-#
-# When you get a real domain: set SITE_ADDRESS=your-domain.com in .env and
-# DELETE the `tls internal` line below — Caddy then fetches a free, trusted
-# Let's Encrypt certificate automatically (no more browser warning).
+# Served on the address in SITE_ADDRESS. Caddy picks the cert automatically:
+#   - a hostname (e.g. mybox.example.com, or 159-203-178-90.sslip.io) -> a free,
+#     browser-TRUSTED Let's Encrypt certificate (no warning, works through
+#     corporate SSL inspection).
+#   - a bare IP or localhost -> a self-signed cert (encrypted, but browsers warn
+#     and strict networks reject it).
 
 {$SITE_ADDRESS} {
-	tls internal
 	encode zstd gzip
 
 	basic_auth {
