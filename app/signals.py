@@ -37,6 +37,8 @@ class Thresholds:
     min_roi: float = 0.004                    # 0.4% after tax
     min_profit: int = 500_000                 # min profit per trade (bankroll+limit sized)
     min_price: int = 1_000                    # skip low-value junk below this price
+    crash_pct: float = 0.18                   # crash = this far below the established (7d median) level
+    crash_recover_to: float = 0.95            # recovery target as a fraction of the established level
     z_buy: float = -1.5
     z_strong_buy: float = -2.5
     z_sell: float = 1.5
@@ -137,6 +139,23 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     strength = np.clip((d["z_7d"].abs() - 1.5) / 2.0 + 0.5, 0.0, 1.0)
     liq = np.clip(np.log10(d["vol_daily_7d"].clip(lower=1)) / 6.0, 0.0, 1.0)
     d["confidence"] = (100 * (0.6 * strength + 0.4 * liq)).round()
+
+    # --- crash-&-recover signal (backtest-validated: ~59% win, PF ~2 even paying the spread) ---
+    established = d["median_7d"].fillna(d["mean_7d"]).astype("float64")
+    d["established"] = established
+    d["drawdown"] = np.where(established > 0, (d["mid"] - established) / established, np.nan)
+    d["is_crash"] = (
+        d["tradeable"]
+        & (d["mid"].fillna(0) >= th.min_price)
+        & (d["drawdown"] <= -th.crash_pct)
+    )
+    crash_buy = d["sell_price"].astype("float64")                 # current insta-buy (what you pay)
+    crash_target = established * th.crash_recover_to              # recovery target
+    net_target = crash_target - taxmod.sell_tax_array(crash_target, exempt_arr)
+    d["crash_target"] = crash_target
+    d["crash_exp_margin"] = net_target - crash_buy               # per item, after tax
+    d["crash_exp_roi"] = np.where(crash_buy > 0, d["crash_exp_margin"] / crash_buy, np.nan)
+    d["crash_exp_profit"] = d["crash_exp_margin"] * d["buy_limit"].astype("float64")
     return d
 
 
@@ -183,6 +202,7 @@ TABLE_COLS = [
     "high_vol", "low_vol", "vol_side", "vol_daily_7d", "margin_uptime", "margin_median_7d", "price_age_min",
     "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "mr_exp_profit", "confidence",
+    "established", "drawdown", "crash_target", "crash_exp_margin", "crash_exp_roi", "crash_exp_profit", "is_crash",
     "signal", "flip_ok", "tradeable", "flip_score", "reversion_score",
 ]
 
@@ -209,6 +229,18 @@ def reversion_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
     for rec in recs:
         rec["reasons"] = _reasons(rec)
     return recs
+
+
+def crash_table(th: Thresholds | None = None, con=None, limit: int = 100) -> list[dict]:
+    """Items currently crashed >= crash_pct below their established level, with a
+    recovery trade plan. Filtered to meaningful profit + price."""
+    th = th or Thresholds()
+    d = market_signals(th, con)
+    if d.empty:
+        return []
+    d = d[d["is_crash"] & (d["crash_exp_profit"].fillna(0) >= th.min_profit)]
+    d = d.sort_values("crash_exp_profit", ascending=False).head(limit)
+    return _records(d, TABLE_COLS)
 
 
 def full_table(th: Thresholds | None = None, con=None) -> list[dict]:

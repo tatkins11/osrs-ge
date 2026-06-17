@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getFlips, getItems, getMeta, getSignals, type Filters, type Meta, type Row } from "./api";
+import { getCrashes, getFlips, getItems, getMeta, getSignals, type Filters, type Meta, type Row } from "./api";
 import { gpShort } from "./format";
 import { Controls } from "./components/Controls";
+import { CrashTable } from "./components/CrashTable";
 import { ItemPanel } from "./components/ItemPanel";
 import { MarketTable } from "./components/MarketTable";
 import { Portfolio } from "./components/Portfolio";
 
-type Tab = "flips" | "signals" | "all" | "portfolio";
+type Tab = "flips" | "signals" | "crashes" | "all" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -22,6 +23,7 @@ const DEFAULT_FILTERS: Filters = {
 const TABS: { id: Tab; label: string }[] = [
   { id: "flips", label: "Flips" },
   { id: "signals", label: "Signals" },
+  { id: "crashes", label: "Crashes" },
   { id: "all", label: "All items" },
   { id: "portfolio", label: "Portfolio" },
 ];
@@ -52,7 +54,11 @@ export default function App() {
     deb.current = window.setTimeout(() => {
       setLoading(true);
       setErr(null);
-      const req = tab === "flips" ? getFlips(filters) : tab === "signals" ? getSignals(filters) : getItems(filters);
+      const req =
+        tab === "flips" ? getFlips(filters)
+        : tab === "signals" ? getSignals(filters)
+        : tab === "crashes" ? getCrashes(filters)
+        : getItems(filters);
       req
         .then((r) => {
           setRows(r);
@@ -140,7 +146,18 @@ export default function App() {
                   Informational only; use the <b>Flips</b> tab for trades.
                 </div>
               )}
-              <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
+              {tab === "crashes" && (
+                <div className="crash-banner">
+                  Crash-&-recover: items ≥18% below their 7-day established level. Backtested ~59% win / profit factor ~2
+                  even paying the full spread — modest but real, and it'll firm up as more data accrues. Buy near
+                  "Buy now", place a sell offer near "Target".
+                </div>
+              )}
+              {tab === "crashes" ? (
+                <CrashTable rows={shown} selectedId={selected} onSelect={setSelected} />
+              ) : (
+                <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
+              )}
             </div>
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
               <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />

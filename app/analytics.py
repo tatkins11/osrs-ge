@@ -43,6 +43,7 @@ mx AS (SELECT max(ts) AS t FROM base)
 SELECT
     b.item_id,
     avg(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS mean_7d,
+    median(b.mid)      FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS median_7d,  -- robust "established level"
     stddev_samp(b.mid) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS sd_7d,
     min(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 30 DAY) AS min_30d,
     max(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 30 DAY) AS max_30d,

@@ -30,6 +30,7 @@ from .signals import (
     Thresholds,
     _reasons,
     _records,
+    crash_table,
     flip_table,
     full_table,
     market_signals,
@@ -56,6 +57,7 @@ def get_thresholds(
     min_roi: float = Query(0.004),
     min_profit: int = Query(500_000, ge=0),
     min_price: int = Query(1_000, ge=0),
+    crash_pct: float = Query(0.18, gt=0, lt=1),
     z_buy: float = Query(-1.5),
     z_sell: float = Query(1.5),
     max_alloc_frac: float = Query(0.15, gt=0, le=1),
@@ -67,6 +69,7 @@ def get_thresholds(
         min_roi=min_roi,
         min_profit=min_profit,
         min_price=min_price,
+        crash_pct=crash_pct,
         z_buy=z_buy,
         z_sell=z_sell,
         bankroll=bankroll,
@@ -109,6 +112,11 @@ def flips(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1
 @app.get("/api/signals")
 def signals_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1, le=2000)) -> list[dict]:
     return reversion_table(th, limit=limit)
+
+
+@app.get("/api/crashes")
+def crashes_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1, le=2000)) -> list[dict]:
+    return crash_table(th, limit=limit)
 
 
 @app.get("/api/item/{item_id}")

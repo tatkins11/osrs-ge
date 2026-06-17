@@ -197,6 +197,11 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .del { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; cursor: pointer; padding: 1px 8px; font-size: 11px; }
 .del:hover { color: var(--red); border-color: var(--red); }
 
+.crash-banner {
+  margin: 8px; padding: 8px 12px; border-radius: 7px; font-size: 12px; line-height: 1.4;
+  background: rgba(37,208,125,.08); border: 1px solid rgba(37,208,125,.3); color: var(--green);
+}
+
 ::-webkit-scrollbar { width: 11px; height: 11px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #1f2c3c; border-radius: 6px; border: 2px solid var(--bg); }
