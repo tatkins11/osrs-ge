@@ -117,3 +117,55 @@ export const getItems = (f: Filters) => get<Row[]>(`/api/items?${qs(f)}`);
 export const getItem = (id: number, f: Filters) => get<ItemDetail>(`/api/item/${id}?${qs(f)}`);
 export const getItemSeries = (id: number, timestep: string) =>
   get<{ timestep: string; series: SeriesPoint[] }>(`/api/item/${id}/series?timestep=${encodeURIComponent(timestep)}`);
+
+// --- portfolio / trade tracker ---------------------------------------------
+export interface OpenPosition {
+  item_id: number;
+  name: string;
+  qty: number;
+  avg_cost: number;
+  cur_price: number | null;
+  cur_net: number | null;
+  cost_basis: number;
+  market_value: number | null;
+  unrealized: number | null;
+  unrealized_pct: number | null;
+}
+export interface Trade {
+  id: number;
+  ts: string;
+  item_id: number;
+  name: string;
+  side: string;
+  qty: number;
+  price: number;
+  note: string;
+}
+export interface Portfolio {
+  open_positions: OpenPosition[];
+  trades: Trade[];
+  realized_total: number;
+  unrealized_total: number;
+  invested: number;
+  n_trades: number;
+  n_open: number;
+}
+export interface ItemName {
+  item_id: number;
+  name: string;
+}
+
+export const getItemNames = () => get<ItemName[]>("/api/itemnames");
+export const getPortfolio = () => get<Portfolio>("/api/portfolio");
+export const addTrade = (t: { item_id: number; side: string; qty: number; price: number; note?: string }) =>
+  fetch("/api/trades", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(t) }).then(
+    (r) => {
+      if (!r.ok) throw new Error(`add trade -> ${r.status}`);
+      return r.json();
+    }
+  );
+export const deleteTrade = (id: number) =>
+  fetch(`/api/trades/${id}`, { method: "DELETE" }).then((r) => {
+    if (!r.ok) throw new Error(`delete -> ${r.status}`);
+    return r.json();
+  });

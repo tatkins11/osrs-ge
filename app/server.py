@@ -10,7 +10,9 @@ import logging
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+from . import portfolio as pf
 from .analytics import analyze_item, item_series
 from .config import (
     DEFAULT_BANKROLL,
@@ -22,7 +24,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import ensure_db, stats
+from .db import delete_trade, ensure_db, get_items_df, insert_trade, stats
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -129,6 +131,42 @@ def item_series_endpoint(item_id: int, timestep: str = Query("1h")) -> dict:
     if timestep not in {"5m", "1h", "6h", "24h"}:
         raise HTTPException(status_code=400, detail="invalid timestep")
     return {"timestep": timestep, "series": item_series(item_id, timestep)}
+
+
+# --- personal portfolio / trade tracker -------------------------------------
+class TradeIn(BaseModel):
+    item_id: int
+    side: str          # 'buy' | 'sell'
+    qty: int
+    price: int         # gp per unit you actually paid / received
+    note: str | None = None
+
+
+@app.get("/api/itemnames")
+def itemnames() -> list[dict]:
+    """Lightweight id+name list for the trade-entry item picker."""
+    return [{"item_id": int(r.item_id), "name": r.name} for r in get_items_df().itertuples() if r.name]
+
+
+@app.get("/api/portfolio")
+def portfolio() -> dict:
+    return pf.compute()
+
+
+@app.post("/api/trades")
+def add_trade(t: TradeIn) -> dict:
+    if t.side not in ("buy", "sell"):
+        raise HTTPException(status_code=400, detail="side must be 'buy' or 'sell'")
+    if t.qty <= 0 or t.price < 0:
+        raise HTTPException(status_code=400, detail="qty must be > 0 and price >= 0")
+    insert_trade(t.item_id, t.side, t.qty, t.price, t.note or "")
+    return {"ok": True}
+
+
+@app.delete("/api/trades/{trade_id}")
+def remove_trade(trade_id: int) -> dict:
+    delete_trade(trade_id)
+    return {"ok": True}
 
 
 # --- serve the built frontend (if present) ----------------------------------

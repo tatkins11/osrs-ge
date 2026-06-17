@@ -4,8 +4,9 @@ import { gpShort } from "./format";
 import { Controls } from "./components/Controls";
 import { ItemPanel } from "./components/ItemPanel";
 import { MarketTable } from "./components/MarketTable";
+import { Portfolio } from "./components/Portfolio";
 
-type Tab = "flips" | "signals" | "all";
+type Tab = "flips" | "signals" | "all" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -22,6 +23,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "flips", label: "Flips" },
   { id: "signals", label: "Signals" },
   { id: "all", label: "All items" },
+  { id: "portfolio", label: "Portfolio" },
 ];
 
 const REFRESH_MS = 60_000;
@@ -45,6 +47,7 @@ export default function App() {
 
   const deb = useRef<number | undefined>(undefined);
   useEffect(() => {
+    if (tab === "portfolio") return;
     window.clearTimeout(deb.current);
     deb.current = window.setTimeout(() => {
       setLoading(true);
@@ -126,18 +129,24 @@ export default function App() {
       </div>
 
       <div className="main">
-        <div className="table-wrap">
-          {tab === "signals" && (
-            <div className="exp-banner">
-              ⚠ Experimental — mean-reversion signals are not yet validated (backtests are negative on current data).
-              Informational only; use the <b>Flips</b> tab for trades.
+        {tab === "portfolio" ? (
+          <Portfolio refreshNonce={nonce} />
+        ) : (
+          <>
+            <div className="table-wrap">
+              {tab === "signals" && (
+                <div className="exp-banner">
+                  ⚠ Experimental — mean-reversion signals are not yet validated (backtests are negative on current data).
+                  Informational only; use the <b>Flips</b> tab for trades.
+                </div>
+              )}
+              <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
             </div>
-          )}
-          <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
-        </div>
-        <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
-          <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
-        </div>
+            <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
+              <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

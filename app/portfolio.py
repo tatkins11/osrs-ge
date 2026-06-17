@@ -1,0 +1,89 @@
+"""Personal position & P&L tracker computed from the logged trade log.
+
+Moving-average cost basis. Selling applies the 2% GE tax to proceeds, so
+realized/unrealized P&L is what you actually keep. Open positions are valued at
+the current insta-buy price (what you'd realistically place a sell offer at),
+net of tax.
+"""
+from __future__ import annotations
+
+import pandas as pd
+
+from . import tax as taxmod
+from .db import connect, get_items_df, get_trades_df, latest_snapshot_df
+
+
+def compute(con=None) -> dict:
+    own = con is None
+    con = con or connect(read_only=True)
+    try:
+        trades = get_trades_df(con)
+        items = get_items_df(con).set_index("item_id")
+        latest = latest_snapshot_df(con).set_index("item_id")
+    finally:
+        if own:
+            con.close()
+
+    def name_of(iid: int) -> str:
+        return items.loc[iid, "name"] if iid in items.index else str(iid)
+
+    def exempt_of(iid: int) -> bool:
+        return bool(items.loc[iid, "exempt"]) if iid in items.index else False
+
+    def cur_high(iid: int):
+        if iid in latest.index and pd.notna(latest.loc[iid, "instabuy"]):
+            return float(latest.loc[iid, "instabuy"])
+        return None
+
+    pos: dict[int, dict] = {}
+    trade_log: list[dict] = []
+    for t in trades.itertuples():
+        iid = int(t.item_id)
+        qty = int(t.qty)
+        price = float(t.price)
+        p = pos.setdefault(iid, {"qty": 0.0, "avg_cost": 0.0, "realized": 0.0})
+        if t.side == "buy":
+            new_qty = p["qty"] + qty
+            p["avg_cost"] = (p["avg_cost"] * p["qty"] + price * qty) / new_qty if new_qty > 0 else 0.0
+            p["qty"] = new_qty
+        else:  # sell — proceeds net of 2% tax
+            net = taxmod.net_sell(int(price), exempt_of(iid))
+            p["realized"] += qty * (net - p["avg_cost"])
+            p["qty"] = max(0.0, p["qty"] - qty)
+        trade_log.append({
+            "id": int(t.id), "ts": str(t.ts), "item_id": iid, "name": name_of(iid),
+            "side": t.side, "qty": qty, "price": int(price), "note": getattr(t, "note", "") or "",
+        })
+
+    open_positions = []
+    realized_total = 0.0
+    unrealized_total = 0.0
+    for iid, p in pos.items():
+        realized_total += p["realized"]
+        if p["qty"] <= 0.5:
+            continue
+        ch = cur_high(iid)
+        cur_net = taxmod.net_sell(int(ch), exempt_of(iid)) if ch else None
+        unreal = p["qty"] * (cur_net - p["avg_cost"]) if cur_net is not None else None
+        if unreal is not None:
+            unrealized_total += unreal
+        open_positions.append({
+            "item_id": iid, "name": name_of(iid), "qty": int(p["qty"]),
+            "avg_cost": round(p["avg_cost"]), "cur_price": round(ch) if ch else None,
+            "cur_net": cur_net, "cost_basis": round(p["avg_cost"] * p["qty"]),
+            "market_value": round(cur_net * p["qty"]) if cur_net is not None else None,
+            "unrealized": round(unreal) if unreal is not None else None,
+            "unrealized_pct": (unreal / (p["avg_cost"] * p["qty"])) if (unreal is not None and p["avg_cost"] > 0) else None,
+        })
+
+    open_positions.sort(key=lambda x: (x["unrealized"] if x["unrealized"] is not None else 0), reverse=True)
+    trade_log.reverse()  # newest first
+    return {
+        "open_positions": open_positions,
+        "trades": trade_log,
+        "realized_total": round(realized_total),
+        "unrealized_total": round(unrealized_total),
+        "invested": round(sum(p["cost_basis"] for p in open_positions)),
+        "n_trades": len(trade_log),
+        "n_open": len(open_positions),
+    }

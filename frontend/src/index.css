@@ -189,6 +189,14 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .tf-toggle .tf:hover { color: var(--fg); }
 .tf-toggle .tf.active { background: var(--accent); color: #04121f; }
 
+.portfolio { flex: 1; overflow: auto; }
+.trade-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.trade-form input, .trade-form select { background: var(--bg-2); border: 1px solid var(--border); color: var(--fg); border-radius: 6px; padding: 6px 9px; font-size: 12px; }
+.trade-form input { width: 130px; font-family: var(--mono); }
+.trade-form input:focus, .trade-form select:focus { outline: none; border-color: var(--accent); }
+.del { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; cursor: pointer; padding: 1px 8px; font-size: 11px; }
+.del:hover { color: var(--red); border-color: var(--red); }
+
 ::-webkit-scrollbar { width: 11px; height: 11px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #1f2c3c; border-radius: 6px; border: 2px solid var(--bg); }

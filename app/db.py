@@ -76,6 +76,17 @@ CREATE TABLE IF NOT EXISTS history (
     low_vol   BIGINT,
     PRIMARY KEY (item_id, timestep, ts)
 );
+
+CREATE SEQUENCE IF NOT EXISTS trades_id_seq;
+CREATE TABLE IF NOT EXISTS trades (
+    id       BIGINT PRIMARY KEY DEFAULT nextval('trades_id_seq'),
+    ts       TIMESTAMP,
+    item_id  INTEGER,
+    side     VARCHAR,    -- 'buy' | 'sell'
+    qty      BIGINT,
+    price    BIGINT,     -- gp per unit (what you actually paid / received)
+    note     VARCHAR
+);
 """
 
 _INT_SNAPSHOT_COLS = ["item_id", "instabuy", "instasell", "avg_high", "avg_low", "high_vol", "low_vol"]
@@ -273,6 +284,40 @@ def stats(con=None) -> dict:
             "snapshot_first": rng[0],
             "snapshot_last": rng[1],
         }
+    finally:
+        if own:
+            con.close()
+
+
+# --- personal trade log -----------------------------------------------------
+def insert_trade(item_id: int, side: str, qty: int, price: int, note: str = "", ts=None, con=None) -> None:
+    own = con is None
+    con = con or connect()
+    try:
+        con.execute(
+            "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?, ?, ?, ?, ?, ?)",
+            [ts or utcnow(), int(item_id), side, int(qty), int(price), note or ""],
+        )
+    finally:
+        if own:
+            con.close()
+
+
+def get_trades_df(con=None) -> pd.DataFrame:
+    own = con is None
+    con = con or connect(read_only=True)
+    try:
+        return con.execute("SELECT * FROM trades ORDER BY ts, id").df()
+    finally:
+        if own:
+            con.close()
+
+
+def delete_trade(trade_id: int, con=None) -> None:
+    own = con is None
+    con = con or connect()
+    try:
+        con.execute("DELETE FROM trades WHERE id = ?", [int(trade_id)])
     finally:
         if own:
             con.close()
