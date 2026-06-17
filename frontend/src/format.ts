@@ -15,6 +15,14 @@ export function gpShort(n: number | null | undefined): string {
 export const pct = (x: number | null | undefined, dp = 1): string =>
   x == null || Number.isNaN(x) ? DASH : (x * 100).toFixed(dp) + "%";
 
+// signed percent for values ALREADY in percentage-points (e.g. sector index moves)
+export const pctp = (x: number | null | undefined, dp = 1): string =>
+  x == null || Number.isNaN(x) ? DASH : (x >= 0 ? "+" : "") + x.toFixed(dp) + "%";
+
+// signed percent for a FRACTION (e.g. -0.21 -> "-21.0%")
+export const spct = (x: number | null | undefined, dp = 1): string =>
+  x == null || Number.isNaN(x) ? DASH : (x >= 0 ? "+" : "") + (x * 100).toFixed(dp) + "%";
+
 export const fixed = (x: number | null | undefined, dp = 2): string =>
   x == null || Number.isNaN(x) ? DASH : x.toFixed(dp);
 

@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getCrashes, getFlips, getItems, getMeta, getSignals, type Filters, type Meta, type Row } from "./api";
+import { getCrashes, getFlips, getItems, getMeta, getSectors, getSignals, type Filters, type Meta, type Row, type SectorsResponse } from "./api";
 import { gpShort } from "./format";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
 import { ItemPanel } from "./components/ItemPanel";
 import { MarketTable } from "./components/MarketTable";
 import { Portfolio } from "./components/Portfolio";
+import { SectorGrid } from "./components/SectorGrid";
+import { SectorPanel } from "./components/SectorPanel";
 
-type Tab = "flips" | "signals" | "crashes" | "all" | "portfolio";
+type Tab = "flips" | "signals" | "crashes" | "sectors" | "all" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -24,6 +26,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "flips", label: "Flips" },
   { id: "signals", label: "Signals" },
   { id: "crashes", label: "Crashes" },
+  { id: "sectors", label: "Sectors" },
   { id: "all", label: "All items" },
   { id: "portfolio", label: "Portfolio" },
 ];
@@ -42,6 +45,8 @@ export default function App() {
   const [nonce, setNonce] = useState(0);
   const [auto, setAuto] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [sectorsData, setSectorsData] = useState<SectorsResponse | null>(null);
+  const [selectedSector, setSelectedSector] = useState<string | null>(null);
 
   useEffect(() => {
     getMeta().then(setMeta).catch(() => {});
@@ -54,6 +59,16 @@ export default function App() {
     deb.current = window.setTimeout(() => {
       setLoading(true);
       setErr(null);
+      if (tab === "sectors") {
+        getSectors(filters)
+          .then((d) => {
+            setSectorsData(d);
+            setUpdatedAt(Date.now());
+          })
+          .catch((e) => setErr(String(e)))
+          .finally(() => setLoading(false));
+        return;
+      }
       const req =
         tab === "flips" ? getFlips(filters)
         : tab === "signals" ? getSignals(filters)
@@ -124,7 +139,7 @@ export default function App() {
         </div>
         <div className="spacer" />
         <span className="note">
-          {loading ? "loading…" : `${shown.length} rows`}
+          {loading ? "loading…" : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : `${shown.length} rows`}
           {updatedAt ? ` · ${new Date(updatedAt).toLocaleTimeString()}` : ""}
           {err ? ` · error: ${err}` : ""}
         </span>
@@ -137,6 +152,32 @@ export default function App() {
       <div className="main">
         {tab === "portfolio" ? (
           <Portfolio refreshNonce={nonce} />
+        ) : tab === "sectors" ? (
+          <>
+            <div className="table-wrap">
+              <SectorGrid
+                data={sectorsData}
+                selectedKey={selectedSector}
+                onSelect={(k) => {
+                  setSelectedSector(k);
+                  setSelected(null);
+                }}
+              />
+            </div>
+            <div className={`panel-wrap ${selected != null || selectedSector ? "open" : ""}`}>
+              {selected != null ? (
+                <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
+              ) : selectedSector ? (
+                <SectorPanel
+                  sectorKey={selectedSector}
+                  filters={filters}
+                  refreshNonce={nonce}
+                  onSelectItem={setSelected}
+                  onClose={() => setSelectedSector(null)}
+                />
+              ) : null}
+            </div>
+          </>
         ) : (
           <>
             <div className="table-wrap">

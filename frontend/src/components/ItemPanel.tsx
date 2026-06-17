@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { getItem, getItemSeries, type Filters, type ItemDetail, type SeriesPoint } from "../api";
+import { getItem, getItemSeries, type Filters, type ItemDetail, type Row, type SeriesPoint } from "../api";
 import { fixed, gp, gpShort, num, pct } from "../format";
 import { PriceChart } from "./PriceChart";
 import { ProfileBars } from "./ProfileBars";
@@ -76,7 +76,7 @@ export function ItemPanel({
 
   const c = data.current;
   const st = data.stats;
-  const sr = data.signal_row ?? {};
+  const sr: Partial<Row> = data.signal_row ?? {};
 
   return (
     <div>

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from . import portfolio as pf
 from .analytics import analyze_item, item_series
+from .sectors import sector_detail, sector_table
 from .config import (
     DEFAULT_BANKROLL,
     DEFAULT_MIN_MARGIN,
@@ -117,6 +118,21 @@ def signals_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Quer
 @app.get("/api/crashes")
 def crashes_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1, le=2000)) -> list[dict]:
     return crash_table(th, limit=limit)
+
+
+@app.get("/api/sectors")
+def sectors_endpoint(th: Thresholds = Depends(get_thresholds)) -> dict:
+    """Sector grid: cap-weighted index move per sector (1h/6h/24h/7d) + sparkline."""
+    return sector_table(th)
+
+
+@app.get("/api/sector/{key}")
+def sector_detail_endpoint(key: str, th: Thresholds = Depends(get_thresholds)) -> dict:
+    """One sector's index time series + ranked constituents."""
+    d = sector_detail(key, th)
+    if d is None:
+        raise HTTPException(status_code=404, detail=f"unknown sector '{key}'")
+    return d
 
 
 @app.get("/api/item/{item_id}")
