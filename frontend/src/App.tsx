@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getCrashes, getFlips, getInvest, getItems, getMeta, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Row, type SectorsResponse } from "./api";
+import { getCrashes, getFlips, getInvest, getItems, getMeta, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Row, type SectorsResponse } from "./api";
 import { gpShort } from "./format";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
 import { InvestTable } from "./components/InvestTable";
 import { ItemPanel } from "./components/ItemPanel";
 import { MarketTable } from "./components/MarketTable";
+import { OvernightTable } from "./components/OvernightTable";
 import { Portfolio } from "./components/Portfolio";
 import { SectorGrid } from "./components/SectorGrid";
 import { SectorPanel } from "./components/SectorPanel";
 import { VolumeTable } from "./components/VolumeTable";
 
-type Tab = "flips" | "invest" | "crashes" | "movers" | "sectors" | "all" | "portfolio";
+type Tab = "flips" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -32,6 +33,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "invest", label: "Invest" },
   { id: "crashes", label: "Crashes" },
   { id: "movers", label: "Movers" },
+  { id: "overnight", label: "Overnight" },
   { id: "sectors", label: "Sectors" },
   { id: "all", label: "All items" },
   { id: "portfolio", label: "Portfolio" },
@@ -90,6 +92,7 @@ export default function App() {
         tab === "flips" ? getFlips(filters)
         : tab === "crashes" ? getCrashes(filters)
         : tab === "movers" ? getVolume(filters)
+        : tab === "overnight" ? getOvernight(filters)
         : getItems(filters);
       req
         .then((r) => {
@@ -232,10 +235,21 @@ export default function App() {
                   direction, then open the item to dig in.
                 </div>
               )}
+              {tab === "overnight" && (
+                <div className="crash-banner">
+                  Overnight lowball offers — place these buy offers (at "Buy offer") before you log off; they fill
+                  only if the price dumps overnight, then recover toward "Sell target" the next day. Backtested as a
+                  modest, infrequent reversion edge: a ~10% offer fills ~5% of nights and recovers ~79% of the time for
+                  ~+7%. Set several and expect most to <b>not</b> fill. (The directional "prices rise overnight" bet
+                  does not work — this is dip-catching via resting orders.)
+                </div>
+              )}
               {tab === "crashes" ? (
                 <CrashTable rows={shown} selectedId={selected} onSelect={setSelected} />
               ) : tab === "movers" ? (
                 <VolumeTable rows={shown} selectedId={selected} onSelect={setSelected} />
+              ) : tab === "overnight" ? (
+                <OvernightTable rows={shown} selectedId={selected} onSelect={setSelected} />
               ) : (
                 <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
               )}

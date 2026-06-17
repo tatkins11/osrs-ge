@@ -64,6 +64,10 @@ export interface Row {
   unrealized?: number | null;
   unrealized_pct?: number | null;
   sell_ok?: boolean;
+  on_buy?: number | null;
+  on_target?: number | null;
+  on_margin?: number | null;
+  on_roi?: number | null;
   reasons?: string[];
   [k: string]: unknown;
 }
@@ -149,6 +153,7 @@ export const getSignals = (f: Filters, limit = 250) => get<Row[]>(`/api/signals?
 export const getItems = (f: Filters) => get<Row[]>(`/api/items?${qs(f)}`);
 export const getCrashes = (f: Filters, limit = 200) => get<Row[]>(`/api/crashes?${qs(f)}&limit=${limit}`);
 export const getVolume = (f: Filters, limit = 200) => get<Row[]>(`/api/volume?${qs(f)}&limit=${limit}`);
+export const getOvernight = (f: Filters, limit = 150) => get<Row[]>(`/api/overnight?${qs(f)}&limit=${limit}`);
 
 export interface InvestResponse {
   buys: Row[];

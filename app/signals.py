@@ -43,6 +43,7 @@ class Thresholds:
     crash_recover_to: float = 0.95            # recovery target as a fraction of the established level
     value_min_discount: float = 0.08          # value buy: at least this far below the established level
     value_min_confidence: int = 40            # value buy: minimum 0-100 confidence to surface
+    overnight_disc: float = 0.10              # overnight lowball: buy offer this far below the current bid
     vol_spike: float = 2.0                    # "unusual volume": last 24h >= this multiple of a typical day
     z_buy: float = -1.5
     z_strong_buy: float = -2.5
@@ -342,6 +343,37 @@ def _value_reasons(r: dict) -> list[str]:
     if vold:
         out.append(f"~{vold:,.0f} traded/day — liquid enough to enter and exit")
     return [x for x in out if x]
+
+
+def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) -> list[dict]:
+    """Lowball overnight buy offers: place a buy ~overnight_disc below the bid on a
+    liquid, stable item; it fills only if the price dumps overnight (caught while you
+    sleep), then sell next day toward fair value. Backtest-validated as a modest,
+    infrequent reversion edge (deep offers recover; shallow ones bleed the spread)."""
+    th = th or Thresholds()
+    d = market_signals(th, con)
+    if d.empty:
+        return []
+    disc = th.overnight_disc
+    bid = d["buy_price"].astype("float64")
+    est = d["established"].astype("float64")
+    exempt = d["exempt"].to_numpy()
+    buy_offer = np.floor(bid * (1.0 - disc))
+    net_t = est - taxmod.sell_tax_array(est, exempt)            # after-tax proceeds at fair value
+    d["on_buy"] = buy_offer
+    d["on_target"] = np.round(est)
+    d["on_margin"] = net_t - buy_offer                          # per item, after tax, if it recovers to fair value
+    d["on_roi"] = np.where(buy_offer > 0, d["on_margin"] / buy_offer, np.nan)
+    gpv = d["mid"].fillna(0) * d["vol_daily_7d"].fillna(0)
+    elig = (
+        d["tradeable"] & est.notna()
+        & (buy_offer >= th.min_price) & (buy_offer <= th.max_price)
+        & (d["level_health"].fillna(0) >= 0.6)                  # stable level -> a caught dip is likely to revert
+        & (d["on_margin"] > 0) & (d["on_roi"] >= th.min_roi)
+        & (gpv >= 25_000_000)
+    )
+    d = d[elig].sort_values("on_roi", ascending=False).head(limit)
+    return _records(d, TABLE_COLS + ["on_buy", "on_target", "on_margin", "on_roi"])
 
 
 def full_table(th: Thresholds | None = None, con=None) -> list[dict]:

@@ -36,6 +36,7 @@ from .signals import (
     full_table,
     invest_table,
     market_signals,
+    overnight_table,
     reversion_table,
     volume_table,
 )
@@ -74,6 +75,7 @@ def get_thresholds(
     vol_spike: float = Query(2.0, gt=1),
     value_min_discount: float = Query(0.08, ge=0, lt=1),
     value_min_confidence: int = Query(40, ge=0, le=100),
+    overnight_disc: float = Query(0.10, gt=0, lt=1),
     z_buy: float = Query(-1.5),
     z_sell: float = Query(1.5),
     max_alloc_frac: float = Query(0.15, gt=0, le=1),
@@ -91,6 +93,7 @@ def get_thresholds(
         vol_spike=vol_spike,
         value_min_discount=value_min_discount,
         value_min_confidence=value_min_confidence,
+        overnight_disc=overnight_disc,
         z_buy=z_buy,
         z_sell=z_sell,
         bankroll=bankroll,
@@ -167,6 +170,12 @@ def invest_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query
 def volume_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1, le=2000)) -> list[dict]:
     """Items with unusual recent volume — an early-warning 'in play' screen."""
     return volume_table(th, limit=limit)
+
+
+@app.get("/api/overnight")
+def overnight_endpoint(th: Thresholds = Depends(get_thresholds), limit: int = Query(100, ge=1, le=2000)) -> list[dict]:
+    """Lowball buy offers to place overnight (dip-catch reversion via resting orders)."""
+    return overnight_table(th, limit=limit)
 
 
 @app.get("/api/sectors")
