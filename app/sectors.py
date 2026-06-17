@@ -34,7 +34,8 @@ from .signals import Thresholds, market_signals
 log = logging.getLogger("sectors")
 
 WEIGHT_CAP = 0.20              # no single item may exceed 20% of its group's weight
-SECTOR_MIN_DAILY_VOL = 500     # 7-day liquidity bar for sector membership (no price floor)
+SECTOR_MIN_DAILY_VOL = 500     # 7-day liquidity bar (units/day) for sector membership (no price floor)
+SECTOR_MIN_GP_VOL = 25_000_000 # ...OR this much gp traded/day (admits high-value low-unit items: cosmetics, megarares)
 MARKET_KEY = "market"
 # how much history (days) to pull per timestep when building indices
 _DAYS_FOR = {"1h": 15, "6h": 95, "24h": 366}
@@ -58,10 +59,11 @@ SECTORS: list[tuple[str, str, str, list[str], list[str]]] = [
     ("charges", "Charges & Scales", "Consumable charges for powered weapons & gear",
      [r"zulrah's scales", r"revenant ether", r"\bdemon tear\b", r"sunfire splinters",
       r"rubium splinters", r"ancient essence", r"aether catalyst", r"bottled (storm|dread|mind)",
-      r"bracelet of ethereum", r"\bblighted\b", r"\bnumulite\b", r"eye of ayak"], []),
+      r"bracelet of ethereum", r"\bblighted\b", r"\bnumulite\b"], []),
     ("fletching_mats", "Fletching Materials", "Tips, shafts, unstrung bows, bow string, feathers",
      [r"\b(arrow|dart|javelin|bolt) ?tips?\b", r"\b(arrow|javelin) ?shafts?\b", r"\bbow string\b",
-      r"\bunstrung\b", r"\(u\)$", r"\(unf\)$", r"headless arrow", r"\bfeather"], []),
+      r"\bunstrung\b", r"((short|long)bow|crossbow) \(u\)$", r"bolts? \(unf\)$",
+      r"headless arrow", r"\bfeather"], []),
     ("ammo", "Ammunition", "Finished arrows, bolts, darts, javelins, chinchompas",
      [r"\barrows?\b", r"\bbolts?\b", r"\bdarts?\b", r"\bjavelins?\b", r"\bknives\b",
       r"\bchinchompas?\b", r"\bcannonball", r"throwing axe"],
@@ -102,7 +104,7 @@ SECTORS: list[tuple[str, str, str, list[str], list[str]]] = [
       r"eternal (boots|crystal)", r"ancestral", r"\bmasori\b", r"\btorva\b", r"\bvirtus\b", r"zaryte",
       r"dragon hunter", r"voidwaker", r"venator", r"osmumten", r"\belysian\b", r"\barcane\b",
       r"\bspectral\b", r"oathplate", r"confliction gauntlets", r"tormented synapse",
-      r"soulreaper axe", r"noxious halberd", r"inquisitor's", r"\bdinh's\b"], []),
+      r"soulreaper axe", r"noxious halberd", r"inquisitor's", r"\bdinh's\b", r"eye of ayak"], []),
     ("magic_gear", "Magic Gear", "Staves, robes, tridents, wards, tomes",
      [r"\bbattlestaff\b", r"\bstaff\b", r"\bstaves\b", r"\bwand\b", r"\btome\b", r"\bward\b",
       r"\bmystic\b", r"\binfinity\b", r"\btrident\b", r"mage's book", r"\borb\b", r"\bkodai\b",
@@ -181,7 +183,9 @@ def _liquid(th: Thresholds, con) -> pd.DataFrame:
     d = market_signals(th, con)
     if d.empty:
         return d
-    d = d[d["established"].notna() & (d["vol_daily_7d"].fillna(0) >= SECTOR_MIN_DAILY_VOL)].copy()
+    vol = d["vol_daily_7d"].fillna(0.0)
+    gpv = d["mid"].fillna(0.0) * vol
+    d = d[d["established"].notna() & ((vol >= SECTOR_MIN_DAILY_VOL) | (gpv >= SECTOR_MIN_GP_VOL))].copy()
     d["dev"] = d["drawdown"]                                   # (mid - established) / established
     d["gp_vol"] = (d["mid"] * d["vol_daily_7d"].fillna(0.0)).clip(lower=0.0)
     d["sector"] = classify_series(d["name"])
