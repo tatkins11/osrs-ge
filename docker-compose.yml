@@ -3,13 +3,15 @@
 #   collector polls the OSRS API every 5 min, 24/7
 #   caddy     HTTPS + login in front of the API
 # All three share one DuckDB file via the `data` volume.
+# Secrets come from the .env file (env_file) — values are passed literally, so
+# the bcrypt hash needs NO escaping.
 
 services:
   api:
     build: .
     image: osrs-ge-terminal:latest
-    environment:
-      - OSRS_GE_USER_AGENT=${OSRS_GE_USER_AGENT}
+    env_file:
+      - .env
     volumes:
       - data:/app/data
     expose:
@@ -21,8 +23,8 @@ services:
     depends_on:
       - api
     command: python -m app.collector
-    environment:
-      - OSRS_GE_USER_AGENT=${OSRS_GE_USER_AGENT}
+    env_file:
+      - .env
     volumes:
       - data:/app/data
     restart: unless-stopped
@@ -31,9 +33,8 @@ services:
     image: caddy:2
     depends_on:
       - api
-    environment:
-      - DASH_USER=${DASH_USER}
-      - DASH_HASH=${DASH_HASH}
+    env_file:
+      - .env
     ports:
       - "80:80"
       - "443:443"

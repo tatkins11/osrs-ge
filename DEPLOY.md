@@ -81,15 +81,17 @@ so you start clean on the server.)*
 
 ## 4. Configure secrets
 
+Generate a login password hash and write `.env` in one shot (change the
+password and, if you like, the user/contact):
+
 ```bash
-cp .env.example .env
-
-# Generate a password hash for the dashboard login:
-docker run --rm caddy:2 caddy hash-password --plaintext 'CHOOSE-A-PASSWORD'
-
-nano .env     # set DASH_USER, paste the hash into DASH_HASH, set your contact UA
+HASH=$(docker run --rm caddy:2 caddy hash-password --plaintext 'CHOOSE-A-PASSWORD')
+printf 'OSRS_GE_USER_AGENT=osrs-ge-terminal/0.1 (contact: you@example.com)\nDASH_USER=admin\nDASH_HASH=%s\n' "$HASH" > .env
+cat .env   # sanity-check it looks right
 ```
-If Caddy later rejects the hash, double every `$` in it (`$` → `$$`).
+
+Prefer an editor instead? `cp .env.example .env` then `nano .env`. (No `$`
+escaping needed — `env_file` passes the hash through literally.)
 
 ---
 
