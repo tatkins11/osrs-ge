@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 import duckdb
 import pandas as pd
 
-from .config import DB_PATH
+from .config import DB_PATH, TRADES_DB_PATH
 from .tax import is_exempt
 
 log = logging.getLogger(__name__)
@@ -289,35 +289,71 @@ def stats(con=None) -> dict:
             con.close()
 
 
-# --- personal trade log -----------------------------------------------------
-def insert_trade(item_id: int, side: str, qty: int, price: int, note: str = "", ts=None, con=None) -> None:
-    own = con is None
-    con = con or connect()
+# --- personal trade log (separate DB file; API-owned, no lock fight with the collector) ---
+_TRADES_SCHEMA = """
+CREATE SEQUENCE IF NOT EXISTS trades_id_seq;
+CREATE TABLE IF NOT EXISTS trades (
+    id       BIGINT PRIMARY KEY DEFAULT nextval('trades_id_seq'),
+    ts       TIMESTAMP,
+    item_id  INTEGER,
+    side     VARCHAR,
+    qty      BIGINT,
+    price    BIGINT,
+    note     VARCHAR
+);
+"""
+_TRADE_COLS = ["id", "ts", "item_id", "side", "qty", "price", "note"]
+
+
+def connect_trades(read_only: bool = False, retries: int = 12, retry_wait: float = 0.5):
+    """Open the trades DB (separate file from the collector's prices DB)."""
+    last_err: Exception | None = None
+    for _ in range(retries):
+        try:
+            return duckdb.connect(str(TRADES_DB_PATH), read_only=read_only)
+        except duckdb.Error as e:
+            last_err = e
+            time.sleep(retry_wait)
+    raise RuntimeError(f"could not open trades DB at {TRADES_DB_PATH}: {last_err}") from last_err
+
+
+def ensure_trades_db() -> None:
+    """Create the trades file + schema if missing (call once at API startup)."""
+    con = connect_trades()
     try:
+        con.execute(_TRADES_SCHEMA)
+    finally:
+        con.close()
+
+
+def insert_trade(item_id: int, side: str, qty: int, price: int, note: str = "", ts=None) -> None:
+    con = connect_trades()
+    try:
+        con.execute(_TRADES_SCHEMA)  # idempotent; safe if startup ensure was skipped
         con.execute(
             "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?, ?, ?, ?, ?, ?)",
             [ts or utcnow(), int(item_id), side, int(qty), int(price), note or ""],
         )
     finally:
-        if own:
-            con.close()
+        con.close()
 
 
-def get_trades_df(con=None) -> pd.DataFrame:
-    own = con is None
-    con = con or connect(read_only=True)
+def get_trades_df() -> pd.DataFrame:
+    try:
+        con = connect_trades(read_only=True)
+    except RuntimeError:
+        return pd.DataFrame(columns=_TRADE_COLS)  # file not created yet -> no trades
     try:
         return con.execute("SELECT * FROM trades ORDER BY ts, id").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=_TRADE_COLS)
     finally:
-        if own:
-            con.close()
+        con.close()
 
 
-def delete_trade(trade_id: int, con=None) -> None:
-    own = con is None
-    con = con or connect()
+def delete_trade(trade_id: int) -> None:
+    con = connect_trades()
     try:
         con.execute("DELETE FROM trades WHERE id = ?", [int(trade_id)])
     finally:
-        if own:
-            con.close()
+        con.close()

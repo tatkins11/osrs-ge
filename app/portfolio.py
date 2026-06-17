@@ -17,7 +17,7 @@ def compute(con=None) -> dict:
     own = con is None
     con = con or connect(read_only=True)
     try:
-        trades = get_trades_df(con)
+        trades = get_trades_df()  # separate trades DB (own lock); items/latest use the prices con
         items = get_items_df(con).set_index("item_id")
         latest = latest_snapshot_df(con).set_index("item_id")
     finally:

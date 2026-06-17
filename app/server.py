@@ -25,7 +25,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import delete_trade, ensure_db, get_items_df, insert_trade, stats
+from .db import delete_trade, ensure_trades_db, get_items_df, insert_trade, stats
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -50,6 +50,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Trades use their own DB file (API-owned); create it up front so trade reads/writes
+# never fight the collector for the prices-DB lock. The API only ever opens the prices
+# DB read-only.
+try:
+    ensure_trades_db()
+except Exception:
+    log.exception("could not initialise trades DB")
 
 
 def get_thresholds(
@@ -92,13 +100,11 @@ def get_thresholds(
 
 @app.get("/api/health")
 def health() -> dict:
-    ensure_db()
     return {"status": "ok", "data_mode": "demo" if DEMO_MARKER.exists() else "live", "coverage": stats()}
 
 
 @app.get("/api/meta")
 def meta() -> dict:
-    ensure_db()
     return {
         "data_mode": "demo" if DEMO_MARKER.exists() else "live",
         "coverage": stats(),

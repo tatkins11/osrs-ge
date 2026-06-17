@@ -9,6 +9,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("OSRS_GE_DATA_DIR", PROJECT_ROOT / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = Path(os.getenv("OSRS_GE_DB_PATH", DATA_DIR / "osrs_ge.duckdb"))
+# Trades live in their OWN DuckDB file so the API can write them without fighting the
+# collector for the prices-DB lock (DuckDB allows only one read-write process per file).
+TRADES_DB_PATH = Path(os.getenv("OSRS_GE_TRADES_DB_PATH", DATA_DIR / "trades.duckdb"))
 DEMO_MARKER = DATA_DIR / ".demo_mode"  # present when the DB holds synthetic demo data
 
 # --- OSRS Wiki Real-time Prices API -----------------------------------------
