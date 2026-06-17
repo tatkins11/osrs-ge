@@ -31,6 +31,7 @@ export function ItemPanel({
   const [loading, setLoading] = useState(false);
   const [tf, setTf] = useState("1h");
   const [tfSeries, setTfSeries] = useState<SeriesPoint[] | null>(null);
+  const [chartType, setChartType] = useState<"line" | "candle">("line");
 
   useEffect(() => {
     if (itemId == null) {
@@ -143,15 +144,24 @@ export function ItemPanel({
       <div className="panel-section">
         <div className="tf-row">
           <h4>Price history · MA · Bollinger · volume</h4>
-          <div className="tf-toggle">
-            {([["1h", "2wk"], ["6h", "3mo"], ["24h", "1yr"]] as const).map(([v, l]) => (
-              <button key={v} className={`tf ${tf === v ? "active" : ""}`} onClick={() => setTf(v)}>
-                {l}
-              </button>
-            ))}
+          <div style={{ display: "flex", gap: 8 }}>
+            <div className="tf-toggle">
+              {([["line", "Line"], ["candle", "Candles"]] as const).map(([v, l]) => (
+                <button key={v} className={`tf ${chartType === v ? "active" : ""}`} onClick={() => setChartType(v)}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <div className="tf-toggle">
+              {([["1h", "2wk"], ["6h", "3mo"], ["24h", "1yr"]] as const).map(([v, l]) => (
+                <button key={v} className={`tf ${tf === v ? "active" : ""}`} onClick={() => setTf(v)}>
+                  {l}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-        <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} />
+        <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} />
       </div>
 
       <div className="panel-section">
