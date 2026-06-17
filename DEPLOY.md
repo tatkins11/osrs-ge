@@ -89,7 +89,8 @@ password and, if you like, the user/contact):
 # not as variable references.
 HASH=$(docker run --rm caddy:2 caddy hash-password --plaintext 'CHOOSE-A-PASSWORD' | sed 's/\$/\$\$/g')
 printf 'OSRS_GE_USER_AGENT=osrs-ge-terminal/0.1 (contact: you@example.com)\nDASH_USER=admin\nDASH_HASH=%s\n' "$HASH" > .env
-cat .env   # DASH_HASH should look like $$2a$$14$$...
+echo "SITE_ADDRESS=https://$(curl -s ifconfig.me)" >> .env   # the dashboard's public address
+cat .env   # DASH_HASH should be $$2a$$14$$..., SITE_ADDRESS should show your IP
 ```
 
 Prefer an editor? `cp .env.example .env` then `nano .env` — but then manually
@@ -142,18 +143,11 @@ start fresh, `docker compose down -v` (deletes the volume).
 ## Later: a real domain (trusted HTTPS, no browser warning)
 
 1. Buy a domain (~$10/yr), add an **A record** pointing to `YOUR_SERVER_IP`.
-2. Edit `Caddyfile`: replace the first two lines
-   ```
-   :443 {
-       tls internal
-   ```
-   with just
-   ```
-   your-domain.com {
-   ```
-3. `docker compose restart caddy` — Caddy auto-fetches a free, trusted Let's
-   Encrypt certificate. Now `https://your-domain.com` is green-lock clean, and a
-   real domain is also less likely to be category-filtered at work than a bare IP.
+2. In `.env`, change `SITE_ADDRESS=https://YOUR_IP` to `SITE_ADDRESS=your-domain.com`.
+3. In `Caddyfile`, delete the `tls internal` line.
+4. `docker compose up -d` — Caddy auto-fetches a free, trusted Let's Encrypt
+   certificate. `https://your-domain.com` is now green-lock clean, and a real
+   domain is also less likely to be category-filtered at work than a bare IP.
 
 ---
 
