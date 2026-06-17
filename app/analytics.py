@@ -272,6 +272,54 @@ def analyze_item(item_id: int, con=None, max_points: int = 2000) -> dict | None:
     return out
 
 
+# Multi-horizon % change windows. Each picks the coarsest history timestep that
+# still covers it: 1h history spans ~2 weeks, 6h ~3 months, 24h ~1 year.
+HORIZONS: list[tuple[str, int, str]] = [
+    ("1d", 24, "1h"),
+    ("1w", 168, "1h"),
+    ("2w", 336, "1h"),
+    ("1mo", 720, "6h"),
+    ("3mo", 2160, "6h"),
+    ("1y", 8760, "24h"),
+]
+
+
+def _mid_series(hist: pd.DataFrame) -> pd.Series:
+    """ts-indexed mid-price series from a history frame (sorted, NaN dropped)."""
+    if hist is None or hist.empty:
+        return pd.Series(dtype="float64")
+    s = hist.sort_values("ts").copy()
+    s["mid"] = (s["avg_high"] + s["avg_low"]) / 2.0
+    return s.dropna(subset=["mid"]).set_index("ts")["mid"]
+
+
+def series_changes(by_timestep: dict[str, pd.Series]) -> dict:
+    """% change over each HORIZON, read off the appropriate timestep's mid series.
+    Returns fractions (e.g. -0.05), or None when there isn't enough history."""
+    out: dict = {}
+    for label, hours, ts in HORIZONS:
+        s = by_timestep.get(ts)
+        if s is None or s.empty:
+            out[label] = None
+            continue
+        now_ts, now = s.index[-1], s.iloc[-1]
+        past = s.asof(now_ts - pd.Timedelta(hours=hours))
+        out[label] = float(now / past - 1.0) if (pd.notna(past) and past and past > 0) else None
+    return out
+
+
+def item_changes(item_id: int, con=None) -> dict:
+    """1d/1w/2w/1mo/3mo/1y price change for one item (fractions)."""
+    own = con is None
+    con = con or connect(read_only=True)
+    try:
+        by_ts = {ts: _mid_series(item_history_df(item_id, ts, con)) for ts in ("1h", "6h", "24h")}
+    finally:
+        if own:
+            con.close()
+    return series_changes(by_ts)
+
+
 def item_series(item_id: int, timestep: str = "1h", con=None, max_points: int = 2000) -> list[dict]:
     """Price + indicator series at a chosen timestep, for the chart's timeframe toggle
     (1h ~= 2 weeks, 6h ~= 3 months, 24h ~= 1 year of backfilled history)."""

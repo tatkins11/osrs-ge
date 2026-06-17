@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { getItem, getItemSeries, type Filters, type ItemDetail, type Row, type SeriesPoint } from "../api";
-import { fixed, gp, gpShort, num, pct } from "../format";
+import { getItem, getItemSeries, HORIZON_KEYS, type Filters, type ItemDetail, type Row, type SeriesPoint } from "../api";
+import { fixed, gp, gpShort, num, pct, spct } from "../format";
+import { ChartModal } from "./ChartModal";
 import { PriceChart } from "./PriceChart";
 import { ProfileBars } from "./ProfileBars";
 import { SignalBadge } from "./SignalBadge";
@@ -32,6 +33,7 @@ export function ItemPanel({
   const [tf, setTf] = useState("1h");
   const [tfSeries, setTfSeries] = useState<SeriesPoint[] | null>(null);
   const [chartType, setChartType] = useState<"line" | "candle">("line");
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (itemId == null) {
@@ -141,6 +143,22 @@ export function ItemPanel({
         </div>
       </div>
 
+      {data.changes && (
+        <div className="panel-section">
+          <h4>Price change</h4>
+          <div className="tiles changes">
+            {HORIZON_KEYS.map((k) => (
+              <Tile
+                key={k}
+                k={k}
+                v={spct(data.changes![k])}
+                cls={(data.changes![k] ?? 0) > 0 ? "pos" : (data.changes![k] ?? 0) < 0 ? "neg" : ""}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="panel-section">
         <div className="tf-row">
           <h4>Price history · MA · Bollinger · volume</h4>
@@ -159,6 +177,7 @@ export function ItemPanel({
                 </button>
               ))}
             </div>
+            <button className="expand" title="Expand chart" onClick={() => setExpanded(true)}>⤢</button>
           </div>
         </div>
         <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} />
@@ -197,6 +216,15 @@ export function ItemPanel({
         <h4>Day-of-week seasonality</h4>
         <ProfileBars rows={data.dow_profile.map((p) => ({ label: DOW[p.dow ?? 0], dev: p.avg_dev }))} />
       </div>
+
+      {expanded && (
+        <ChartModal
+          title={`${data.item.name} · price (${tf === "1h" ? "2wk" : tf === "6h" ? "3mo" : "1yr"})`}
+          onClose={() => setExpanded(false)}
+        >
+          <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} className="modal-chart" />
+        </ChartModal>
+      )}
     </div>
   );
 }

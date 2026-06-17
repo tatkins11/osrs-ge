@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import portfolio as pf
-from .analytics import analyze_item, item_series
+from .analytics import analyze_item, item_changes, item_series
 from .sectors import sector_detail, sector_table
 from .config import (
     DEFAULT_BANKROLL,
@@ -127,9 +127,15 @@ def sectors_endpoint(th: Thresholds = Depends(get_thresholds)) -> dict:
 
 
 @app.get("/api/sector/{key}")
-def sector_detail_endpoint(key: str, th: Thresholds = Depends(get_thresholds)) -> dict:
-    """One sector's index time series + ranked constituents."""
-    d = sector_detail(key, th)
+def sector_detail_endpoint(
+    key: str,
+    th: Thresholds = Depends(get_thresholds),
+    timeframe: str = Query("2wk"),
+) -> dict:
+    """One sector's index time series (2wk/3mo/1yr) + ranked constituents."""
+    if timeframe not in {"2wk", "3mo", "1yr"}:
+        raise HTTPException(status_code=400, detail="invalid timeframe")
+    d = sector_detail(key, th, timeframe=timeframe)
     if d is None:
         raise HTTPException(status_code=404, detail=f"unknown sector '{key}'")
     return d
@@ -140,6 +146,7 @@ def item_detail(item_id: int, th: Thresholds = Depends(get_thresholds)) -> dict:
     detail = analyze_item(item_id)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"item {item_id} not found")
+    detail["changes"] = item_changes(item_id)
     ms = market_signals(th)
     if not ms.empty:
         row = ms[ms["item_id"] == item_id]

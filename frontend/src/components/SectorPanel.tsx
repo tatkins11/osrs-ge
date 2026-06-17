@@ -1,21 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ColorType, createChart, type UTCTimestamp } from "lightweight-charts";
-import { getSectorDetail, type Filters, type SectorDetail, type SectorIndexPoint } from "../api";
-import { gp, gpShort, pctp, spct } from "../format";
+import { getSectorDetail, HORIZON_KEYS, type Filters, type SectorDetail, type SectorIndexPoint } from "../api";
+import { gp, gpShort, spct } from "../format";
+import { ChartModal } from "./ChartModal";
 
 const cls = (x: number | null | undefined) => (x == null ? "" : x > 0 ? "pos" : x < 0 ? "neg" : "");
-
-function Tile({ k, v, cls = "" }: { k: string; v: ReactNode; cls?: string }) {
-  return (
-    <div className="tile">
-      <div className="k">{k}</div>
-      <div className={`v ${cls}`}>{v}</div>
-    </div>
-  );
-}
+const TFS: [string, string][] = [["2wk", "2wk"], ["3mo", "3mo"], ["1yr", "1yr"]];
 
 /** Sector index as a baseline area chart: green above the 0% start, red below. */
-function SectorChart({ series }: { series: SectorIndexPoint[] }) {
+function SectorChart({ series, className = "" }: { series: SectorIndexPoint[]; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!ref.current || !series?.length) return;
@@ -48,10 +41,10 @@ function SectorChart({ series }: { series: SectorIndexPoint[] }) {
     chart.timeScale().fitContent();
     return () => chart.remove();
   }, [series]);
-  return <div className="chart-box" ref={ref} />;
+  return <div className={`chart-box ${className}`} ref={ref} />;
 }
 
-/** Deep-dive for one sector: index chart + ranked constituents (click through to item). */
+/** Deep-dive for one sector: multi-horizon moves + index chart (timeframe toggle) + constituents. */
 export function SectorPanel({
   sectorKey,
   filters,
@@ -67,18 +60,22 @@ export function SectorPanel({
 }) {
   const [d, setD] = useState<SectorDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [tf, setTf] = useState("2wk");
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => setTf("2wk"), [sectorKey]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getSectorDetail(sectorKey, filters)
+    getSectorDetail(sectorKey, filters, tf)
       .then((r) => !cancelled && setD(r))
       .catch(() => !cancelled && setD(null))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [sectorKey, filters, refreshNonce]);
+  }, [sectorKey, filters, refreshNonce, tf]);
 
   if (loading && !d) return <div className="placeholder">Loading…</div>;
   if (!d) return <div className="placeholder">No data for this sector.</div>;
@@ -88,21 +85,35 @@ export function SectorPanel({
       <div className="panel-head">
         <span className="close" onClick={onClose}>×</span>
         <div className="title">{d.label}</div>
-        <div className="sub">{d.blurb} · cap-weighted index, last ~2 weeks</div>
+        <div className="sub">{d.blurb} · cap-weighted index</div>
       </div>
 
       <div className="panel-section">
-        <h4>Index move</h4>
-        <div className="tiles">
-          <Tile k="1h" v={pctp(d.ret_1h)} cls={cls(d.ret_1h)} />
-          <Tile k="6h" v={pctp(d.ret_6h)} cls={cls(d.ret_6h)} />
-          <Tile k="24h" v={pctp(d.ret_24h)} cls={cls(d.ret_24h)} />
-          <Tile k="7d" v={pctp(d.ret_7d)} cls={cls(d.ret_7d)} />
+        <h4>Price change</h4>
+        <div className="tiles changes">
+          {HORIZON_KEYS.map((k) => (
+            <div className="tile" key={k}>
+              <div className="k">{k}</div>
+              <div className={`v ${cls(d.changes[k])}`}>{spct(d.changes[k])}</div>
+            </div>
+          ))}
         </div>
       </div>
 
       <div className="panel-section">
-        <h4>Sector index · % move vs 2 weeks ago</h4>
+        <div className="tf-row">
+          <h4>Sector index · % move</h4>
+          <div style={{ display: "flex", gap: 8 }}>
+            <div className="tf-toggle">
+              {TFS.map(([v, l]) => (
+                <button key={v} className={`tf ${tf === v ? "active" : ""}`} onClick={() => setTf(v)}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <button className="expand" title="Expand chart" onClick={() => setExpanded(true)}>⤢</button>
+          </div>
+        </div>
         <SectorChart series={d.series} />
       </div>
 
@@ -133,6 +144,12 @@ export function SectorPanel({
           </table>
         </div>
       </div>
+
+      {expanded && (
+        <ChartModal title={`${d.label} · index (${tf})`} onClose={() => setExpanded(false)}>
+          <SectorChart series={d.series} className="modal-chart" />
+        </ChartModal>
+      )}
     </div>
   );
 }

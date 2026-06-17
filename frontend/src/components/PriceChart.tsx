@@ -6,7 +6,15 @@ import type { SeriesPoint } from "../api";
  *  type="line": mid-price line. type="candle": OHLC candles where each period's
  *  insta-buy (avg_high) and insta-sell (avg_low) form the wick range and the mid
  *  open->close forms the body. */
-export function PriceChart({ series, type = "line" }: { series: SeriesPoint[]; type?: "line" | "candle" }) {
+export function PriceChart({
+  series,
+  type = "line",
+  className = "",
+}: {
+  series: SeriesPoint[];
+  type?: "line" | "candle";
+  className?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,5 +77,5 @@ export function PriceChart({ series, type = "line" }: { series: SeriesPoint[]; t
     return () => chart.remove();
   }, [series, type]);
 
-  return <div className="chart-box" ref={ref} />;
+  return <div className={`chart-box ${className}`} ref={ref} />;
 }

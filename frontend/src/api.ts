@@ -78,6 +78,7 @@ export interface ItemDetail {
   hour_profile: ProfilePoint[];
   dow_profile: ProfilePoint[];
   signal_row?: Row;
+  changes?: Changes;
 }
 
 export interface Meta {
@@ -126,11 +127,22 @@ export const getItem = (id: number, f: Filters) => get<ItemDetail>(`/api/item/${
 export const getItemSeries = (id: number, timestep: string) =>
   get<{ timestep: string; series: SeriesPoint[] }>(`/api/item/${id}/series?timestep=${encodeURIComponent(timestep)}`);
 
+// --- multi-horizon % changes (fractions, e.g. -0.05 = -5%) -----------------
+export interface Changes {
+  "1d": number | null;
+  "1w": number | null;
+  "2w": number | null;
+  "1mo": number | null;
+  "3mo": number | null;
+  "1y": number | null;
+}
+export const HORIZON_KEYS: (keyof Changes)[] = ["1d", "1w", "2w", "1mo", "3mo", "1y"];
+
 // --- sectors / ETF tracker -------------------------------------------------
 export interface SectorMover {
   item_id: number;
   name: string;
-  dev: number; // fraction vs 7d baseline
+  dev: number | null; // fraction vs 7d baseline
 }
 export interface SectorCard {
   key: string;
@@ -139,17 +151,14 @@ export interface SectorCard {
   n_items: number;
   gp_vol: number;
   dev: number | null; // weighted fraction vs 7d baseline (cheap/expensive)
-  ret_1h: number | null; // percentage-points
-  ret_6h: number | null;
-  ret_24h: number | null;
-  ret_7d: number | null;
+  changes: Changes;
   spark: number[];
   top_up: SectorMover[];
   top_down: SectorMover[];
 }
 export interface SectorsResponse {
   sectors: SectorCard[];
-  coverage: { classified: number };
+  coverage: { classified: number; liquid: number };
 }
 export interface SectorConstituent {
   item_id: number;
@@ -168,17 +177,15 @@ export interface SectorDetail {
   key: string;
   label: string;
   blurb: string;
+  timeframe: string;
   series: SectorIndexPoint[];
+  changes: Changes;
   constituents: SectorConstituent[];
-  ret_1h: number | null;
-  ret_6h: number | null;
-  ret_24h: number | null;
-  ret_7d: number | null;
 }
 
 export const getSectors = (f: Filters) => get<SectorsResponse>(`/api/sectors?${qs(f)}`);
-export const getSectorDetail = (key: string, f: Filters) =>
-  get<SectorDetail>(`/api/sector/${encodeURIComponent(key)}?${qs(f)}`);
+export const getSectorDetail = (key: string, f: Filters, timeframe = "2wk") =>
+  get<SectorDetail>(`/api/sector/${encodeURIComponent(key)}?${qs(f)}&timeframe=${encodeURIComponent(timeframe)}`);
 
 // --- portfolio / trade tracker ---------------------------------------------
 export interface OpenPosition {
