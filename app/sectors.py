@@ -210,35 +210,36 @@ def _grouped(liq: pd.DataFrame) -> pd.DataFrame:
 
 def _raw_index(gmembers: pd.DataFrame, con, timestep: str) -> pd.DataFrame:
     """Per-group, per-timestamp cap-weighted index LEVEL (base-normalised to the
-    window start). Columns: [grp, ts, raw]."""
+    window start). Columns: [grp, ts, raw].
+
+    The normalise -> weight -> aggregate happens in DuckDB so only the small
+    (group x timestamp) result is materialised, not the full history."""
+    empty = pd.DataFrame(columns=["grp", "ts", "raw"])
     if gmembers.empty:
-        return pd.DataFrame(columns=["grp", "ts", "raw"])
+        return empty
     con.register("sector_members", gmembers[["item_id", "grp", "weight"]].copy())
     try:
-        hist = con.execute(
+        g = con.execute(
             f"""
             WITH h AS (
                 SELECT item_id, ts, (avg_high + avg_low) / 2.0 AS mid
                 FROM history
                 WHERE timestep = '{timestep}' AND avg_high IS NOT NULL AND avg_low IS NOT NULL
-            ), mx AS (SELECT max(ts) AS t FROM h)
-            SELECT h.item_id, h.ts, h.mid, m.grp, m.weight
-            FROM h CROSS JOIN mx JOIN sector_members m ON h.item_id = m.item_id
-            WHERE h.ts >= mx.t - INTERVAL '{_DAYS_FOR.get(timestep, 15)}' DAY
+            ),
+            mx AS (SELECT max(ts) AS t FROM h),
+            win AS (SELECT h.item_id, h.ts, h.mid FROM h CROSS JOIN mx
+                    WHERE h.ts >= mx.t - INTERVAL '{_DAYS_FOR.get(timestep, 15)}' DAY),
+            base AS (SELECT item_id, arg_min(mid, ts) AS base_mid FROM win GROUP BY item_id),
+            norm AS (SELECT w.item_id, w.ts, w.mid / b.base_mid AS norm
+                     FROM win w JOIN base b ON w.item_id = b.item_id WHERE b.base_mid > 0)
+            SELECT m.grp, n.ts, sum(n.norm * m.weight) / sum(m.weight) AS raw
+            FROM norm n JOIN sector_members m ON n.item_id = m.item_id
+            GROUP BY m.grp, n.ts
             """
         ).df()
     finally:
         con.unregister("sector_members")
-    if hist.empty:
-        return pd.DataFrame(columns=["grp", "ts", "raw"])
-    hist = hist.sort_values(["item_id", "ts"])
-    base = hist.groupby("item_id")["mid"].transform("first")
-    hist["norm"] = np.where(base > 0, hist["mid"] / base, np.nan)
-    hist = hist.dropna(subset=["norm"])
-    hist["wn"] = hist["norm"] * hist["weight"]
-    g = hist.groupby(["grp", "ts"]).agg(wn=("wn", "sum"), w=("weight", "sum")).reset_index()
-    g["raw"] = np.where(g["w"] > 0, g["wn"] / g["w"], np.nan)
-    return g[["grp", "ts", "raw"]]
+    return g if not g.empty else empty
 
 
 def _grp_series(idx: pd.DataFrame, grp: str) -> pd.Series:
