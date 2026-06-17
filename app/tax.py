@@ -57,6 +57,15 @@ def net_sell(price: int, exempt: bool = False) -> int:
     return price - sell_tax(price, exempt)
 
 
+def breakeven_sell(cost: float, exempt: bool = False) -> float:
+    """Gross sell price needed so the after-tax proceeds recover ``cost``."""
+    if exempt or cost < TAX_MIN_PRICE:
+        return float(cost)
+    uncapped = cost / (1.0 - TAX_RATE)
+    # above a ~250M sale the 5M tax cap binds, so net = price - cap
+    return float(cost + TAX_CAP) if uncapped * TAX_RATE >= TAX_CAP else uncapped
+
+
 def margin(buy_price: int, sell_price: int, exempt: bool = False) -> int:
     """Net profit per item: buy at ``buy_price``, sell at ``sell_price`` (after tax)."""
     return net_sell(sell_price, exempt) - buy_price

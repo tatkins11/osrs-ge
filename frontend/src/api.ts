@@ -225,6 +225,7 @@ export interface OpenPosition {
   name: string;
   qty: number;
   avg_cost: number;
+  breakeven: number | null;
   cur_price: number | null;
   cur_net: number | null;
   cost_basis: number;

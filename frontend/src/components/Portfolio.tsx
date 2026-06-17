@@ -106,13 +106,21 @@ export function Portfolio({ refreshNonce = 0 }: { refreshNonce?: number }) {
           </div>
 
           <div className="panel-section">
-            <h4>Open positions</h4>
+            <h4>
+              Open positions{" "}
+              <span className="dim" style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                · value &amp; P&amp;L are net of the 2% sell tax; <b>Rec. sell</b> = where to place a sell offer now
+                (green once it clears breakeven)
+              </span>
+            </h4>
             <table className="tbl">
               <thead>
                 <tr>
                   <th className="left">Item</th>
                   <th>Qty</th>
                   <th>Avg cost</th>
+                  <th>Breakeven</th>
+                  <th>Rec. sell</th>
                   <th>Cur (net)</th>
                   <th>Market value</th>
                   <th>Unrealized</th>
@@ -125,6 +133,8 @@ export function Portfolio({ refreshNonce = 0 }: { refreshNonce?: number }) {
                     <td className="name left">{p.name}</td>
                     <td>{p.qty.toLocaleString()}</td>
                     <td>{gp(p.avg_cost)}</td>
+                    <td className="dim">{gp(p.breakeven)}</td>
+                    <td className={(p.cur_price ?? 0) >= (p.breakeven ?? 0) ? "pos" : "neg"}>{gp(p.cur_price)}</td>
                     <td>{gp(p.cur_net)}</td>
                     <td>{gp(p.market_value)}</td>
                     <td className={(p.unrealized ?? 0) >= 0 ? "pos" : "neg"}>{gp(p.unrealized)}</td>
@@ -133,7 +143,7 @@ export function Portfolio({ refreshNonce = 0 }: { refreshNonce?: number }) {
                 ))}
                 {pf.open_positions.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="left muted">No open positions — log a buy above.</td>
+                    <td colSpan={9} className="left muted">No open positions — log a buy above.</td>
                   </tr>
                 )}
               </tbody>

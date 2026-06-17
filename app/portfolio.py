@@ -69,10 +69,12 @@ def compute(con=None) -> dict:
             unrealized_total += unreal
         open_positions.append({
             "item_id": iid, "name": name_of(iid), "qty": int(p["qty"]),
-            "avg_cost": round(p["avg_cost"]), "cur_price": round(ch) if ch else None,
+            "avg_cost": round(p["avg_cost"]),
+            "breakeven": round(taxmod.breakeven_sell(p["avg_cost"], exempt_of(iid))),  # gross sell to recover cost after tax
+            "cur_price": round(ch) if ch else None,                                   # current insta-buy = where to place a sell
             "cur_net": cur_net, "cost_basis": round(p["avg_cost"] * p["qty"]),
             "market_value": round(cur_net * p["qty"]) if cur_net is not None else None,
-            "unrealized": round(unreal) if unreal is not None else None,
+            "unrealized": round(unreal) if unreal is not None else None,              # after 2% sell tax
             "unrealized_pct": (unreal / (p["avg_cost"] * p["qty"])) if (unreal is not None and p["avg_cost"] > 0) else None,
         })
 
