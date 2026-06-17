@@ -94,13 +94,21 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     d["sugg_profit"] = units * d["net_margin"]              # realistic per-trade profit for YOU
     d["affordable"] = units >= 1
 
-    # Flip quality gates: liquid, fresh, not junk, and worth at least min_profit to you.
+    # Volume-aware realistic profit per 4h: you can't fill the full buy limit if the item
+    # barely trades. Throttle by ~one side's flow in a 4h window (vol_daily_7d / 12). For
+    # liquid items the buy limit binds (unchanged); for thin items this kills the fantasy
+    # of "net_margin x buy_limit" on something that trades a handful of times a day.
+    flow_4h = d["vol_daily_7d"].fillna(0.0).astype("float64") / 12.0
+    d["units_per_4h"] = np.minimum(limit.fillna(0.0), flow_4h)
+    d["realistic_profit"] = d["net_margin"] * d["units_per_4h"]
+
+    # Flip quality gates: liquid, fresh, not junk, and realistically worth >= min_profit/4h.
     d["flip_ok"] = (
         d["tradeable"]
         & (buy >= th.min_price)
         & (d["net_margin"] >= th.min_net_margin)
         & (d["roi"] >= th.min_roi)
-        & (d["profit_per_cycle"].fillna(0) >= th.min_profit)
+        & (d["realistic_profit"].fillna(0) >= th.min_profit)
     )
 
     # Mean-reversion signals only on liquid, non-junk items.
@@ -119,7 +127,7 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
 
     # Rank flips by profit AND durability: a margin that held all week beats a blip.
     persist = d["margin_uptime"].fillna(0.25) if "margin_uptime" in d.columns else 0.25
-    d["flip_score"] = (d["profit_per_cycle"] * (0.3 + 0.7 * persist)).where(d["flip_ok"], other=np.nan)
+    d["flip_score"] = (d["realistic_profit"] * (0.3 + 0.7 * persist)).where(d["flip_ok"], other=np.nan)
     d["reversion_score"] = z.abs().where(d["signal"].isin(["STRONG_BUY", "BUY", "STRONG_SELL", "SELL"]))
 
     # Mean-reversion trade plan: where to act, the fair-value target, the gain.
@@ -202,7 +210,7 @@ TABLE_COLS = [
     "item_id", "name", "members", "exempt", "buy_limit",
     "buy_price", "sell_price", "mid",
     "tax", "gross_margin", "net_margin", "roi",
-    "profit_per_cycle", "sugg_units", "sugg_capital", "sugg_profit", "affordable",
+    "profit_per_cycle", "realistic_profit", "units_per_4h", "sugg_units", "sugg_capital", "sugg_profit", "affordable",
     "high_vol", "low_vol", "vol_side", "vol_daily_7d", "margin_uptime", "margin_median_7d", "price_age_min",
     "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "mr_exp_profit", "confidence",

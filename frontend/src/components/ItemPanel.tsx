@@ -111,7 +111,7 @@ export function ItemPanel({
               <Tile k="Net / ea" v={gp(sr.net_margin as number)} cls="pos" />
               <Tile k="ROI" v={pct(sr.roi as number, 2)} cls="pos" />
               <Tile k="Margin uptime" v={pct(sr.margin_uptime as number, 0)} />
-              <Tile k="Profit / 4h" v={gpShort(sr.profit_per_cycle as number)} cls="pos" />
+              <Tile k="Est. profit/4h" v={gpShort(sr.realistic_profit as number)} cls="pos" />
             </div>
           ) : (
             <>

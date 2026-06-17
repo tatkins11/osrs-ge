@@ -22,7 +22,14 @@ const columns = [
   colh.accessor("net_margin", { header: "Net/ea", cell: (c) => <span className={sign(c.getValue() as number)}>{gp(c.getValue() as number)}</span> }),
   colh.accessor("roi", { header: "ROI", cell: (c) => <span className={sign(c.getValue() as number)}>{pct(c.getValue() as number, 2)}</span> }),
   colh.accessor("buy_limit", { header: "Limit", cell: (c) => num(c.getValue() as number) }),
-  colh.accessor("profit_per_cycle", { header: "Profit/4h", cell: (c) => <span className="dim">{gpShort(c.getValue() as number)}</span> }),
+  colh.accessor("realistic_profit", {
+    header: () => <span title="Realistic profit per 4h — throttled by traded volume, not just the buy limit">Est/4h</span>,
+    cell: (c) => <span className="pos">{gpShort(c.getValue() as number)}</span>,
+  }),
+  colh.accessor("profit_per_cycle", {
+    header: () => <span title="Theoretical max: net margin x full buy limit (only achievable if volume allows)">Max/4h</span>,
+    cell: (c) => <span className="dim">{gpShort(c.getValue() as number)}</span>,
+  }),
   colh.accessor("vol_daily_7d", { header: "Vol/day", cell: (c) => <span className="dim">{gpShort(c.getValue() as number)}</span> }),
   colh.accessor("margin_uptime", {
     header: "Uptime",

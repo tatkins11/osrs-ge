@@ -12,6 +12,8 @@ export interface Row {
   net_margin?: number | null;
   roi?: number | null;
   profit_per_cycle?: number | null;
+  realistic_profit?: number | null;
+  units_per_4h?: number | null;
   sugg_units?: number | null;
   sugg_capital?: number | null;
   sugg_profit?: number | null;
