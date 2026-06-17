@@ -26,6 +26,7 @@ from .db import ensure_db, stats
 from .signals import (
     TABLE_COLS,
     Thresholds,
+    _reasons,
     _records,
     flip_table,
     full_table,
@@ -113,7 +114,9 @@ def item_detail(item_id: int, th: Thresholds = Depends(get_thresholds)) -> dict:
     if not ms.empty:
         row = ms[ms["item_id"] == item_id]
         if not row.empty:
-            detail["signal_row"] = _records(row, TABLE_COLS)[0]
+            sr = _records(row, TABLE_COLS)[0]
+            sr["reasons"] = _reasons(sr)
+            detail["signal_row"] = sr
     return detail
 
 

@@ -31,6 +31,14 @@ export interface Row {
   signal?: string;
   flip_ok?: boolean;
   tradeable?: boolean;
+  mr_entry?: number | null;
+  mr_target?: number | null;
+  mr_exp_margin?: number | null;
+  mr_exp_roi?: number | null;
+  confidence?: number | null;
+  margin_uptime?: number | null;
+  margin_median_7d?: number | null;
+  reasons?: string[];
   [k: string]: unknown;
 }
 

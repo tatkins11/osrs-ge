@@ -63,6 +63,43 @@ export function ItemPanel({ itemId, filters, onClose }: { itemId: number | null;
         </div>
       </div>
 
+      {sr.signal && sr.signal !== "HOLD" && sr.signal !== "ILLIQUID" && (
+        <div className="panel-section thesis">
+          <h4>Trade thesis</h4>
+          {Array.isArray(sr.reasons) && (sr.reasons as string[]).length > 0 && (
+            <ul className="reasons">
+              {(sr.reasons as string[]).map((x, i) => (
+                <li key={i}>{x}</li>
+              ))}
+            </ul>
+          )}
+          {sr.signal === "FLIP" ? (
+            <div className="tiles">
+              <Tile k="Buy at" v={gp(sr.buy_price as number)} />
+              <Tile k="Sell at" v={gp(sr.sell_price as number)} />
+              <Tile k="Net / ea" v={gp(sr.net_margin as number)} cls="pos" />
+              <Tile k="ROI" v={pct(sr.roi as number, 2)} cls="pos" />
+              <Tile k="Margin uptime" v={pct(sr.margin_uptime as number, 0)} />
+              <Tile k="Profit / 4h" v={gpShort(sr.profit_per_cycle as number)} cls="pos" />
+            </div>
+          ) : (
+            <>
+              <div className="tiles">
+                <Tile k={String(sr.signal).includes("BUY") ? "Buy near" : "Sell near"} v={gp(sr.mr_entry as number)} />
+                <Tile k="Fair value" v={gp(sr.mr_target as number)} />
+                <Tile k="Exp. profit/ea" v={gp(sr.mr_exp_margin as number)} cls={((sr.mr_exp_margin as number) ?? 0) > 0 ? "pos" : "neg"} />
+                <Tile k="Exp. ROI" v={pct(sr.mr_exp_roi as number, 1)} />
+                <Tile k="Confidence" v={sr.confidence != null ? String(sr.confidence) : "–"} />
+                <Tile k="Z-score" v={fixed(sr.z_7d as number, 2)} />
+              </div>
+              <div className="note" style={{ marginTop: 8 }}>
+                ⚠ Experimental — mean-reversion isn't validated yet (backtests negative on current data). Informational only.
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="panel-section">
         <h4>Now · after 2% tax</h4>
         <div className="tiles">

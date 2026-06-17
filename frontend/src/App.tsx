@@ -106,6 +106,12 @@ export default function App() {
 
       <div className="main">
         <div className="table-wrap">
+          {tab === "signals" && (
+            <div className="exp-banner">
+              ⚠ Experimental — mean-reversion signals are not yet validated (backtests are negative on current data).
+              Informational only; use the <b>Flips</b> tab for trades.
+            </div>
+          )}
           <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
         </div>
         <div className={`panel-wrap ${selected != null ? "open" : ""}`}>

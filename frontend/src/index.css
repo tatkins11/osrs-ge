@@ -170,6 +170,15 @@ td.tag-cell, th.tag-cell { text-align: left; }
   .search input { width: 130px; }
 }
 
+.exp-banner {
+  margin: 8px; padding: 8px 12px; border-radius: 7px; font-size: 12px; line-height: 1.4;
+  background: rgba(245,181,61,.10); border: 1px solid rgba(245,181,61,.35); color: var(--amber);
+}
+.exp-banner b { color: var(--accent-2); }
+.thesis { background: rgba(78,161,255,.05); }
+.thesis .reasons { margin: 0 0 12px; padding-left: 18px; color: var(--fg-2); font-size: 12px; }
+.thesis .reasons li { margin: 3px 0; }
+
 ::-webkit-scrollbar { width: 11px; height: 11px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #1f2c3c; border-radius: 6px; border: 2px solid var(--bg); }

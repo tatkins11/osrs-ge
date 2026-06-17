@@ -24,6 +24,14 @@ const columns = [
   colh.accessor("buy_limit", { header: "Limit", cell: (c) => num(c.getValue() as number) }),
   colh.accessor("profit_per_cycle", { header: "Profit/4h", cell: (c) => <span className="dim">{gpShort(c.getValue() as number)}</span> }),
   colh.accessor("vol_daily_7d", { header: "Vol/day", cell: (c) => <span className="dim">{gpShort(c.getValue() as number)}</span> }),
+  colh.accessor("margin_uptime", {
+    header: "Uptime",
+    cell: (c) => {
+      const v = c.getValue() as number | null;
+      const cls = v == null ? "dim" : v >= 0.7 ? "pos" : v < 0.4 ? "neg" : "";
+      return <span className={cls}>{pct(v, 0)}</span>;
+    },
+  }),
   colh.accessor("z_7d", {
     header: "Z",
     cell: (c) => {
