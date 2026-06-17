@@ -108,7 +108,7 @@ export default function App() {
         <div className="table-wrap">
           <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
         </div>
-        <div className="panel-wrap">
+        <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
           <ItemPanel itemId={selected} filters={filters} onClose={() => setSelected(null)} />
         </div>
       </div>

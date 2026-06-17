@@ -157,6 +157,19 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .note { color: var(--muted); font-size: 11px; }
 .kbd { font-family: var(--mono); background: var(--bg-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
 
+/* Mobile / narrow screens: stack the detail panel under the table, and keep it
+   hidden until an item is tapped so the item list gets the whole screen. */
+@media (max-width: 820px) {
+  .main { flex-direction: column; }
+  .panel-wrap { width: 100%; flex-shrink: 1; max-height: 55vh; border-left: none; border-top: 1px solid var(--border); }
+  .panel-wrap:not(.open) { display: none; }
+  .header .hstat { display: none; }
+  .header { gap: 10px; padding: 0 12px; }
+  .toolbar { padding: 8px 12px; }
+  .ctrl input { width: 100px; }
+  .search input { width: 130px; }
+}
+
 ::-webkit-scrollbar { width: 11px; height: 11px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #1f2c3c; border-radius: 6px; border: 2px solid var(--bg); }
