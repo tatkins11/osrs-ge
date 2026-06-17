@@ -1,12 +1,14 @@
 """Signal & flip-finder engine.
 
-Consumes the enriched market table and produces ranked, actionable signals:
+Produces ranked, actionable signals:
 
   FLIP        -- spread capture: net (after-tax) margin with real volume on
-                 BOTH sides and a fresh price. This is the filter that rejects
-                 the "wide margin" traps other tools show (stale/one-sided/thin).
+                 BOTH sides and a fresh price. Rejects the stale/one-sided
+                 "wide margin" traps other tools show.
   BUY / SELL  -- mean reversion: price is statistically cheap/expensive vs its
-                 own recent history (z-score), with liquidity to act on it.
+                 own recent history. Each carries a TRADE PLAN: where to buy,
+                 the fair-value target to sell at, the expected after-tax
+                 profit/ROI, a confidence score, and the plain-English "why".
 
 Every figure is net of the 2% GE tax and respects buy limits. Positions are
 sized against your bankroll.
@@ -20,12 +22,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from . import tax as taxmod
 from .analytics import market_table
-from .config import (
-    DEFAULT_BANKROLL,
-    DEFAULT_MIN_MARGIN,
-    DEFAULT_MIN_VOLUME,
-)
+from .config import DEFAULT_BANKROLL, DEFAULT_MIN_MARGIN, DEFAULT_MIN_VOLUME
 from .db import connect
 
 log = logging.getLogger("signals")
@@ -66,7 +65,8 @@ def _records(df: pd.DataFrame, cols: list[str]) -> list[dict]:
 
 
 def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
-    """Add liquidity/quality flags, the signal label, ranking scores and sizing."""
+    """Add liquidity/quality flags, the signal label, ranking scores, a
+    mean-reversion trade plan, confidence, and position sizing."""
     if df.empty:
         return df
     d = df.copy()
@@ -96,6 +96,27 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     d["flip_score"] = d["profit_per_cycle"].where(d["flip_ok"], other=np.nan)
     d["reversion_score"] = z.abs().where(d["signal"].isin(["STRONG_BUY", "BUY", "STRONG_SELL", "SELL"]))
 
+    # --- mean-reversion trade plan: where to act, the fair-value target, the gain ---
+    mean = d["mean_7d"].astype("float64")
+    high = d["sell_price"].astype("float64")   # current instabuy (sell into / buy now)
+    is_buy = d["signal"].isin(["BUY", "STRONG_BUY"])
+    is_sell = d["signal"].isin(["SELL", "STRONG_SELL"])
+    exempt_arr = d["exempt"].to_numpy()
+    net_mean = mean - taxmod.sell_tax_array(mean, exempt_arr)   # after-tax if sold at fair value
+    net_high = high - taxmod.sell_tax_array(high, exempt_arr)   # after-tax if sold at current high
+    buy_margin = net_mean - high     # BUY: buy ~now, sell at fair value
+    sell_margin = net_high - mean    # SELL: sell high now, rebuy at fair value (round trip)
+    d["mr_target"] = mean
+    d["mr_entry"] = high
+    d["mr_exp_margin"] = np.where(is_buy, buy_margin, np.where(is_sell, sell_margin, np.nan))
+    d["mr_exp_roi"] = np.where(
+        is_buy, np.where(high > 0, buy_margin / high, np.nan),
+        np.where(is_sell, np.where(mean > 0, sell_margin / mean, np.nan), np.nan),
+    )
+    strength = np.clip((d["z_7d"].abs() - 1.5) / 2.0 + 0.5, 0.0, 1.0)   # 0.5 @1.5σ -> 1.0 @2.5σ+
+    liq = np.clip(np.log10(d["vol_daily_7d"].clip(lower=1)) / 6.0, 0.0, 1.0)  # ~1 @ 1e6/day
+    d["confidence"] = (100 * (0.6 * strength + 0.4 * liq)).round()
+
     # Position sizing: cap each position at max_alloc_frac of bankroll AND the buy limit.
     buy = d["buy_price"].astype("float64")
     cap_units = np.floor((th.max_alloc_frac * th.bankroll) / buy.replace(0, np.nan))
@@ -107,6 +128,29 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     d["sugg_profit"] = units * d["net_margin"]
     d["affordable"] = units >= 1
     return d
+
+
+def _reasons(r: dict) -> list[str]:
+    """Plain-English thesis bullets for a mean-reversion signal record."""
+    out: list[str] = []
+    z, mean, mid = r.get("z_7d"), r.get("mean_7d"), r.get("mid")
+    pct30, vold, sig = r.get("pct_30d"), r.get("vol_daily_7d"), r.get("signal", "")
+    if z is not None and mean and mid:
+        dev = abs((mid - mean) / mean) * 100
+        if z < 0:
+            out.append(f"Trading {abs(z):.1f}σ below its 7-day average — ~{dev:.0f}% cheaper than usual")
+        else:
+            out.append(f"Trading {abs(z):.1f}σ above its 7-day average — ~{dev:.0f}% pricier than usual")
+    if pct30 is not None:
+        where = "bottom" if sig in ("BUY", "STRONG_BUY") else "top"
+        out.append(f"Near the {where} of its 30-day range ({pct30 * 100:.0f}th percentile)")
+    if vold:
+        out.append(f"~{vold:,.0f} traded per day — liquid enough to get in and out")
+    if sig in ("BUY", "STRONG_BUY"):
+        out.append("Plan: buy near the current price, place a sell offer at the fair-value target, wait for it to revert up")
+    elif sig in ("SELL", "STRONG_SELL"):
+        out.append("Plan: if you hold it, sell into this elevated price; optionally rebuy near the fair-value target")
+    return out
 
 
 def market_signals(th: Thresholds | None = None, con=None) -> pd.DataFrame:
@@ -128,8 +172,8 @@ TABLE_COLS = [
     "tax", "gross_margin", "net_margin", "roi",
     "profit_per_cycle", "sugg_units", "sugg_capital", "sugg_profit", "affordable",
     "high_vol", "low_vol", "vol_side", "vol_daily_7d", "price_age_min",
-    "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d",
-    "min_30d", "max_30d",
+    "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
+    "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "confidence",
     "signal", "flip_ok", "tradeable", "flip_score", "reversion_score",
 ]
 
@@ -148,7 +192,10 @@ def reversion_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
         return []
     d = d[d["signal"].isin(["STRONG_BUY", "BUY", "STRONG_SELL", "SELL"])]
     d = d.sort_values("reversion_score", ascending=False).head(limit)
-    return _records(d, TABLE_COLS)
+    recs = _records(d, TABLE_COLS)
+    for rec in recs:
+        rec["reasons"] = _reasons(rec)
+    return recs
 
 
 def full_table(th: Thresholds | None = None, con=None) -> list[dict]:
@@ -177,15 +224,17 @@ def main() -> None:
         print(f"{str(r['name'])[:25]:<26}{_fmt(r['buy_price']):>12}{_fmt(r['sell_price']):>12}"
               f"{_fmt(r['net_margin']):>9}{(r['roi']*100):>6.1f}%{_fmt(r['buy_limit']):>8}{_fmt(r['profit_per_cycle']):>15}")
 
-    print("\n=== MEAN-REVERSION SIGNALS (statistically cheap / expensive now) ===")
+    print("\n=== MEAN-REVERSION SIGNALS (buy cheap / sell expensive vs fair value) ===")
     rev = d[d["signal"].isin(["STRONG_BUY", "BUY", "STRONG_SELL", "SELL"])].sort_values("reversion_score", ascending=False).head(12)
     if rev.empty:
         print("(none right now)")
-    print(f"{'item':<26}{'signal':>12}{'z-score':>9}{'mid':>12}{'7d mean':>12}{'30d %ile':>10}")
-    for _, r in rev.iterrows():
-        pct = r["pct_30d"] * 100 if pd.notna(r["pct_30d"]) else float("nan")
-        print(f"{str(r['name'])[:25]:<26}{r['signal']:>12}{r['z_7d']:>9.2f}{_fmt(r['mid']):>12}"
-              f"{_fmt(r['mean_7d']):>12}{pct:>9.0f}%")
+    else:
+        print(f"{'item':<24}{'signal':>11}{'now':>11}{'fair value':>12}{'exp/ea':>9}{'roi':>7}{'conf':>6}")
+        for _, r in rev.iterrows():
+            roi = r["mr_exp_roi"] * 100 if pd.notna(r["mr_exp_roi"]) else 0.0
+            conf = int(r["confidence"]) if pd.notna(r["confidence"]) else 0
+            print(f"{str(r['name'])[:23]:<24}{r['signal']:>11}{_fmt(r['mr_entry']):>11}{_fmt(r['mr_target']):>12}"
+                  f"{_fmt(r['mr_exp_margin']):>9}{roi:>6.1f}%{conf:>6}")
     print()
 
 
