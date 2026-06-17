@@ -1,0 +1,18 @@
+# IP-only config: self-signed TLS (encrypted, but the browser warns once) +
+# a login. When you later get a domain, replace `:443 { tls internal` with
+# `your-domain.com {` (delete the tls line) for automatic trusted HTTPS.
+
+:443 {
+	tls internal
+	encode zstd gzip
+
+	basic_auth {
+		{$DASH_USER} {$DASH_HASH}
+	}
+
+	reverse_proxy api:8000
+}
+
+:80 {
+	redir https://{host}{uri} permanent
+}

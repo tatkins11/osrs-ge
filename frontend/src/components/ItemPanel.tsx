@@ -1,0 +1,118 @@
+import { useEffect, useState, type ReactNode } from "react";
+import { getItem, type Filters, type ItemDetail } from "../api";
+import { fixed, gp, gpShort, num, pct } from "../format";
+import { PriceChart } from "./PriceChart";
+import { ProfileBars } from "./ProfileBars";
+import { SignalBadge } from "./SignalBadge";
+
+const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function Tile({ k, v, cls = "" }: { k: string; v: ReactNode; cls?: string }) {
+  return (
+    <div className="tile">
+      <div className="k">{k}</div>
+      <div className={`v ${cls}`}>{v}</div>
+    </div>
+  );
+}
+
+export function ItemPanel({ itemId, filters, onClose }: { itemId: number | null; filters: Filters; onClose: () => void }) {
+  const [data, setData] = useState<ItemDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (itemId == null) {
+      setData(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    getItem(itemId, filters)
+      .then((d) => !cancelled && setData(d))
+      .catch(() => !cancelled && setData(null))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId, filters]);
+
+  if (itemId == null)
+    return (
+      <div className="placeholder">
+        Select an item to deep-dive: price history with Bollinger bands, hour-of-day &amp; weekday seasonality, statistics and a position-sized signal.
+      </div>
+    );
+  if (loading && !data) return <div className="placeholder">Loading…</div>;
+  if (!data) return <div className="placeholder">No data for this item.</div>;
+
+  const c = data.current;
+  const st = data.stats;
+  const sr = data.signal_row ?? {};
+
+  return (
+    <div>
+      <div className="panel-head">
+        <span className="close" onClick={onClose}>×</span>
+        <div className="title">{data.item.name}</div>
+        <div className="sub">
+          #{data.item.item_id} · {data.item.members ? "Members" : "F2P"} · limit {num(data.item.buy_limit)}/4h
+          {data.item.exempt ? " · tax-exempt" : ""}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <SignalBadge signal={sr.signal as string} />
+        </div>
+      </div>
+
+      <div className="panel-section">
+        <h4>Now · after 2% tax</h4>
+        <div className="tiles">
+          <Tile k="Insta-buy" v={gp(c.instabuy)} />
+          <Tile k="Insta-sell" v={gp(c.instasell)} />
+          <Tile k="Spread" v={gp(c.gross_margin)} />
+          <Tile k="Net margin" v={gp(c.net_margin)} cls={(c.net_margin ?? 0) > 0 ? "pos" : "neg"} />
+          <Tile k="ROI" v={pct(c.roi, 2)} cls={(c.roi ?? 0) > 0 ? "pos" : "neg"} />
+          <Tile k="Tax/ea" v={gp(c.tax)} />
+        </div>
+      </div>
+
+      <div className="panel-section">
+        <h4>Price history · 7d MA · Bollinger bands · volume</h4>
+        <PriceChart series={data.series} />
+      </div>
+
+      <div className="panel-section">
+        <h4>Statistics</h4>
+        <div className="tiles">
+          <Tile k="Z-score 7d" v={fixed(st.z_7d, 2)} cls={(st.z_7d ?? 0) < 0 ? "pos" : "neg"} />
+          <Tile k="RSI 14" v={fixed(st.rsi, 0)} />
+          <Tile k="Volatility" v={pct(st.volatility_7d, 1)} />
+          <Tile k="7d mean" v={gpShort(st.mean_7d)} />
+          <Tile k="30d low" v={gpShort(st.min_30d)} />
+          <Tile k="30d high" v={gpShort(st.max_30d)} />
+        </div>
+      </div>
+
+      <div className="panel-section">
+        <h4>Position sizing · bankroll {gpShort(filters.bankroll)}</h4>
+        <div className="tiles">
+          <Tile k="Units" v={num(sr.sugg_units as number)} />
+          <Tile k="Capital" v={gpShort(sr.sugg_capital as number)} />
+          <Tile k="Est. profit" v={gpShort(sr.sugg_profit as number)} cls="pos" />
+        </div>
+        {sr.affordable === false && (
+          <div className="note" style={{ marginTop: 8 }}>⚠ One buy-limit cycle exceeds your per-position cap / bankroll.</div>
+        )}
+      </div>
+
+      <div className="panel-section">
+        <h4>Hour-of-day seasonality (UTC) · green = cheap, red = expensive</h4>
+        <ProfileBars rows={data.hour_profile.map((p) => ({ label: `${String(p.hour).padStart(2, "0")}:00`, dev: p.avg_dev }))} />
+      </div>
+
+      <div className="panel-section">
+        <h4>Day-of-week seasonality</h4>
+        <ProfileBars rows={data.dow_profile.map((p) => ({ label: DOW[p.dow ?? 0], dev: p.avg_dev }))} />
+      </div>
+    </div>
+  );
+}

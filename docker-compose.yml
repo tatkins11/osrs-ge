@@ -1,0 +1,49 @@
+# OSRS GE Terminal — always-on stack for a VPS.
+#   api       serves the dashboard + REST API (internal only; Caddy fronts it)
+#   collector polls the OSRS API every 5 min, 24/7
+#   caddy     HTTPS + login in front of the API
+# All three share one DuckDB file via the `data` volume.
+
+services:
+  api:
+    build: .
+    image: osrs-ge-terminal:latest
+    environment:
+      - OSRS_GE_USER_AGENT=${OSRS_GE_USER_AGENT}
+    volumes:
+      - data:/app/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  collector:
+    image: osrs-ge-terminal:latest
+    depends_on:
+      - api
+    command: python -m app.collector
+    environment:
+      - OSRS_GE_USER_AGENT=${OSRS_GE_USER_AGENT}
+    volumes:
+      - data:/app/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - api
+    environment:
+      - DASH_USER=${DASH_USER}
+      - DASH_HASH=${DASH_HASH}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:
