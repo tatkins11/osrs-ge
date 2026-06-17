@@ -85,13 +85,15 @@ Generate a login password hash and write `.env` in one shot (change the
 password and, if you like, the user/contact):
 
 ```bash
-HASH=$(docker run --rm caddy:2 caddy hash-password --plaintext 'CHOOSE-A-PASSWORD')
+# The sed doubles every "$" so Docker Compose treats the hash as literal text,
+# not as variable references.
+HASH=$(docker run --rm caddy:2 caddy hash-password --plaintext 'CHOOSE-A-PASSWORD' | sed 's/\$/\$\$/g')
 printf 'OSRS_GE_USER_AGENT=osrs-ge-terminal/0.1 (contact: you@example.com)\nDASH_USER=admin\nDASH_HASH=%s\n' "$HASH" > .env
-cat .env   # sanity-check it looks right
+cat .env   # DASH_HASH should look like $$2a$$14$$...
 ```
 
-Prefer an editor instead? `cp .env.example .env` then `nano .env`. (No `$`
-escaping needed — `env_file` passes the hash through literally.)
+Prefer an editor? `cp .env.example .env` then `nano .env` — but then manually
+double every `$` in the hash (`$` → `$$`).
 
 ---
 
