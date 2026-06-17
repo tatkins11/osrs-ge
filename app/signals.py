@@ -355,24 +355,30 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
     if d.empty:
         return []
     disc = th.overnight_disc
-    bid = d["buy_price"].astype("float64")
+    bid = d["buy_price"].astype("float64")     # instasell (the bid)
+    ask = d["sell_price"].astype("float64")    # instabuy (where you sell back next day)
     est = d["established"].astype("float64")
     exempt = d["exempt"].to_numpy()
     buy_offer = np.floor(bid * (1.0 - disc))
-    net_t = est - taxmod.sell_tax_array(est, exempt)            # after-tax proceeds at fair value
+    net_t = ask - taxmod.sell_tax_array(ask, exempt)           # sell back at the current market ask, after tax
     d["on_buy"] = buy_offer
-    d["on_target"] = np.round(est)
-    d["on_margin"] = net_t - buy_offer                          # per item, after tax, if it recovers to fair value
+    d["on_target"] = np.round(ask)
+    d["on_margin"] = net_t - buy_offer                         # ~= the captured discount, after tax & spread
     d["on_roi"] = np.where(buy_offer > 0, d["on_margin"] / buy_offer, np.nan)
     gpv = d["mid"].fillna(0) * d["vol_daily_7d"].fillna(0)
+    spread_pct = np.where(bid > 0, (ask - bid) / bid, np.nan)
+    vol = d["volatility_7d"].fillna(0.0)
     elig = (
         d["tradeable"] & est.notna()
         & (buy_offer >= th.min_price) & (buy_offer <= th.max_price)
-        & (d["level_health"].fillna(0) >= 0.6)                  # stable level -> a caught dip is likely to revert
+        & (d["drawdown"].abs() <= 0.06)                        # currently AT fair value (bet on a future dump, not already crashed)
+        & d["level_health"].fillna(0).between(0.85, 1.3)       # stable, reliable established level (kills the noisy-median mirage)
+        & (spread_pct <= 0.05)                                 # tight spread -> can realistically sell back near the ask
+        & vol.between(0.02, 0.6)                               # moves enough to plausibly dump overnight, not pure noise
         & (d["on_margin"] > 0) & (d["on_roi"] >= th.min_roi)
         & (gpv >= 25_000_000)
     )
-    d = d[elig].sort_values("on_roi", ascending=False).head(limit)
+    d = d[elig].sort_values("volatility_7d", ascending=False).head(limit)  # rank by fill-likelihood (margin is ~constant)
     return _records(d, TABLE_COLS + ["on_buy", "on_target", "on_margin", "on_roi"])
 
 
