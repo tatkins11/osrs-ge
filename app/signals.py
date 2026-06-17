@@ -93,7 +93,9 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     labels = ["ILLIQUID", "STRONG_BUY", "BUY", "STRONG_SELL", "SELL", "FLIP"]
     d["signal"] = np.select(conditions, labels, default="HOLD")
 
-    d["flip_score"] = d["profit_per_cycle"].where(d["flip_ok"], other=np.nan)
+    # Rank flips by profit AND durability: a margin that held all week beats a one-tick blip.
+    persist = d["margin_uptime"].fillna(0.25) if "margin_uptime" in d.columns else 0.25
+    d["flip_score"] = (d["profit_per_cycle"] * (0.3 + 0.7 * persist)).where(d["flip_ok"], other=np.nan)
     d["reversion_score"] = z.abs().where(d["signal"].isin(["STRONG_BUY", "BUY", "STRONG_SELL", "SELL"]))
 
     # --- mean-reversion trade plan: where to act, the fair-value target, the gain ---
@@ -171,7 +173,7 @@ TABLE_COLS = [
     "buy_price", "sell_price", "mid",
     "tax", "gross_margin", "net_margin", "roi",
     "profit_per_cycle", "sugg_units", "sugg_capital", "sugg_profit", "affordable",
-    "high_vol", "low_vol", "vol_side", "vol_daily_7d", "price_age_min",
+    "high_vol", "low_vol", "vol_side", "vol_daily_7d", "margin_uptime", "margin_median_7d", "price_age_min",
     "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "confidence",
     "signal", "flip_ok", "tradeable", "flip_score", "reversion_score",
@@ -219,10 +221,11 @@ def main() -> None:
 
     print(f"\n=== TOP FLIPS (net of 2% tax, volume+freshness filtered) - bankroll {_fmt(th.bankroll)} ===")
     flips = d[d["flip_ok"]].sort_values("flip_score", ascending=False).head(12)
-    print(f"{'item':<26}{'buy':>12}{'sell':>12}{'net/ea':>9}{'roi':>7}{'limit':>8}{'profit/cycle':>15}")
+    print(f"{'item':<24}{'buy':>11}{'sell':>11}{'net/ea':>8}{'roi':>6}{'uptime':>8}{'profit/4h':>13}")
     for _, r in flips.iterrows():
-        print(f"{str(r['name'])[:25]:<26}{_fmt(r['buy_price']):>12}{_fmt(r['sell_price']):>12}"
-              f"{_fmt(r['net_margin']):>9}{(r['roi']*100):>6.1f}%{_fmt(r['buy_limit']):>8}{_fmt(r['profit_per_cycle']):>15}")
+        up = r["margin_uptime"] * 100 if pd.notna(r["margin_uptime"]) else 0.0
+        print(f"{str(r['name'])[:23]:<24}{_fmt(r['buy_price']):>11}{_fmt(r['sell_price']):>11}"
+              f"{_fmt(r['net_margin']):>8}{(r['roi']*100):>5.1f}%{up:>7.0f}%{_fmt(r['profit_per_cycle']):>13}")
 
     print("\n=== MEAN-REVERSION SIGNALS (buy cheap / sell expensive vs fair value) ===")
     rev = d[d["signal"].isin(["STRONG_BUY", "BUY", "STRONG_SELL", "SELL"])].sort_values("reversion_score", ascending=False).head(12)

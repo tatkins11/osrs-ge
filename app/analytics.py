@@ -34,7 +34,8 @@ _MARKET_STATS_SQL = """
 WITH base AS (
     SELECT item_id, ts,
            (avg_high + avg_low) / 2.0 AS mid,
-           (COALESCE(high_vol, 0) + COALESCE(low_vol, 0)) AS vol
+           (COALESCE(high_vol, 0) + COALESCE(low_vol, 0)) AS vol,
+           (avg_high * 0.98 - avg_low) AS flip_margin   -- approx net flip margin (2% tax)
     FROM history
     WHERE timestep = '1h' AND avg_high IS NOT NULL AND avg_low IS NOT NULL
 ),
@@ -47,6 +48,9 @@ SELECT
     max(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 30 DAY) AS max_30d,
     avg(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 30 DAY) AS mean_30d,
     avg(b.vol)         FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS vol_hourly_7d,
+    -- margin persistence: fraction of the past week the flip was profitable, and its typical size
+    avg(CASE WHEN b.flip_margin > 0 THEN 1.0 ELSE 0.0 END) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_uptime,
+    median(b.flip_margin) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_median_7d,
     count(*)           FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS n_7d
 FROM base b CROSS JOIN mx
 GROUP BY b.item_id
