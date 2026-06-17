@@ -253,13 +253,14 @@ def analyze_item(item_id: int, con=None, max_points: int = 2000) -> dict | None:
         ]
 
         last = ind.iloc[-1]
-        mid_now = float(last["mid"])
+        valid_mid = ind["mid"].dropna()                       # illiquid items can have a NA trailing mid
+        mid_now = float(valid_mid.iloc[-1]) if not valid_mid.empty else None
         mean_7d = float(last["ma"]) if pd.notna(last["ma"]) else None
         sd_7d = float(last["sd"]) if pd.notna(last["sd"]) else None
         out["stats"] = {
             "mean_7d": _clean(mean_7d),
             "sd_7d": _clean(sd_7d),
-            "z_7d": _clean((mid_now - mean_7d) / sd_7d) if (mean_7d and sd_7d) else None,
+            "z_7d": _clean((mid_now - mean_7d) / sd_7d) if (mid_now is not None and mean_7d and sd_7d) else None,
             "rsi": _clean(float(last["rsi"])) if pd.notna(last["rsi"]) else None,
             "min_30d": _clean(float(ind["mid"].tail(720).min())),
             "max_30d": _clean(float(ind["mid"].tail(720).max())),
