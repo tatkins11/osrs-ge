@@ -32,6 +32,11 @@ log = logging.getLogger("sectors")
 
 WEIGHT_CAP = 0.20          # no single item may exceed 20% of its sector's weight
 INDEX_DAYS = 14            # how much 1h history to build the index over (~the full 1h window)
+# Sector membership uses a 7-day liquidity bar (not the flip-finder's instantaneous
+# 5-min both-sides gate, which is far too strict here) so cheap high-volume commodities
+# -- runes, ores, logs, arrows -- are included. Volume-weighting + the cap handle noise.
+SECTOR_MIN_DAILY_VOL = 500
+SECTOR_MIN_PRICE = 5
 
 # --- taxonomy ---------------------------------------------------------------
 # Each sector: (key, label, blurb, [include regex...], [exclude regex...]).
@@ -132,7 +137,11 @@ def _members(th: Thresholds, con) -> pd.DataFrame:
     d = market_signals(th, con)
     if d.empty:
         return d
-    d = d[d["tradeable"] & (d["mid"].fillna(0) >= th.min_price) & d["established"].notna()].copy()
+    d = d[
+        d["established"].notna()
+        & (d["mid"].fillna(0) >= SECTOR_MIN_PRICE)
+        & (d["vol_daily_7d"].fillna(0) >= SECTOR_MIN_DAILY_VOL)
+    ].copy()
     d["sector"] = classify_series(d["name"])
     d = d[d["sector"].notna()].copy()
     if d.empty:
