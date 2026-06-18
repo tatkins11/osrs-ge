@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { getItem, getItemSeries, getPortfolio, HORIZON_KEYS, type Filters, type ItemDetail, type Portfolio as Pf, type Row, type SeriesPoint } from "../api";
+import { getItem, getItemSeries, getPortfolio, getUpdates, HORIZON_KEYS, type Filters, type GameUpdate, type ItemDetail, type Portfolio as Pf, type Row, type SeriesPoint } from "../api";
 import { fixed, gp, gpShort, num, pct, spct } from "../format";
 import { ChartModal } from "./ChartModal";
 import { PriceChart } from "./PriceChart";
@@ -43,6 +43,7 @@ export function ItemPanel({
   const [chartType, setChartType] = useState<"line" | "candle">("line");
   const [expanded, setExpanded] = useState(false);
   const [pf, setPf] = useState<Pf | null>(null);
+  const [updates, setUpdates] = useState<GameUpdate[]>([]);
 
   useEffect(() => {
     if (itemId == null) {
@@ -81,6 +82,10 @@ export function ItemPanel({
     getPortfolio().then(setPf).catch(() => {});
   }, [itemId, refreshNonce]);
 
+  useEffect(() => {
+    getUpdates().then(setUpdates).catch(() => {});
+  }, []);
+
   const sr: Partial<Row> = data?.signal_row ?? {};
   const pos = pf?.open_positions.find((p) => p.item_id === itemId) ?? null;
   const levels = useMemo(() => {
@@ -112,6 +117,13 @@ export function ItemPanel({
         .map((t) => ({ time: Math.floor(Date.parse(t.ts.replace(" ", "T") + "Z") / 1000), side: t.side }))
         .filter((m) => Number.isFinite(m.time)),
     [pf, itemId]
+  );
+  const events = useMemo(
+    () =>
+      updates
+        .map((u) => ({ time: Math.floor(Date.parse(u.ts.replace(" ", "T") + "Z") / 1000), title: u.title }))
+        .filter((e) => Number.isFinite(e.time)),
+    [updates]
   );
 
   if (itemId == null)
@@ -230,7 +242,7 @@ export function ItemPanel({
             <button className="expand" title="Expand chart" onClick={() => setExpanded(true)}>⤢</button>
           </div>
         </div>
-        <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} levels={levels} markers={markers} fairValue={sr.established ?? undefined} />
+        <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} levels={levels} markers={markers} events={events} fairValue={sr.established ?? undefined} />
       </div>
 
       <div className="panel-section">
@@ -278,7 +290,7 @@ export function ItemPanel({
           title={`${data.item.name} · price (${tf === "1h" ? "2wk" : tf === "6h" ? "3mo" : "1yr"})`}
           onClose={() => setExpanded(false)}
         >
-          <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} className="modal-chart" levels={levels} markers={markers} fairValue={sr.established ?? undefined} />
+          <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} className="modal-chart" levels={levels} markers={markers} events={events} fairValue={sr.established ?? undefined} />
         </ChartModal>
       )}
     </div>

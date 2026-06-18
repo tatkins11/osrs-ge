@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS history (
     PRIMARY KEY (item_id, timestep, ts)
 );
 
+CREATE TABLE IF NOT EXISTS updates (   -- OSRS game updates / blog posts (for chart event markers)
+    ts        TIMESTAMP,
+    title     VARCHAR,
+    category  VARCHAR,
+    url       VARCHAR PRIMARY KEY
+);
+
 CREATE SEQUENCE IF NOT EXISTS trades_id_seq;
 CREATE TABLE IF NOT EXISTS trades (
     id       BIGINT PRIMARY KEY DEFAULT nextval('trades_id_seq'),
@@ -284,6 +291,39 @@ def stats(con=None) -> dict:
             "snapshot_first": rng[0],
             "snapshot_last": rng[1],
         }
+    finally:
+        if own:
+            con.close()
+
+
+# --- game updates (collector-written into the prices DB, API reads read-only) ---
+def upsert_updates(rows: list[dict], con=None) -> int:
+    if not rows:
+        return 0
+    own = con is None
+    con = con or connect()
+    try:
+        df = pd.DataFrame(rows)
+        con.register("upd_df", df)
+        con.execute(
+            """INSERT INTO updates (ts, title, category, url)
+               SELECT ts, title, category, url FROM upd_df
+               ON CONFLICT (url) DO UPDATE SET ts=excluded.ts, title=excluded.title, category=excluded.category"""
+        )
+        con.unregister("upd_df")
+        return len(df)
+    finally:
+        if own:
+            con.close()
+
+
+def get_updates_df(con=None) -> pd.DataFrame:
+    own = con is None
+    con = con or connect(read_only=True)
+    try:
+        return con.execute("SELECT ts, title, category, url FROM updates ORDER BY ts DESC").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=["ts", "title", "category", "url"])
     finally:
         if own:
             con.close()

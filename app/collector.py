@@ -19,7 +19,7 @@ import pandas as pd
 
 from .api_client import OsrsPricesClient
 from .config import DEMO_MARKER, POLL_INTERVAL_SECONDS
-from .db import ensure_db, ensure_log_db, insert_history, insert_signal_log, insert_snapshots, stats, upsert_items, utcnow
+from .db import ensure_db, ensure_log_db, insert_history, insert_signal_log, insert_snapshots, stats, upsert_items, upsert_updates, utcnow
 
 log = logging.getLogger("collector")
 
@@ -142,6 +142,12 @@ def _log_signals() -> int:
     return insert_signal_log(df)
 
 
+def _refresh_updates() -> int:
+    """Pull the latest OSRS game-update list from the wiki into the prices DB (chart markers)."""
+    from .updates import fetch_updates
+    return upsert_updates(fetch_updates())
+
+
 def _sleep_to_next(interval: int, offset: int = 20) -> None:
     """Sleep until just after the next interval boundary (so the 5m bucket is ready)."""
     now = time.time()
@@ -169,6 +175,10 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
             backfill_recent_1h(client)
         except Exception:
             log.exception("startup 1h gap-fill failed")
+        try:
+            log.info("updates refreshed: %d", _refresh_updates())
+        except Exception:
+            log.exception("startup updates refresh failed")
         current_day = utcnow().date()
         current_hour = None
         while True:
@@ -187,6 +197,10 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
                 day = utcnow().date()
                 if day != current_day:
                     refresh_catalog(client)
+                    try:
+                        log.info("updates refreshed: %d", _refresh_updates())
+                    except Exception:
+                        log.exception("updates refresh failed")
                     current_day = day
             except Exception:
                 log.exception("catalog refresh failed")

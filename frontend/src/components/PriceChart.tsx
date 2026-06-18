@@ -22,6 +22,7 @@ export function PriceChart({
   className = "",
   levels = [],
   markers = [],
+  events = [],
   fairValue,
 }: {
   series: SeriesPoint[];
@@ -29,6 +30,7 @@ export function PriceChart({
   className?: string;
   levels?: { price: number; color: string; title: string; dashed?: boolean }[];
   markers?: { time: number; side: string }[];
+  events?: { time: number; title: string }[];
   fairValue?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -107,20 +109,30 @@ export function PriceChart({
       if (lv.price > 0)
         main.createPriceLine({ price: lv.price, color: lv.color, lineWidth: 1, lineStyle: lv.dashed ? 2 : 0, axisLabelVisible: true, title: lv.title });
     }
-    if (markers.length && series.length) {
+    // trade (B/S) + update (📰) markers, plus a bar -> update-title map for the tooltip
+    const eventByBar = new Map<number, string>();
+    if (series.length) {
       const lo = series[0].time as number;
       const hi = series[series.length - 1].time as number;
-      const ms = markers
-        .filter((m) => m.time >= lo && m.time <= hi)
-        .sort((a, b) => a.time - b.time)
-        .map((m) => ({
-          time: m.time as UTCTimestamp,
-          position: m.side === "buy" ? "belowBar" : "aboveBar",
-          color: m.side === "buy" ? "#25d07d" : "#ff5b6e",
-          shape: m.side === "buy" ? "arrowUp" : "arrowDown",
-          text: m.side === "buy" ? "B" : "S",
-        }));
-      if (ms.length) main.setMarkers(ms);
+      const times = series.map((p) => p.time as number);
+      const nearest = (e: number) => times.reduce((best, tt) => (Math.abs(tt - e) < Math.abs(best - e) ? tt : best), times[0]);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const all: any[] = [];
+      for (const m of markers) {
+        if (m.time < lo || m.time > hi) continue;
+        all.push({ time: m.time as UTCTimestamp, position: m.side === "buy" ? "belowBar" : "aboveBar",
+          color: m.side === "buy" ? "#25d07d" : "#ff5b6e", shape: m.side === "buy" ? "arrowUp" : "arrowDown", text: m.side === "buy" ? "B" : "S" });
+      }
+      for (const ev of events) {
+        if (ev.time < lo - 86400 || ev.time > hi + 86400) continue;
+        const bt = nearest(ev.time);
+        all.push({ time: bt as UTCTimestamp, position: "aboveBar", color: "#f5b53d", shape: "square", text: "📰" });
+        eventByBar.set(bt, eventByBar.has(bt) ? `${eventByBar.get(bt)} · ${ev.title}` : ev.title);
+      }
+      if (all.length) {
+        all.sort((a, b) => (a.time as number) - (b.time as number));
+        main.setMarkers(all);
+      }
     }
 
     // hover info box
@@ -158,7 +170,9 @@ export function PriceChart({
         sp && sp.z != null
           ? `<div class="tip-v dim">z ${sp.z.toFixed(1)}${sp.rsi != null ? ` · RSI ${Math.round(sp.rsi)}` : ""}</div>`
           : "";
-      tip.innerHTML = `<div class="tip-t">${fmtFull(param.time as number)}</div><div class="tip-v">${body}${volTxt}</div>${vf}${zr}`;
+      const evt = eventByBar.get(param.time as number);
+      const evTxt = evt ? `<div class="tip-v" style="color:#f5b53d">📰 ${evt}</div>` : "";
+      tip.innerHTML = `<div class="tip-t">${fmtFull(param.time as number)}</div><div class="tip-v">${body}${volTxt}</div>${vf}${zr}${evTxt}`;
       tip.style.display = "block";
       tip.style.left = Math.min(pt.x + 14, el.clientWidth - 190) + "px";
       tip.style.top = Math.max(6, pt.y - 12) + "px";
@@ -169,7 +183,7 @@ export function PriceChart({
       chart.remove();
       tip.remove();
     };
-  }, [series, type, levels, markers, fairValue]);
+  }, [series, type, levels, markers, events, fairValue]);
 
   return <div className={`chart-box ${className}`} ref={ref} />;
 }

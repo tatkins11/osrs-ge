@@ -25,7 +25,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import delete_trade, ensure_trades_db, get_items_df, insert_trade, stats
+from .db import delete_trade, ensure_trades_db, get_items_df, get_updates_df, insert_trade, stats
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -125,6 +125,13 @@ def meta() -> dict:
             "min_margin": DEFAULT_MIN_MARGIN,
         },
     }
+
+
+@app.get("/api/updates")
+def updates_endpoint(limit: int = Query(150, ge=1, le=500)) -> list[dict]:
+    """OSRS game updates / blog posts (newest first) for chart event markers."""
+    df = get_updates_df().head(limit)
+    return [{"ts": str(r.ts), "title": r.title, "url": r.url} for r in df.itertuples()]
 
 
 @app.get("/api/items")

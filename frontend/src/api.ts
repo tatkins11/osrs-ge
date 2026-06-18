@@ -282,6 +282,13 @@ export interface ItemName {
   name: string;
 }
 
+export interface GameUpdate {
+  ts: string;
+  title: string;
+  url: string;
+}
+export const getUpdates = () => get<GameUpdate[]>("/api/updates");
+
 export const getItemNames = () => get<ItemName[]>("/api/itemnames");
 export const getPortfolio = () => get<Portfolio>("/api/portfolio");
 export const addTrade = (t: { item_id: number; side: string; qty: number; price: number; note?: string }) =>
