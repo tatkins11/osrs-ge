@@ -195,7 +195,12 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     cheap = np.clip(1.0 - d["pct_30d"].fillna(0.5), 0, 1)                   # near the bottom of the 30d range
     liq = np.clip((np.log10(gpv.clip(lower=1)) - 6.0) / 3.0, 0, 1)         # 1M..1B gp/day
     health = np.clip((d["level_health"].fillna(0) - 0.75) / 0.25, 0, 1)    # 0.75->0, >=1.0->1 (stable level)
-    d["value_confidence"] = (100 * (0.30 * disc + 0.22 * zc + 0.18 * cheap + 0.15 * liq + 0.15 * health)).round()
+    base = 100 * (0.30 * disc + 0.22 * zc + 0.18 * cheap + 0.15 * liq + 0.15 * health)
+    # validated (crashcond study): dips that bottom near their high-alch floor recover far better
+    # (support<=10%: 92% win / PF 23.7 vs far>30%: 56% / PF 1.09). Reward floor-supported dips; items
+    # with no meaningful floor (support NaN -> 1.0) get no bonus rather than a penalty.
+    floor_bonus = 20.0 * np.clip((0.15 - d["alch_support"].fillna(1.0)) / 0.15, 0, 1)
+    d["value_confidence"] = np.minimum(100.0, base + floor_bonus).round()
     # horizon by liquidity (study: liquid dislocations revert in days; thin / high-value take longer)
     d["value_horizon"] = np.select([gpv >= 200_000_000, gpv >= 20_000_000],
                                     ["1-3 days", "~1 week"], default="2-4 weeks")
