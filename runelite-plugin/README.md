@@ -18,17 +18,19 @@ upserts the order and, when an offer finishes with a real fill, creates one trad
 the 2% tax applied by the server).
 
 ## Requirements
-- **JDK 11** (RuneLite targets Java 11) — e.g. Eclipse Temurin 11.
-- **Gradle** — this folder has no committed wrapper, so install Gradle (or run
-  `gradle wrapper` once to generate your own `./gradlew`).
+- **JDK 11** (RuneLite targets Java 11) — e.g. Eclipse Temurin 11. This is the ONLY
+  tool you need: a Gradle wrapper is committed, so you do **not** install Gradle.
 - **Git** to clone the repo (or download the zip).
 - Your server's ingest token (`OSRS_GE_INGEST_TOKEN`) from the VPS `.env`.
 
 ## Run it (developer mode — the simplest path for personal use)
 ```bash
 cd runelite-plugin
-gradle run           # downloads RuneLite + launches it with this plugin loaded
+./gradlew run          # macOS / Linux
+.\gradlew run          # Windows (PowerShell)
 ```
+The wrapper fetches the right Gradle automatically, then launches RuneLite with the
+plugin loaded.
 Then in the RuneLite client:
 1. Open **Configuration** (wrench) → find **GE Terminal Export**.
 2. Set **API URL** = `https://ge.mapletree-ge.com` and **API key** = your ingest token.
@@ -37,9 +39,9 @@ Then in the RuneLite client:
 5. Watch the **Orders** tab in the web app — offers appear within a second or two, and
    filled ones flow into **Portfolio**.
 
-> `gradle run` is the canonical RuneLite plugin dev-run. For a permanent in-client
-> install you'd publish to the RuneLite **Plugin Hub** (public review) — not needed for
-> personal use.
+> `./gradlew run` (`.\gradlew run` on Windows) is the canonical RuneLite plugin dev-run.
+> For a permanent in-client install you'd publish to the RuneLite **Plugin Hub** (public
+> review) — not needed for personal use.
 
 ## Notes
 - Each offer gets a stable id per GE slot, persisted across sessions, so reconnecting

@@ -2,7 +2,7 @@
  * RuneLite external plugin that streams your live Grand Exchange offers to your
  * GE Terminal (read-only). Develop/run it the standard RuneLite way:
  *
- *   gradle run            # launches RuneLite in developer mode with this plugin loaded
+ *   ./gradlew run         # launches RuneLite in developer mode with this plugin loaded
  *
  * (See README.md.)
  */
