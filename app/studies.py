@@ -245,12 +245,126 @@ def newsdrop(timestep="24h", drop_pct=0.10, k_fwd=7):
     line("ALL drops", df)
 
 
+# --- 7. Update-proximity on the REAL 1-yr calendar --------------------------
+def _fetch_update_calendar(window_days: int = 470):
+    """Real-dated game-update calendar over the window, straight from the wiki.
+
+    NB item-level attribution was attempted (prop=links intersected with the item
+    catalog) but OSRS update/news pages are link-sparse (~0 item links), so the
+    items an update changed can't be recovered here -- we condition on DATE
+    proximity instead. Dates come from each page's first revision (real publish
+    date), restricted to Category:Game updates within the year-categories.
+    """
+    import ssl
+    from datetime import datetime, timedelta, timezone
+
+    import httpx
+    import truststore
+
+    from .config import USER_AGENT
+    from .updates import WIKI_API
+
+    ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=window_days)
+
+    def members(c, cat):
+        out, cont = set(), {}
+        while True:
+            j = c.get(WIKI_API, params={"action": "query", "format": "json", "list": "categorymembers",
+                "cmtitle": cat, "cmlimit": "500", "cmprop": "title", **cont}).json()
+            out |= {m["title"] for m in j.get("query", {}).get("categorymembers", [])}
+            cont = j.get("continue", {})
+            if not cont:
+                break
+        return out
+
+    dates = []
+    with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=30, verify=ctx) as c:
+        g = members(c, "Category:Game updates")
+        yr = set()
+        for y in {cutoff.year, cutoff.year + 1}:
+            yr |= members(c, f"Category:{y} updates")
+        for t in sorted(g & yr):
+            j = c.get(WIKI_API, params={"action": "query", "format": "json", "titles": t,
+                "prop": "revisions", "rvprop": "timestamp", "rvdir": "newer", "rvlimit": "1"}).json()
+            pg = next(iter(j.get("query", {}).get("pages", {}).values()), {})
+            ts = (pg.get("revisions") or [{}])[0].get("timestamp")
+            if not ts:
+                continue
+            d = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+            if d >= cutoff:
+                dates.append(pd.Timestamp(d).value // 10**9)
+    return np.sort(np.array(dates, dtype="int64"))
+
+
+def updateaffected(drop_pct=0.10, k_fwd=7, pre_days=2):
+    cal = _fetch_update_calendar()
+    con = connect(read_only=True)
+    try:
+        hist = _load(con, "24h")
+        items = get_items_df(con).set_index("item_id")
+    finally:
+        con.close()
+    DAY = 86_400
+    span = (f"{pd.to_datetime(cal.min(), unit='s').date()}..{pd.to_datetime(cal.max(), unit='s').date()}"
+            if cal.size else "none")
+
+    def post(t):   # an update in [t - pre_days, t]: the update precedes the drop (causal direction)
+        return cal.size > 0 and bool(np.any((cal >= t - pre_days * DAY) & (cal <= t)))
+
+    def adj(t):    # an update within +/- 1 day of the drop
+        return cal.size > 0 and bool(np.any((cal >= t - DAY) & (cal <= t + DAY)))
+
+    rows = []
+    for iid, g in hist.groupby("item_id"):
+        if not _liquid(g):
+            continue
+        g = g.sort_values("ts").reset_index(drop=True)
+        n = len(g)
+        if n < k_fwd + 2:
+            continue
+        mid = g["mid"].to_numpy(float); ask = g["avg_high"].to_numpy(float); bid = g["avg_low"].to_numpy(float)
+        ts = _secs(g["ts"]).to_numpy()
+        ex = _exempt(items, iid)
+        i = 1
+        while i < n - k_fwd:
+            if mid[i] > 0 and mid[i - 1] > 0 and mid[i] <= mid[i - 1] * (1 - drop_pct):
+                a, b = ask[i], bid[i + k_fwd]
+                if a > 0 and not np.isnan(a) and not np.isnan(b):
+                    rows.append({"post": post(int(ts[i])), "adj": adj(int(ts[i])),
+                                 "net": (taxmod.net_sell(int(round(b)), ex) - a) / a})
+                i += k_fwd   # no overlap
+            else:
+                i += 1
+    df = pd.DataFrame(rows)
+    print(f"\n[7] UPDATE-PROXIMITY (real calendar: {cal.size} game updates {span}) "
+          f"— 1-bar drops >= {drop_pct*100:.0f}% (24h), fwd {k_fwd}d net of cost ({len(df)} drops):")
+    print("  (date proximity only -- the wiki doesn't expose which items each update changed)")
+    if df.empty:
+        print("  none."); return
+
+    def line(lab, d):
+        if not len(d):
+            print(f"  {lab:<22}{0:>7}"); return
+        r = d["net"].clip(-WINSOR, WINSOR); w, l = r[r > 0].sum(), r[r < 0].sum()
+        pf = "inf" if l >= 0 else f"{w/abs(l):.2f}"
+        print(f"  {lab:<22}n={len(d):>6}  win {(d['net']>0).mean()*100:>3.0f}%  net {r.mean()*100:+5.1f}%  PF {pf}")
+    line(f"<={pre_days}d after update", df[df.post])
+    line("not post-update", df[~df.post])
+    line("+/-1d adjacent", df[df.adj])
+    line("not adjacent", df[~df.adj])
+    line("ALL drops", df)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     ap = argparse.ArgumentParser()
     ap.add_argument("--study", default="all",
-                    choices=["all", "movers", "crashliq", "sectorrev", "flipuptime", "seasonality", "news"])
+                    choices=["all", "movers", "crashliq", "sectorrev", "flipuptime", "seasonality", "news", "affected"])
     args = ap.parse_args()
+    if args.study == "affected":   # fetches the real update calendar from the wiki
+        updateaffected()
+        print(); return
     con = connect(read_only=True)
     try:
         hist = _load(con, "6h")
