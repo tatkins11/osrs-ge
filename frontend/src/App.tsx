@@ -245,8 +245,9 @@ export default function App() {
               {tab === "movers" && (
                 <div className="exp-banner">
                   Unusual volume — items trading well above their normal daily volume (news, a meta shift, or
-                  manipulation). An early-warning watchlist, <b>not a buy signal</b>: check the 24h change for
-                  direction, then open the item to dig in.
+                  manipulation). A watchlist of what's <b>in play, not a buy signal</b>: backtested, a volume spike
+                  alone doesn't predict a tradeable move (~0% forward, negative after spread + 2% tax). Use it to spot
+                  activity, then open the item; act via <b>Crashes</b> / <b>Invest</b>.
                 </div>
               )}
               {tab === "overnight" && (

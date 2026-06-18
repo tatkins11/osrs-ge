@@ -102,30 +102,42 @@ def sectorrev(hist, items, z_thresh=1.0, k_fwd=4, win=28):
     h = hist.copy()
     h["sector"] = h["item_id"].map(lambda i: classify_one(name.loc[i]) if i in name.index else None)
     h = h[h["sector"].notna()]
-    rows = []
-    for sec, sg in h.groupby("sector"):
-        # equal-weight sector index = mean across constituents of (mid / item-mean) per ts
+    ex_map = {int(i): bool(items.loc[i, "exempt"]) for i in items.index}
+    idx_moves, net_baskets = [], []   # mid-index move vs conservative net basket return per event
+    for _sec, sg in h.groupby("sector"):
         sg = sg.copy()
         sg["norm"] = sg["mid"] / sg.groupby("item_id")["mid"].transform("mean")
         idx = sg.groupby("ts")["norm"].mean().sort_index()
+        ts_arr = idx.index
         if len(idx) < win + k_fwd + 2:
             continue
         v = idx.to_numpy(float)
         m = pd.Series(v).rolling(win, min_periods=win // 2).mean().to_numpy()
         sd = pd.Series(v).rolling(win, min_periods=win // 2).std().to_numpy()
+        ask_p = sg.pivot_table(index="ts", columns="item_id", values="avg_high").reindex(ts_arr)
+        bid_p = sg.pivot_table(index="ts", columns="item_id", values="avg_low").reindex(ts_arr)
+        ask_v, bid_v = ask_p.to_numpy(float), bid_p.to_numpy(float)
+        ex_arr = np.array([ex_map.get(int(c), False) for c in ask_p.columns])
         for i in range(win, len(v) - k_fwd):
             if not (sd[i] > 0) or np.isnan(m[i]):
                 continue
             z = (v[i] - m[i]) / sd[i]
             zprev = (v[i - 1] - m[i - 1]) / sd[i - 1] if (sd[i - 1] > 0 and not np.isnan(m[i - 1])) else 0.0
-            if z <= -z_thresh and zprev > -z_thresh:
-                rows.append({"sector": sec, "fwd": v[i + k_fwd] / v[i] - 1.0})
-    df = pd.DataFrame(rows)
-    print(f"\n[3] SECTOR MEAN-REVERSION — sector index z<=-{z_thresh}, forward {k_fwd*6}h ({len(df)} dislocations):")
-    if df.empty:
+            if not (z <= -z_thresh and zprev > -z_thresh):
+                continue
+            idx_moves.append(v[i + k_fwd] / v[i] - 1.0)
+            a, b = ask_v[i], bid_v[i + k_fwd]                  # buy ask now, sell bid k bars later
+            ok = (~np.isnan(a)) & (~np.isnan(b)) & (a > 0)
+            if ok.any():
+                net = (b[ok] - taxmod.sell_tax_array(b[ok], ex_arr[ok])) / a[ok] - 1.0
+                net_baskets.append(float(np.clip(net, -WINSOR, WINSOR).mean()))
+    print(f"\n[3] SECTOR MEAN-REVERSION — sector index z<=-{z_thresh}, forward {k_fwd*6}h ({len(idx_moves)} dislocations):")
+    if not idx_moves:
         print("  none."); return
-    print(f"  pooled: forward index move {_wmean(df['fwd'])*100:+.1f}%  positive {(df['fwd']>0).mean()*100:.0f}%   "
-          f"(NOTE: index move, not net of per-item spread+tax)")
+    im = np.array(idx_moves); nb = np.array(net_baskets)
+    print(f"  index (mid) move:   {_wmean(idx_moves)*100:+6.1f}%   positive {(im > 0).mean()*100:>3.0f}%")
+    print(f"  basket NET of cost: {_wmean(net_baskets)*100:+6.1f}%   positive {(nb > 0).mean()*100:>3.0f}%   "
+          f"(buy ask / sell bid / 2% tax, equal-weight constituents)")
 
 
 # --- 4. Flip-margin persistence (does margin_uptime carry forward?) ---------
