@@ -1,0 +1,49 @@
+/*
+ * RuneLite external plugin that streams your live Grand Exchange offers to your
+ * GE Terminal (read-only). Develop/run it the standard RuneLite way:
+ *
+ *   ./gradlew run         # launches RuneLite in developer mode with this plugin loaded
+ *
+ * (See README.md.)
+ */
+plugins {
+    id 'java'
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.runelite.net' }
+}
+
+def runeLiteVersion = 'latest.release'
+
+dependencies {
+    compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
+
+    compileOnly 'org.projectlombok:lombok:1.18.34'
+    annotationProcessor 'org.projectlombok:lombok:1.18.34'
+
+    // the dev launcher (src/test) needs the full client on its classpath
+    testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
+    testImplementation 'org.projectlombok:lombok:1.18.34'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.34'
+}
+
+group = 'com.mapletree'
+version = '1.0.0'
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+// `./gradlew run` -> start RuneLite (developer mode) with this plugin loaded
+tasks.register('run', JavaExec) {
+    group = 'application'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.mapletree.geexport.GeExportPluginTest'
+}

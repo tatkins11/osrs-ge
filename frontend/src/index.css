@@ -208,6 +208,14 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .logbtn { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; cursor: pointer; padding: 0 6px; font-size: 11px; margin-right: 6px; line-height: 1.5; }
 .logbtn:hover { color: var(--green); border-color: var(--green); }
 .se-row.clickable { cursor: pointer; }
+.ord-badge { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; letter-spacing: .3px; white-space: nowrap; }
+.ord-buying { background: rgba(78,161,255,.15); color: #4ea1ff; }
+.ord-selling { background: rgba(245,181,61,.15); color: #f5b53d; }
+.ord-done { background: rgba(37,208,125,.15); color: var(--green); }
+.ord-cancel { background: rgba(120,138,160,.12); color: var(--muted); }
+.ord-fill { position: relative; width: 150px; height: 16px; background: var(--elev); border-radius: 4px; overflow: hidden; }
+.ord-fill > span { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(37,208,125,.35); }
+.ord-fill > em { position: relative; font-style: normal; font-size: 10px; color: var(--fg-2); padding-left: 5px; line-height: 16px; }
 
 .crash-banner {
   margin: 8px; padding: 8px 12px; border-radius: 7px; font-size: 12px; line-height: 1.4;

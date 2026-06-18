@@ -31,6 +31,11 @@ USER_AGENT = os.getenv(
 HTTP_TIMEOUT = float(os.getenv("OSRS_GE_HTTP_TIMEOUT", "30"))
 HTTP_RETRIES = int(os.getenv("OSRS_GE_HTTP_RETRIES", "4"))
 
+# --- RuneLite ingest --------------------------------------------------------
+# Shared secret the RuneLite plugin sends (Bearer) to POST live GE offers to
+# /api/ge-offers. Empty -> the ingest endpoint is disabled (503).
+INGEST_TOKEN = os.getenv("OSRS_GE_INGEST_TOKEN", "")
+
 # --- Collector --------------------------------------------------------------
 POLL_INTERVAL_SECONDS = int(os.getenv("OSRS_GE_POLL_INTERVAL", "300"))  # 5 minutes
 

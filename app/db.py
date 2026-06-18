@@ -341,6 +341,22 @@ CREATE TABLE IF NOT EXISTS trades (
     price    BIGINT,
     note     VARCHAR
 );
+CREATE TABLE IF NOT EXISTS orders (   -- live GE offers streamed from the RuneLite plugin
+    order_id     VARCHAR PRIMARY KEY, -- plugin-generated, stable per offer
+    login        VARCHAR,
+    slot         INTEGER,
+    item_id      INTEGER,
+    side         VARCHAR,             -- buy | sell
+    price        BIGINT,              -- offer price per item
+    total_qty    BIGINT,
+    filled_qty   BIGINT,
+    spent        BIGINT,              -- gp transacted so far
+    state        VARCHAR,             -- BUYING|BOUGHT|SELLING|SOLD|CANCELLED_BUY|CANCELLED_SELL|EMPTY
+    opened_ts    TIMESTAMP,
+    updated_ts   TIMESTAMP,
+    completed_ts TIMESTAMP,
+    trade_id     BIGINT               -- linked trade once a fill is finalized (NULL until then)
+);
 """
 _TRADE_COLS = ["id", "ts", "item_id", "side", "qty", "price", "note"]
 
@@ -366,14 +382,15 @@ def ensure_trades_db() -> None:
         con.close()
 
 
-def insert_trade(item_id: int, side: str, qty: int, price: int, note: str = "", ts=None) -> None:
+def insert_trade(item_id: int, side: str, qty: int, price: int, note: str = "", ts=None) -> int | None:
     con = connect_trades()
     try:
         con.execute(_TRADES_SCHEMA)  # idempotent; safe if startup ensure was skipped
-        con.execute(
-            "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?, ?, ?, ?, ?, ?)",
+        row = con.execute(
+            "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
             [ts or utcnow(), int(item_id), side, int(qty), int(price), note or ""],
-        )
+        ).fetchone()
+        return int(row[0]) if row else None
     finally:
         con.close()
 
@@ -417,6 +434,89 @@ def update_trade(trade_id: int, qty=None, price=None, note=None, side=None) -> N
     con = connect_trades()
     try:
         con.execute(f"UPDATE trades SET {', '.join(sets)} WHERE id = ?", params)
+    finally:
+        con.close()
+
+
+_ORDER_COLS = ["order_id", "login", "slot", "item_id", "side", "price", "total_qty",
+               "filled_qty", "spent", "state", "opened_ts", "updated_ts", "completed_ts", "trade_id"]
+_TERMINAL_STATES = {"BOUGHT", "SOLD", "CANCELLED_BUY", "CANCELLED_SELL"}
+
+
+def _to_naive_utc(v):
+    if not v:
+        return utcnow()
+    try:
+        return pd.to_datetime(v, utc=True).to_pydatetime().replace(tzinfo=None)
+    except Exception:
+        return utcnow()
+
+
+def ingest_offers(events: list[dict]) -> dict:
+    """Upsert live GE offers from the RuneLite plugin. When an offer reaches a terminal
+    state with a real fill, finalize it into a trade exactly once (so the portfolio /
+    round-trip P&L update automatically). Buys record the real average fill price
+    (spent/filled); sells record the gross offer price (the tax engine takes the 2%)."""
+    if not events:
+        return {"orders": 0, "trades_created": 0}
+    con = connect_trades()
+    try:
+        con.execute(_TRADES_SCHEMA)
+        n = made = 0
+        for e in events:
+            oid = str(e.get("order_id") or "").strip()
+            if not oid:
+                continue
+            state = str(e.get("state") or "").upper()
+            side = e.get("side") or ("sell" if ("SELL" in state or state == "SOLD") else "buy")
+            item_id = int(e.get("item_id") or 0)
+            price = int(e.get("price") or 0)
+            total = int(e.get("total_qty") or 0)
+            filled = int(e.get("filled_qty") or 0)
+            spent = int(e.get("spent") or 0)
+            ts = _to_naive_utc(e.get("ts"))
+            terminal = state in _TERMINAL_STATES
+            existing = con.execute("SELECT trade_id FROM orders WHERE order_id = ?", [oid]).fetchone()
+            if existing is None:
+                con.execute(
+                    """INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty,
+                           filled_qty, spent, state, opened_ts, updated_ts, completed_ts, trade_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)""",
+                    [oid, e.get("login"), int(e.get("slot") if e.get("slot") is not None else -1),
+                     item_id, side, price, total, filled, spent, state, ts, ts, (ts if terminal else None)],
+                )
+                trade_id = None
+            else:
+                trade_id = existing[0]
+                con.execute(
+                    """UPDATE orders SET item_id=?, side=?, price=?, total_qty=?, filled_qty=?, spent=?,
+                           state=?, updated_ts=?, completed_ts=COALESCE(completed_ts, ?) WHERE order_id=?""",
+                    [item_id, side, price, total, filled, spent, state, ts, (ts if terminal else None), oid],
+                )
+            n += 1
+            if terminal and filled > 0 and trade_id is None:
+                avg_price = int(round(spent / filled)) if (side == "buy" and spent > 0) else price
+                # same connection (nesting connect_trades() would deadlock the single writer)
+                row = con.execute(
+                    "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?,?,?,?,?,?) RETURNING id",
+                    [ts, item_id, side, filled, avg_price, f"GE auto · slot {e.get('slot')}"],
+                ).fetchone()
+                con.execute("UPDATE orders SET trade_id=? WHERE order_id=?", [int(row[0]) if row else None, oid])
+                made += 1
+        return {"orders": n, "trades_created": made}
+    finally:
+        con.close()
+
+
+def get_orders_df() -> pd.DataFrame:
+    try:
+        con = connect_trades(read_only=True)
+    except RuntimeError:
+        return pd.DataFrame(columns=_ORDER_COLS)
+    try:
+        return con.execute("SELECT * FROM orders ORDER BY updated_ts DESC").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=_ORDER_COLS)
     finally:
         con.close()
 

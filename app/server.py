@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+import pandas as pd
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -20,12 +21,13 @@ from .config import (
     DEFAULT_MIN_MARGIN,
     DEFAULT_MIN_VOLUME,
     DEMO_MARKER,
+    INGEST_TOKEN,
     PROJECT_ROOT,
     TAX_CAP,
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import delete_trade, ensure_trades_db, get_items_df, get_updates_df, insert_trade, stats, update_trade
+from .db import delete_trade, ensure_trades_db, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, stats, update_trade
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -289,6 +291,70 @@ def edit_trade(trade_id: int, t: TradePatch) -> dict:
 def remove_trade(trade_id: int) -> dict:
     delete_trade(trade_id)
     return {"ok": True}
+
+
+# --- RuneLite live GE-offer ingest + open-orders view -----------------------
+def require_ingest_token(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> None:
+    if not INGEST_TOKEN:
+        raise HTTPException(status_code=503, detail="ingest not configured")
+    supplied = authorization[7:].strip() if (authorization and authorization.lower().startswith("bearer ")) else None
+    if (supplied or x_api_key) != INGEST_TOKEN:
+        raise HTTPException(status_code=401, detail="bad ingest token")
+
+
+class GeOffer(BaseModel):
+    order_id: str
+    login: str | None = None
+    slot: int | None = None
+    item_id: int
+    side: str | None = None
+    price: int = 0
+    total_qty: int = 0
+    filled_qty: int = 0
+    spent: int = 0
+    state: str
+    ts: str | None = None
+
+
+class GeOffersIn(BaseModel):
+    offers: list[GeOffer]
+
+
+@app.post("/api/ge-offers")
+def ge_offers(body: GeOffersIn, _=Depends(require_ingest_token)) -> dict:
+    """Ingest a batch of live GE offers from the RuneLite plugin (read-only tracking)."""
+    return {"ok": True, **ingest_offers([o.model_dump() for o in body.offers])}
+
+
+@app.get("/api/orders")
+def orders(limit: int = 100) -> list[dict]:
+    df = get_orders_df()
+    if df.empty:
+        return []
+    names = {int(r.item_id): r.name for r in get_items_df().itertuples() if r.name}
+
+    def tss(v):
+        return None if (v is None or pd.isna(v)) else str(v)
+
+    out = []
+    for r in df.head(limit).itertuples():
+        filled, total, spent = int(r.filled_qty or 0), int(r.total_qty or 0), int(r.spent or 0)
+        out.append({
+            "order_id": r.order_id, "login": r.login,
+            "slot": int(r.slot) if pd.notna(r.slot) else None,
+            "item_id": int(r.item_id), "name": names.get(int(r.item_id), str(r.item_id)),
+            "side": r.side, "price": int(r.price or 0),
+            "total_qty": total, "filled_qty": filled,
+            "fill_pct": (filled / total) if total > 0 else None,
+            "avg_fill": int(round(spent / filled)) if filled > 0 else None,
+            "spent": spent, "state": r.state,
+            "opened_ts": tss(r.opened_ts), "updated_ts": tss(r.updated_ts), "completed_ts": tss(r.completed_ts),
+            "open": r.state in ("BUYING", "SELLING"),
+        })
+    return out
 
 
 # --- serve the built frontend (if present) ----------------------------------

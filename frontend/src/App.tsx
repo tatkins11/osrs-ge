@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getCrashes, getFlips, getInvest, getItems, getMeta, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Row, type SectorsResponse, type TradePrefill } from "./api";
+import { getCrashes, getFlips, getInvest, getItems, getMeta, getOrders, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Order, type Row, type SectorsResponse, type TradePrefill } from "./api";
 import { gpShort } from "./format";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
 import { InvestTable } from "./components/InvestTable";
 import { ItemPanel } from "./components/ItemPanel";
 import { MarketTable } from "./components/MarketTable";
+import { OrdersTable } from "./components/OrdersTable";
 import { OvernightTable } from "./components/OvernightTable";
 import { Portfolio } from "./components/Portfolio";
 import { SectorGrid } from "./components/SectorGrid";
 import { SectorPanel } from "./components/SectorPanel";
 import { VolumeTable } from "./components/VolumeTable";
 
-type Tab = "flips" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "portfolio";
+type Tab = "flips" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "orders" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -36,6 +37,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "overnight", label: "Overnight" },
   { id: "sectors", label: "Sectors" },
   { id: "all", label: "All items" },
+  { id: "orders", label: "Orders" },
   { id: "portfolio", label: "Portfolio" },
 ];
 
@@ -63,6 +65,7 @@ export default function App() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [sectorsData, setSectorsData] = useState<SectorsResponse | null>(null);
   const [investData, setInvestData] = useState<InvestResponse | null>(null);
+  const [ordersData, setOrdersData] = useState<Order[]>([]);
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
 
   // log-a-trade from a signal row: stash a prefill (new nonce each click) and jump to Portfolio
@@ -106,6 +109,13 @@ export default function App() {
       if (tab === "invest") {
         getInvest(filters)
           .then((d) => ok() && (setInvestData(d), setUpdatedAt(Date.now())))
+          .catch(fail)
+          .finally(done);
+        return;
+      }
+      if (tab === "orders") {
+        getOrders()
+          .then((d) => ok() && (setOrdersData(d), setUpdatedAt(Date.now())))
           .catch(fail)
           .finally(done);
         return;
@@ -190,7 +200,7 @@ export default function App() {
         </div>
         <div className="spacer" />
         <span className="note">
-          {loading ? "loading…" : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : `${shown.length} rows`}
+          {loading ? "loading…" : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : tab === "orders" ? `${ordersData.length} orders` : `${shown.length} rows`}
           {updatedAt ? ` · updated ${ago(updatedAt)}` : ""}
           {err ? ` · error: ${err}` : ""}
         </span>
@@ -252,6 +262,15 @@ export default function App() {
                 onSelect={setSelected}
                 onLog={onLog}
               />
+            </div>
+            <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
+              <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
+            </div>
+          </>
+        ) : tab === "orders" ? (
+          <>
+            <div className="table-wrap">
+              <OrdersTable rows={ordersData} selectedId={selected} onSelect={setSelected} />
             </div>
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
               <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />

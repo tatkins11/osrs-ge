@@ -327,6 +327,27 @@ export interface GameUpdate {
 }
 export const getUpdates = () => get<GameUpdate[]>("/api/updates");
 
+export interface Order {
+  order_id: string;
+  login: string | null;
+  slot: number | null;
+  item_id: number;
+  name: string;
+  side: string;
+  price: number;
+  total_qty: number;
+  filled_qty: number;
+  fill_pct: number | null;
+  avg_fill: number | null;
+  spent: number;
+  state: string;
+  opened_ts: string | null;
+  updated_ts: string | null;
+  completed_ts: string | null;
+  open: boolean;
+}
+export const getOrders = () => get<Order[]>("/api/orders");
+
 export const getItemNames = () => get<ItemName[]>("/api/itemnames");
 export const getPortfolio = () => get<Portfolio>("/api/portfolio");
 export const addTrade = (t: { item_id: number; side: string; qty: number; price: number; note?: string }) =>

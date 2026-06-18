@@ -8,7 +8,11 @@
 {$SITE_ADDRESS} {
 	encode zstd gzip
 
-	basic_auth {
+	# The RuneLite plugin POSTs live GE offers to /api/ge-offers; that path is
+	# protected by its own bearer token (OSRS_GE_INGEST_TOKEN) in the app, so it
+	# skips dashboard basic-auth. Everything else still requires login.
+	@protected not path /api/ge-offers
+	basic_auth @protected {
 		{$DASH_USER} {$DASH_HASH}
 	}
 
