@@ -105,6 +105,13 @@ export function Portfolio({ refreshNonce = 0 }: { refreshNonce?: number }) {
             </div>
           </div>
 
+          {pf.n_alerts > 0 && (
+            <div className="crash-banner">
+              ⚑ {pf.n_alerts} holding{pf.n_alerts > 1 ? "s have" : " has"} reverted to (or above) fair value —
+              consider selling. Marked <b>SELL</b> below.
+            </div>
+          )}
+
           <div className="panel-section">
             <h4>
               Open positions{" "}
@@ -121,10 +128,12 @@ export function Portfolio({ refreshNonce = 0 }: { refreshNonce?: number }) {
                   <th>Avg cost</th>
                   <th>Breakeven</th>
                   <th>Rec. sell</th>
+                  <th title="7-day established fair value — the price to aim to sell at">Target</th>
                   <th>Cur (net)</th>
                   <th>Market value</th>
                   <th>Unrealized</th>
                   <th>%</th>
+                  <th className="left">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -135,20 +144,50 @@ export function Portfolio({ refreshNonce = 0 }: { refreshNonce?: number }) {
                     <td>{gp(p.avg_cost)}</td>
                     <td className="dim">{gp(p.breakeven)}</td>
                     <td className={(p.cur_price ?? 0) >= (p.breakeven ?? 0) ? "pos" : "neg"}>{gp(p.cur_price)}</td>
+                    <td className="dim">{gp(p.target)}</td>
                     <td>{gp(p.cur_net)}</td>
                     <td>{gp(p.market_value)}</td>
                     <td className={(p.unrealized ?? 0) >= 0 ? "pos" : "neg"}>{gp(p.unrealized)}</td>
                     <td className={(p.unrealized_pct ?? 0) >= 0 ? "pos" : "neg"}>{pct(p.unrealized_pct, 1)}</td>
+                    <td className="left">
+                      {p.status === "sell" ? (
+                        <span className="badge badge-SELL">SELL</span>
+                      ) : p.status === "underwater" ? (
+                        <span className="neg">underwater</span>
+                      ) : (
+                        <span className="dim">hold</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {pf.open_positions.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="left muted">No open positions — log a buy above.</td>
+                    <td colSpan={11} className="left muted">No open positions — log a buy above.</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {pf.sector_exposure && pf.sector_exposure.length > 0 && (
+            <div className="panel-section">
+              <h4>
+                Sector exposure{" "}
+                <span className="dim" style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                  · where your open capital sits (watch for over-concentration)
+                </span>
+              </h4>
+              <div className="sector-exp">
+                {pf.sector_exposure.map((s) => (
+                  <div className="se-row" key={s.sector}>
+                    <span className="se-label">{s.label}</span>
+                    <span className="se-bar"><span style={{ width: `${Math.round(s.pct * 100)}%` }} /></span>
+                    <span className="se-pct">{Math.round(s.pct * 100)}% · {gpShort(s.capital)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="panel-section">
             <h4>Trade log</h4>

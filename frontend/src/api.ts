@@ -243,6 +243,18 @@ export interface OpenPosition {
   market_value: number | null;
   unrealized: number | null;
   unrealized_pct: number | null;
+  target: number | null;      // 7d established fair-value sell target
+  target_net: number | null;
+  to_target: number | null;   // upside from current price to fair value (fraction)
+  alch_floor: number | null;
+  sector: string | null;
+  status: string;             // sell | hold | underwater | no price
+}
+export interface SectorExposure {
+  sector: string;
+  label: string;
+  capital: number;
+  pct: number;
 }
 export interface Trade {
   id: number;
@@ -262,6 +274,8 @@ export interface Portfolio {
   invested: number;
   n_trades: number;
   n_open: number;
+  sector_exposure: SectorExposure[];
+  n_alerts: number;
 }
 export interface ItemName {
   item_id: number;

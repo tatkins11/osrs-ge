@@ -238,6 +238,13 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .sc-foot b { font-weight: 700; }
 .pad { padding: 24px; }
 .flat { color: var(--fg-2); }
+/* portfolio sector exposure bars */
+.sector-exp { display: flex; flex-direction: column; gap: 6px; max-width: 680px; }
+.se-row { display: grid; grid-template-columns: 170px 1fr 150px; align-items: center; gap: 10px; font-size: 12px; }
+.se-label { color: var(--fg); }
+.se-bar { height: 10px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.se-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.se-pct { font-family: var(--mono); color: var(--fg-2); text-align: right; }
 
 /* invest / value-buy page */
 .invest-banner {
