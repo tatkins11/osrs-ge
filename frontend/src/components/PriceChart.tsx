@@ -22,12 +22,14 @@ export function PriceChart({
   className = "",
   levels = [],
   markers = [],
+  fairValue,
 }: {
   series: SeriesPoint[];
   type?: "line" | "candle";
   className?: string;
   levels?: { price: number; color: string; title: string; dashed?: boolean }[];
   markers?: { time: number; side: string }[];
+  fairValue?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -137,7 +139,12 @@ export function PriceChart({
           ? `O ${gpf(md.open)} · H ${gpf(md.high)} · L ${gpf(md.low)} · C ${gpf(md.close)}`
           : `Price ${gpf(md.value)}`;
       const volTxt = vd?.value != null ? ` · Vol ${gpf(vd.value)}` : "";
-      tip.innerHTML = `<div class="tip-t">${fmtFull(param.time as number)}</div><div class="tip-v">${body}${volTxt}</div>`;
+      const px = type === "candle" ? md.close : md.value;
+      const vf =
+        fairValue && fairValue > 0 && px != null
+          ? `<div class="tip-v ${px >= fairValue ? "neg" : "pos"}">${px >= fairValue ? "+" : ""}${(((px / fairValue) - 1) * 100).toFixed(1)}% vs fair value</div>`
+          : "";
+      tip.innerHTML = `<div class="tip-t">${fmtFull(param.time as number)}</div><div class="tip-v">${body}${volTxt}</div>${vf}`;
       tip.style.display = "block";
       tip.style.left = Math.min(pt.x + 14, el.clientWidth - 190) + "px";
       tip.style.top = Math.max(6, pt.y - 12) + "px";
@@ -148,7 +155,7 @@ export function PriceChart({
       chart.remove();
       tip.remove();
     };
-  }, [series, type, levels, markers]);
+  }, [series, type, levels, markers, fairValue]);
 
   return <div className={`chart-box ${className}`} ref={ref} />;
 }

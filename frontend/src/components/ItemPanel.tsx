@@ -85,16 +85,26 @@ export function ItemPanel({
   const pos = pf?.open_positions.find((p) => p.item_id === itemId) ?? null;
   const levels = useMemo(() => {
     const out: { price: number; color: string; title: string; dashed?: boolean }[] = [];
-    if (sr.established) out.push({ price: sr.established, color: "#f5b53d", title: "fair value" });
+    const fair = sr.established;
     const target = sr.value_target ?? sr.crash_target;
-    if (target) out.push({ price: target, color: "#25d07d", title: "target" });
-    if (sr.alch_floor && sr.alch_floor > 0) out.push({ price: sr.alch_floor, color: "#9b8cff", title: "alch floor", dashed: true });
+    if (fair && target && Math.abs(target - fair) / fair > 0.01) {
+      out.push({ price: fair, color: "#22d3ee", title: "fair value" });
+      out.push({ price: target, color: "#25d07d", title: "target" });
+    } else if (fair) {
+      out.push({ price: fair, color: "#22d3ee", title: "fair value / target" });
+    } else if (target) {
+      out.push({ price: target, color: "#25d07d", title: "target" });
+    }
+    // alch floor only when price is genuinely near it (else it's far off-axis clutter)
+    if (sr.alch_floor && sr.alch_floor > 0 && sr.alch_support != null && sr.alch_support <= 0.5) {
+      out.push({ price: sr.alch_floor, color: "#9b8cff", title: "alch floor", dashed: true });
+    }
     if (pos) {
-      out.push({ price: pos.avg_cost, color: "#4ea1ff", title: "avg cost" });
+      out.push({ price: pos.avg_cost, color: "#e8edf2", title: "avg cost" });
       if (pos.breakeven) out.push({ price: pos.breakeven, color: "#ff5b6e", title: "breakeven", dashed: true });
     }
     return out;
-  }, [sr.established, sr.value_target, sr.crash_target, sr.alch_floor, pos?.avg_cost, pos?.breakeven]);
+  }, [sr.established, sr.value_target, sr.crash_target, sr.alch_floor, sr.alch_support, pos?.avg_cost, pos?.breakeven]);
   const markers = useMemo(
     () =>
       (pf?.trades ?? [])
@@ -220,7 +230,7 @@ export function ItemPanel({
             <button className="expand" title="Expand chart" onClick={() => setExpanded(true)}>⤢</button>
           </div>
         </div>
-        <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} levels={levels} markers={markers} />
+        <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} levels={levels} markers={markers} fairValue={sr.established ?? undefined} />
       </div>
 
       <div className="panel-section">
@@ -268,7 +278,7 @@ export function ItemPanel({
           title={`${data.item.name} · price (${tf === "1h" ? "2wk" : tf === "6h" ? "3mo" : "1yr"})`}
           onClose={() => setExpanded(false)}
         >
-          <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} className="modal-chart" levels={levels} markers={markers} />
+          <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} className="modal-chart" levels={levels} markers={markers} fairValue={sr.established ?? undefined} />
         </ChartModal>
       )}
     </div>
