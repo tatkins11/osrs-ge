@@ -5,7 +5,7 @@ import { useMemo, useState, type ReactNode } from "react";
  *  to flip direction. */
 export type SortState = { key: string | null; dir: "asc" | "desc"; onSort: (k: string) => void };
 
-export function useSortable<T extends Record<string, unknown>>(
+export function useSortable<T>(
   rows: T[],
   initialKey: string | null = null,
   initialDir: "asc" | "desc" = "desc"
@@ -17,8 +17,8 @@ export function useSortable<T extends Record<string, unknown>>(
     const m = dir === "asc" ? 1 : -1;
     const isNull = (v: unknown) => v == null || (typeof v === "number" && Number.isNaN(v));
     return [...rows].sort((a, b) => {
-      const av = a[key] as unknown;
-      const bv = b[key] as unknown;
+      const av = (a as Record<string, unknown>)[key];
+      const bv = (b as Record<string, unknown>)[key];
       if (isNull(av) && isNull(bv)) return 0;
       if (isNull(av)) return 1; // nulls last regardless of direction
       if (isNull(bv)) return -1;

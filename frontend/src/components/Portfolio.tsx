@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { addTrade, deleteTrade, getItemNames, getPortfolio, type ItemName, type Portfolio as Pf } from "../api";
 import { gp, gpShort, pct } from "../format";
+import { SortTh, useSortable } from "./sortable";
 
 function Tile({ k, v, cls = "" }: { k: string; v: ReactNode; cls?: string }) {
   return (
@@ -67,6 +68,8 @@ export function Portfolio({ refreshNonce = 0 }: { refreshNonce?: number }) {
     load();
   };
 
+  const { sorted: sortedPos, sort: posSort } = useSortable(pf?.open_positions ?? [], "unrealized");
+
   return (
     <div className="portfolio">
       <div className="panel-section">
@@ -123,21 +126,21 @@ export function Portfolio({ refreshNonce = 0 }: { refreshNonce?: number }) {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th className="left">Item</th>
-                  <th>Qty</th>
-                  <th>Avg cost</th>
-                  <th>Breakeven</th>
-                  <th>Rec. sell</th>
-                  <th title="7-day established fair value — the price to aim to sell at">Target</th>
-                  <th>Cur (net)</th>
-                  <th>Market value</th>
-                  <th>Unrealized</th>
-                  <th>%</th>
-                  <th className="left">Status</th>
+                  <SortTh k="name" sort={posSort} className="left">Item</SortTh>
+                  <SortTh k="qty" sort={posSort}>Qty</SortTh>
+                  <SortTh k="avg_cost" sort={posSort}>Avg cost</SortTh>
+                  <SortTh k="breakeven" sort={posSort}>Breakeven</SortTh>
+                  <SortTh k="cur_price" sort={posSort}>Rec. sell</SortTh>
+                  <SortTh k="target" sort={posSort} title="7-day established fair value — the price to aim to sell at">Target</SortTh>
+                  <SortTh k="cur_net" sort={posSort}>Cur (net)</SortTh>
+                  <SortTh k="market_value" sort={posSort}>Market value</SortTh>
+                  <SortTh k="unrealized" sort={posSort}>Unrealized</SortTh>
+                  <SortTh k="unrealized_pct" sort={posSort}>%</SortTh>
+                  <SortTh k="status" sort={posSort} className="left">Status</SortTh>
                 </tr>
               </thead>
               <tbody>
-                {pf.open_positions.map((p) => (
+                {sortedPos.map((p) => (
                   <tr key={p.item_id}>
                     <td className="name left">{p.name}</td>
                     <td>{p.qty.toLocaleString()}</td>

@@ -245,6 +245,13 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .se-bar { height: 10px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
 .se-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 .se-pct { font-family: var(--mono); color: var(--fg-2); text-align: right; }
+/* click-to-copy price tiles in the deep dive */
+.tile.copyable { cursor: pointer; }
+.tile.copyable:hover { border-color: var(--accent); }
+.tile.copyable .k { color: var(--accent-2); }
+/* sortable headers on the hand-rolled tables */
+table.tbl thead th.sortable { user-select: none; }
+table.tbl thead th.sortable .arrow { color: var(--accent); }
 
 /* invest / value-buy page */
 .invest-banner {

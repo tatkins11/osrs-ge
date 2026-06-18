@@ -1,5 +1,6 @@
 import type { Row } from "../api";
 import { gp, gpShort, num, pct } from "../format";
+import { SortTh, useSortable } from "./sortable";
 
 const confClass = (c?: number | null) => (c == null ? "" : c >= 70 ? "conf-hi" : c >= 50 ? "conf-md" : "conf-lo");
 
@@ -21,6 +22,7 @@ export function InvestTable({
   selectedId: number | null;
   onSelect: (id: number) => void;
 }) {
+  const { sorted, sort } = useSortable(buys, "value_confidence");
   return (
     <div className="tbl-scroll">
       {sells.length > 0 && (
@@ -58,19 +60,19 @@ export function InvestTable({
       <table className="tbl">
         <thead>
           <tr>
-            <th>Conf</th>
-            <th className="left">Horizon</th>
-            <th className="left">Item</th>
-            <th>Buy at</th>
-            <th>Fair value</th>
-            <th>Upside</th>
-            <th>Discount</th>
-            <th title="Buy price vs its high-alch floor (highalch − nature rune). Low / 🛡 = alching caps the downside.">Downside</th>
-            <th>Vol/day</th>
+            <SortTh k="value_confidence" sort={sort}>Conf</SortTh>
+            <SortTh k="value_horizon" sort={sort} className="left">Horizon</SortTh>
+            <SortTh k="name" sort={sort} className="left">Item</SortTh>
+            <SortTh k="sell_price" sort={sort}>Buy at</SortTh>
+            <SortTh k="value_target" sort={sort}>Fair value</SortTh>
+            <SortTh k="value_exp_roi" sort={sort}>Upside</SortTh>
+            <SortTh k="value_discount" sort={sort}>Discount</SortTh>
+            <SortTh k="alch_support" sort={sort} title="Buy price vs its high-alch floor (highalch − nature rune). Low / 🛡 = alching caps the downside.">Downside</SortTh>
+            <SortTh k="vol_daily_7d" sort={sort}>Vol/day</SortTh>
           </tr>
         </thead>
         <tbody>
-          {buys.map((r) => (
+          {sorted.map((r) => (
             <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
               <td><Conf c={r.value_confidence} /></td>
               <td className="left"><span className="hz-chip">{r.value_horizon}</span></td>

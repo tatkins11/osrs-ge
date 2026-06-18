@@ -8,10 +8,18 @@ import { SignalBadge } from "./SignalBadge";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function Tile({ k, v, cls = "" }: { k: string; v: ReactNode; cls?: string }) {
+function Tile({ k, v, cls = "", copy }: { k: string; v: ReactNode; cls?: string; copy?: number | null }) {
+  const [done, setDone] = useState(false);
+  const canCopy = copy != null && Number.isFinite(copy);
+  const onClick = () => {
+    if (!canCopy) return;
+    navigator.clipboard?.writeText(String(Math.round(copy as number)))?.catch(() => {});
+    setDone(true);
+    window.setTimeout(() => setDone(false), 900);
+  };
   return (
-    <div className="tile">
-      <div className="k">{k}</div>
+    <div className={`tile ${canCopy ? "copyable" : ""}`} onClick={onClick} title={canCopy ? "click to copy price" : undefined}>
+      <div className="k">{done ? "✓ copied" : k}</div>
       <div className={`v ${cls}`}>{v}</div>
     </div>
   );
@@ -88,6 +96,10 @@ export function ItemPanel({
         <div className="sub">
           #{data.item.item_id} · {data.item.members ? "Members" : "F2P"} · limit {num(data.item.buy_limit)}/4h
           {data.item.exempt ? " · tax-exempt" : ""}
+          {" · "}
+          <a href={`https://prices.runescape.wiki/osrs/item/${data.item.item_id}`} target="_blank" rel="noopener noreferrer">
+            wiki ↗
+          </a>
         </div>
         <div style={{ marginTop: 8 }}>
           <SignalBadge signal={sr.signal as string} />
@@ -106,8 +118,8 @@ export function ItemPanel({
           )}
           {sr.signal === "FLIP" ? (
             <div className="tiles">
-              <Tile k="Buy at" v={gp(sr.buy_price as number)} />
-              <Tile k="Sell at" v={gp(sr.sell_price as number)} />
+              <Tile k="Buy at" v={gp(sr.buy_price as number)} copy={sr.buy_price as number} />
+              <Tile k="Sell at" v={gp(sr.sell_price as number)} copy={sr.sell_price as number} />
               <Tile k="Net / ea" v={gp(sr.net_margin as number)} cls="pos" />
               <Tile k="ROI" v={pct(sr.roi as number, 2)} cls="pos" />
               <Tile k="Margin uptime" v={pct(sr.margin_uptime as number, 0)} />
@@ -134,8 +146,8 @@ export function ItemPanel({
       <div className="panel-section">
         <h4>Now · after 2% tax</h4>
         <div className="tiles">
-          <Tile k="Insta-buy" v={gp(c.instabuy)} />
-          <Tile k="Insta-sell" v={gp(c.instasell)} />
+          <Tile k="Insta-buy" v={gp(c.instabuy)} copy={c.instabuy} />
+          <Tile k="Insta-sell" v={gp(c.instasell)} copy={c.instasell} />
           <Tile k="Spread" v={gp(c.gross_margin)} />
           <Tile k="Net margin" v={gp(c.net_margin)} cls={(c.net_margin ?? 0) > 0 ? "pos" : "neg"} />
           <Tile k="ROI" v={pct(c.roi, 2)} cls={(c.roi ?? 0) > 0 ? "pos" : "neg"} />
