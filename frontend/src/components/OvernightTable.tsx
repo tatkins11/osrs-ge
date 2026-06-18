@@ -1,11 +1,12 @@
 import type { Row } from "../api";
 import { gp, gpShort, pct } from "../format";
+import { SortTh, useSortable } from "./sortable";
 
 // fill chance: green if it usually fills, red if rarely
 const fillCls = (p: number | null | undefined) => (p == null ? "dim" : p >= 0.5 ? "pos" : p >= 0.3 ? "" : "neg");
 
-/** Lowball buy offers to place overnight. Ranked by historical fill chance, then
- *  win-rate when filled. Click a row for the deep dive. */
+/** Lowball buy offers to place overnight. Click a header to sort (default: fill chance);
+ *  click a row for the deep dive. */
 export function OvernightTable({
   rows,
   selectedId,
@@ -15,23 +16,24 @@ export function OvernightTable({
   selectedId: number | null;
   onSelect: (id: number) => void;
 }) {
+  const { sorted, sort } = useSortable(rows, "on_fill_prob");
   return (
     <div className="tbl-scroll">
       <table className="tbl">
         <thead>
           <tr>
-            <th className="left">Item</th>
-            <th>Buy offer (place tonight)</th>
-            <th title="How often this lowball has filled by morning over the last ~2 weeks">Fill chance</th>
-            <th title="When it filled, how often selling next midday profited">Win rate</th>
-            <th>Sell target</th>
-            <th>Margin / ea</th>
-            <th>ROI if filled</th>
-            <th>Vol / day</th>
+            <SortTh k="name" sort={sort} className="left">Item</SortTh>
+            <SortTh k="on_buy" sort={sort}>Buy offer (place tonight)</SortTh>
+            <SortTh k="on_fill_prob" sort={sort} title="How often this lowball has filled by morning over the last ~2 weeks">Fill chance</SortTh>
+            <SortTh k="on_win_rate" sort={sort} title="When it filled, how often selling next midday profited">Win rate</SortTh>
+            <SortTh k="on_target" sort={sort}>Sell target</SortTh>
+            <SortTh k="on_margin" sort={sort}>Margin / ea</SortTh>
+            <SortTh k="on_roi" sort={sort}>ROI if filled</SortTh>
+            <SortTh k="vol_daily_7d" sort={sort}>Vol / day</SortTh>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sorted.map((r) => (
             <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
               <td className="name left">{r.name}</td>
               <td>{gp(r.on_buy)}</td>
@@ -48,7 +50,7 @@ export function OvernightTable({
               <td className="dim">{gpShort(r.vol_daily_7d)}</td>
             </tr>
           ))}
-          {rows.length === 0 && (
+          {sorted.length === 0 && (
             <tr>
               <td colSpan={8} className="left muted">
                 No overnight setups clear the filters right now — good ones are infrequent. Check back later, or lower

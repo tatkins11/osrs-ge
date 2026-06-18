@@ -1,8 +1,9 @@
 import type { Row } from "../api";
 import { gp, gpShort, pct } from "../format";
+import { SortTh, useSortable } from "./sortable";
 
 /** Items currently crashed below their established level, with a recovery plan.
- *  Server already sorts by expected profit. Click a row for the deep dive. */
+ *  Click a header to sort; click a row for the deep dive. */
 export function CrashTable({
   rows,
   selectedId,
@@ -12,25 +13,26 @@ export function CrashTable({
   selectedId: number | null;
   onSelect: (id: number) => void;
 }) {
+  const { sorted, sort } = useSortable(rows, "crash_exp_profit");
   return (
     <div className="tbl-scroll">
       <table className="tbl">
         <thead>
           <tr>
-            <th className="left">Item</th>
-            <th>Drawdown</th>
-            <th>Established</th>
-            <th>Buy now</th>
-            <th>Target</th>
-            <th>Exp / ea</th>
-            <th>Exp ROI</th>
-            <th>Profit / 4h</th>
-            <th title="Buy price vs its high-alch floor — low / 🛡 = alching caps the downside on this dip.">Downside</th>
-            <th>Vol / day</th>
+            <SortTh k="name" sort={sort} className="left">Item</SortTh>
+            <SortTh k="drawdown" sort={sort}>Drawdown</SortTh>
+            <SortTh k="established" sort={sort}>Established</SortTh>
+            <SortTh k="sell_price" sort={sort}>Buy now</SortTh>
+            <SortTh k="crash_target" sort={sort}>Target</SortTh>
+            <SortTh k="crash_exp_margin" sort={sort}>Exp / ea</SortTh>
+            <SortTh k="crash_exp_roi" sort={sort}>Exp ROI</SortTh>
+            <SortTh k="crash_exp_profit" sort={sort}>Profit / 4h</SortTh>
+            <SortTh k="alch_support" sort={sort} title="Buy price vs its high-alch floor — low / 🛡 = alching caps the downside on this dip.">Downside</SortTh>
+            <SortTh k="vol_daily_7d" sort={sort}>Vol / day</SortTh>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sorted.map((r) => (
             <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
               <td className="name left">{r.name}</td>
               <td className="neg">{pct(r.drawdown, 0)}</td>
@@ -49,7 +51,7 @@ export function CrashTable({
               <td className="dim">{gpShort(r.vol_daily_7d)}</td>
             </tr>
           ))}
-          {rows.length === 0 && (
+          {sorted.length === 0 && (
             <tr>
               <td colSpan={10} className="left muted">
                 No crashes clearing the filters right now — they're intermittent. Lower "Min profit", or check back later.

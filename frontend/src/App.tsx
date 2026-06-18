@@ -53,6 +53,7 @@ export default function App() {
   const [nonce, setNonce] = useState(0);
   const [auto, setAuto] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [sectorsData, setSectorsData] = useState<SectorsResponse | null>(null);
   const [investData, setInvestData] = useState<InvestResponse | null>(null);
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
@@ -115,12 +116,21 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [auto]);
 
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 10_000); // keep "updated ago" fresh
+    return () => window.clearInterval(id);
+  }, []);
+
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
     return q ? rows.filter((r) => r.name?.toLowerCase().includes(q)) : rows;
   }, [rows, search]);
 
   const defaultSort = tab === "all" ? [{ id: "profit_per_cycle", desc: true }] : [];
+  const ago = (t: number) => {
+    const s = Math.max(0, Math.round((nowTick - t) / 1000));
+    return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
+  };
 
   return (
     <div className="app">
@@ -164,7 +174,7 @@ export default function App() {
         <div className="spacer" />
         <span className="note">
           {loading ? "loading…" : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : `${shown.length} rows`}
-          {updatedAt ? ` · ${new Date(updatedAt).toLocaleTimeString()}` : ""}
+          {updatedAt ? ` · updated ${ago(updatedAt)}` : ""}
           {err ? ` · error: ${err}` : ""}
         </span>
         <label className="autobox" title={`auto-refresh every ${REFRESH_MS / 1000}s`}>
