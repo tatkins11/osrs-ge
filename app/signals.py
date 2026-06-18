@@ -76,24 +76,20 @@ def _records(df: pd.DataFrame, cols: list[str]) -> list[dict]:
 
 
 def _nearest_update(drop_secs: np.ndarray, up_secs: np.ndarray, up_titles: np.ndarray, win: float):
-    """For each drop time (epoch secs; NaN = no drop), find the closest game update within
-    +/-`win` secs. Returns (is_near bool[], nearest_title object[]). `up_secs` must be sorted."""
+    """Flag drops that occurred 0..`win` secs AFTER a game update (causal direction: the update
+    precedes the drop, matching the validated `--study affected` '<=2d after update' cell).
+    Returns (is_near bool[], preceding_update_title object[]). `up_secs` must be sorted ascending."""
     n = len(drop_secs)
     near = np.zeros(n, dtype=bool)
     titles = np.full(n, None, dtype=object)
     if up_secs.size == 0:
         return near, titles
-    idx = np.searchsorted(up_secs, np.nan_to_num(drop_secs, nan=0.0))
-    best = np.full(n, np.inf)
-    for off in (-1, 0):                      # the two candidate neighbours around each drop
-        j = np.clip(idx + off, 0, up_secs.size - 1)
-        dist = np.abs(up_secs[j] - drop_secs)        # NaN drop -> NaN dist -> never wins
-        better = dist < best
-        best = np.where(better, dist, best)
-        for k in np.nonzero(better & np.isfinite(dist))[0]:
-            titles[k] = up_titles[j[k]]
-    near = best <= win
-    titles = np.where(near, titles, None)
+    idx = np.searchsorted(up_secs, np.nan_to_num(drop_secs, nan=-1.0), side="right") - 1  # last update <= drop
+    j = np.clip(idx, 0, up_secs.size - 1)
+    dist = drop_secs - up_secs[j]                          # secs since that update; NaN drop -> NaN
+    near = (idx >= 0) & np.isfinite(dist) & (dist >= 0) & (dist <= win)
+    for k in np.nonzero(near)[0]:
+        titles[k] = up_titles[j[k]]
     return near, titles
 
 
@@ -239,7 +235,7 @@ def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None
         ds = drop_dt.astype("datetime64[s]").astype("int64").to_numpy("float64")
         ds[~drop_dt.notna().to_numpy()] = np.nan
         near, near_title = _nearest_update(ds, up_secs, up_titles, th.update_drop_days * 86_400.0)
-        real_drop = d["worst_1d_drop"].fillna(0.0).to_numpy("float64") <= -0.05   # ignore trivial wiggles
+        real_drop = d["worst_1d_drop"].fillna(0.0).to_numpy("float64") <= -0.08   # require a genuinely sharp drop
         d["post_update_drop"] = near & real_drop
         d["post_update_title"] = np.where(d["post_update_drop"], near_title, None)
         conf = np.where(d["post_update_drop"], conf - th.update_drop_penalty, conf)
