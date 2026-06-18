@@ -20,10 +20,14 @@ export function PriceChart({
   series,
   type = "line",
   className = "",
+  levels = [],
+  markers = [],
 }: {
   series: SeriesPoint[];
   type?: "line" | "candle";
   className?: string;
+  levels?: { price: number; color: string; title: string; dashed?: boolean }[];
+  markers?: { time: number; side: string }[];
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -88,6 +92,27 @@ export function PriceChart({
       main.setData(sel("mid"));
     }
 
+    // decision levels (fair value / target / alch floor / your cost+breakeven) + your trades
+    for (const lv of levels) {
+      if (lv.price > 0)
+        main.createPriceLine({ price: lv.price, color: lv.color, lineWidth: 1, lineStyle: lv.dashed ? 2 : 0, axisLabelVisible: true, title: lv.title });
+    }
+    if (markers.length && series.length) {
+      const lo = series[0].time as number;
+      const hi = series[series.length - 1].time as number;
+      const ms = markers
+        .filter((m) => m.time >= lo && m.time <= hi)
+        .sort((a, b) => a.time - b.time)
+        .map((m) => ({
+          time: m.time as UTCTimestamp,
+          position: m.side === "buy" ? "belowBar" : "aboveBar",
+          color: m.side === "buy" ? "#25d07d" : "#ff5b6e",
+          shape: m.side === "buy" ? "arrowUp" : "arrowDown",
+          text: m.side === "buy" ? "B" : "S",
+        }));
+      if (ms.length) main.setMarkers(ms);
+    }
+
     // hover info box
     const tip = document.createElement("div");
     tip.className = "chart-tip";
@@ -123,7 +148,7 @@ export function PriceChart({
       chart.remove();
       tip.remove();
     };
-  }, [series, type]);
+  }, [series, type, levels, markers]);
 
   return <div className={`chart-box ${className}`} ref={ref} />;
 }

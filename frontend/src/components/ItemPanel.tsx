@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { getItem, getItemSeries, HORIZON_KEYS, type Filters, type ItemDetail, type Row, type SeriesPoint } from "../api";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { getItem, getItemSeries, getPortfolio, HORIZON_KEYS, type Filters, type ItemDetail, type Portfolio as Pf, type Row, type SeriesPoint } from "../api";
 import { fixed, gp, gpShort, num, pct, spct } from "../format";
 import { ChartModal } from "./ChartModal";
 import { PriceChart } from "./PriceChart";
@@ -42,6 +42,7 @@ export function ItemPanel({
   const [tfSeries, setTfSeries] = useState<SeriesPoint[] | null>(null);
   const [chartType, setChartType] = useState<"line" | "candle">("line");
   const [expanded, setExpanded] = useState(false);
+  const [pf, setPf] = useState<Pf | null>(null);
 
   useEffect(() => {
     if (itemId == null) {
@@ -75,6 +76,34 @@ export function ItemPanel({
     };
   }, [itemId, tf]);
 
+  useEffect(() => {
+    if (itemId == null) return;
+    getPortfolio().then(setPf).catch(() => {});
+  }, [itemId, refreshNonce]);
+
+  const sr: Partial<Row> = data?.signal_row ?? {};
+  const pos = pf?.open_positions.find((p) => p.item_id === itemId) ?? null;
+  const levels = useMemo(() => {
+    const out: { price: number; color: string; title: string; dashed?: boolean }[] = [];
+    if (sr.established) out.push({ price: sr.established, color: "#f5b53d", title: "fair value" });
+    const target = sr.value_target ?? sr.crash_target;
+    if (target) out.push({ price: target, color: "#25d07d", title: "target" });
+    if (sr.alch_floor && sr.alch_floor > 0) out.push({ price: sr.alch_floor, color: "#9b8cff", title: "alch floor", dashed: true });
+    if (pos) {
+      out.push({ price: pos.avg_cost, color: "#4ea1ff", title: "avg cost" });
+      if (pos.breakeven) out.push({ price: pos.breakeven, color: "#ff5b6e", title: "breakeven", dashed: true });
+    }
+    return out;
+  }, [sr.established, sr.value_target, sr.crash_target, sr.alch_floor, pos?.avg_cost, pos?.breakeven]);
+  const markers = useMemo(
+    () =>
+      (pf?.trades ?? [])
+        .filter((t) => t.item_id === itemId)
+        .map((t) => ({ time: Math.floor(Date.parse(t.ts.replace(" ", "T") + "Z") / 1000), side: t.side }))
+        .filter((m) => Number.isFinite(m.time)),
+    [pf, itemId]
+  );
+
   if (itemId == null)
     return (
       <div className="placeholder">
@@ -86,7 +115,6 @@ export function ItemPanel({
 
   const c = data.current;
   const st = data.stats;
-  const sr: Partial<Row> = data.signal_row ?? {};
 
   return (
     <div>
@@ -192,7 +220,7 @@ export function ItemPanel({
             <button className="expand" title="Expand chart" onClick={() => setExpanded(true)}>⤢</button>
           </div>
         </div>
-        <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} />
+        <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} levels={levels} markers={markers} />
       </div>
 
       <div className="panel-section">
@@ -240,7 +268,7 @@ export function ItemPanel({
           title={`${data.item.name} · price (${tf === "1h" ? "2wk" : tf === "6h" ? "3mo" : "1yr"})`}
           onClose={() => setExpanded(false)}
         >
-          <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} className="modal-chart" />
+          <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} className="modal-chart" levels={levels} markers={markers} />
         </ChartModal>
       )}
     </div>
