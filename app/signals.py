@@ -104,7 +104,8 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     # liquid items the buy limit binds (unchanged); for thin items this kills the fantasy
     # of "net_margin x buy_limit" on something that trades a handful of times a day.
     flow_4h = d["vol_daily_7d"].fillna(0.0).astype("float64") / 12.0
-    d["units_per_4h"] = np.minimum(limit.fillna(0.0), flow_4h)
+    # a NULL catalog buy_limit means "no limit", not "zero" — throttle by flow only
+    d["units_per_4h"] = np.where(limit.notna(), np.minimum(limit, flow_4h), flow_4h)
     d["realistic_profit"] = d["net_margin"] * d["units_per_4h"]
 
     # Flip quality gates: liquid, fresh, not junk, and realistically worth >= min_profit/4h.
@@ -386,7 +387,8 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
         if cand.empty:
             return []
         # real historical odds: how often the lowball fills overnight, and wins when it does
-        stats = on.fill_stats(cand["item_id"].tolist(), con, disc)
+        exempt_map = dict(zip(cand["item_id"].astype(int).tolist(), cand["exempt"].astype(bool).tolist()))
+        stats = on.fill_stats(cand["item_id"].tolist(), con, disc, exempt_map=exempt_map)
     finally:
         if own:
             con.close()

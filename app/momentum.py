@@ -123,8 +123,9 @@ def run(timestep="24h", window=20, entry_buf=0.02, stop_pct=0.15, max_hold=60,
 def summarize(tr: pd.DataFrame, timestep_h: int) -> dict:
     if tr.empty:
         return {"trades": 0}
-    wins = tr[tr["net"] > 0]["net"].sum()
-    losses = tr[tr["net"] < 0]["net"].sum()
+    r = tr["ret"].clip(-WINSOR, WINSOR)          # PF on winsorized returns, consistent with avg_return
+    wins = r[r > 0].sum()
+    losses = r[r < 0].sum()
     return {
         "trades": len(tr),
         "items": tr["item_id"].nunique(),

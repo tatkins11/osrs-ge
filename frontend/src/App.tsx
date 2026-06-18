@@ -61,31 +61,35 @@ export default function App() {
     getMeta().then(setMeta).catch(() => {});
   }, [nonce]);
 
+  // clear stale rows + error on tab switch so one tab's data never renders under another's columns
+  useEffect(() => {
+    setRows([]);
+    setErr(null);
+  }, [tab]);
+
   const deb = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (tab === "portfolio") return;
     window.clearTimeout(deb.current);
+    let cancelled = false; // ignore a response that arrives after the tab/filters changed (race guard)
     deb.current = window.setTimeout(() => {
       setLoading(true);
       setErr(null);
+      const ok = () => !cancelled;
+      const done = () => ok() && setLoading(false);
+      const fail = (e: unknown) => ok() && setErr(String(e));
       if (tab === "sectors") {
         getSectors(filters)
-          .then((d) => {
-            setSectorsData(d);
-            setUpdatedAt(Date.now());
-          })
-          .catch((e) => setErr(String(e)))
-          .finally(() => setLoading(false));
+          .then((d) => ok() && (setSectorsData(d), setUpdatedAt(Date.now())))
+          .catch(fail)
+          .finally(done);
         return;
       }
       if (tab === "invest") {
         getInvest(filters)
-          .then((d) => {
-            setInvestData(d);
-            setUpdatedAt(Date.now());
-          })
-          .catch((e) => setErr(String(e)))
-          .finally(() => setLoading(false));
+          .then((d) => ok() && (setInvestData(d), setUpdatedAt(Date.now())))
+          .catch(fail)
+          .finally(done);
         return;
       }
       const req =
@@ -95,14 +99,14 @@ export default function App() {
         : tab === "overnight" ? getOvernight(filters)
         : getItems(filters);
       req
-        .then((r) => {
-          setRows(r);
-          setUpdatedAt(Date.now());
-        })
-        .catch((e) => setErr(String(e)))
-        .finally(() => setLoading(false));
+        .then((r) => ok() && (setRows(r), setUpdatedAt(Date.now())))
+        .catch(fail)
+        .finally(done);
     }, 250);
-    return () => window.clearTimeout(deb.current);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(deb.current);
+    };
   }, [tab, filters, nonce]);
 
   useEffect(() => {

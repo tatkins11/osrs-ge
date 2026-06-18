@@ -6,6 +6,13 @@
 # Secrets come from the .env file (env_file) — values are passed literally, so
 # the bcrypt hash needs NO escaping.
 
+# Cap container logs so a 24/7 collector can never fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   api:
     build: .
@@ -16,23 +23,34 @@ services:
       - data:/app/data
     expose:
       - "8000"
+    healthcheck:
+      # DB-free liveness probe — confirms uvicorn is serving (won't false-fail on a DB write-lock)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
+    logging: *default-logging
 
   collector:
     image: osrs-ge-terminal:latest
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     command: python -m app.collector
     env_file:
       - .env
     volumes:
       - data:/app/data
     restart: unless-stopped
+    logging: *default-logging
 
   caddy:
     image: caddy:2
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     env_file:
       - .env
     ports:
@@ -43,6 +61,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   data:

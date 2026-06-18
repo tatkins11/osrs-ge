@@ -39,24 +39,41 @@ WITH base AS (
     FROM history
     WHERE timestep = '1h' AND avg_high IS NOT NULL AND avg_low IS NOT NULL
 ),
-mx AS (SELECT max(ts) AS t FROM base)
-SELECT
-    b.item_id,
-    avg(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS mean_7d,
-    median(b.mid)      FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS median_7d,  -- robust "established level"
-    stddev_samp(b.mid) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS sd_7d,
-    min(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 30 DAY) AS min_30d,
-    max(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 30 DAY) AS max_30d,
-    avg(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 30 DAY) AS mean_30d,
-    avg(b.vol)         FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS vol_hourly_7d,
-    sum(b.vol)         FILTER (WHERE b.ts >= mx.t - INTERVAL 24 HOUR) AS vol_24h,
-    arg_max(b.mid, b.ts) FILTER (WHERE b.ts <= mx.t - INTERVAL 24 HOUR) AS mid_1d_ago,
-    -- margin persistence: fraction of the past week the flip was profitable, and its typical size
-    avg(CASE WHEN b.flip_margin > 0 THEN 1.0 ELSE 0.0 END) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_uptime,
-    median(b.flip_margin) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_median_7d,
-    count(*)           FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS n_7d
-FROM base b CROSS JOIN mx
-GROUP BY b.item_id
+base6 AS (   -- 6h history spans ~90 days; the 1h table only ~2 weeks, so the 30d window must use 6h
+    SELECT item_id, ts, (avg_high + avg_low) / 2.0 AS mid
+    FROM history
+    WHERE timestep = '6h' AND avg_high IS NOT NULL AND avg_low IS NOT NULL
+),
+mx  AS (SELECT max(ts) AS t FROM base),
+mx6 AS (SELECT max(ts) AS t FROM base6),
+agg7 AS (
+    SELECT b.item_id,
+        avg(b.mid)         FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS mean_7d,
+        median(b.mid)      FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS median_7d,  -- robust "established level"
+        stddev_samp(b.mid) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS sd_7d,
+        avg(b.vol)         FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS vol_hourly_7d,
+        sum(b.vol)         FILTER (WHERE b.ts >= mx.t - INTERVAL 24 HOUR) AS vol_24h,
+        arg_max(b.mid, b.ts) FILTER (WHERE b.ts <= mx.t - INTERVAL 24 HOUR) AS mid_1d_ago,
+        -- margin persistence: fraction of the past week the flip was profitable, and its typical size
+        avg(CASE WHEN b.flip_margin > 0 THEN 1.0 ELSE 0.0 END) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_uptime,
+        median(b.flip_margin) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_median_7d,
+        count(*)           FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS n_7d
+    FROM base b CROSS JOIN mx
+    GROUP BY b.item_id
+),
+agg30 AS (   -- real 30-day range/mean from 6h bars
+    SELECT b.item_id,
+        min(b.mid) FILTER (WHERE b.ts >= mx6.t - INTERVAL 30 DAY) AS min_30d,
+        max(b.mid) FILTER (WHERE b.ts >= mx6.t - INTERVAL 30 DAY) AS max_30d,
+        avg(b.mid) FILTER (WHERE b.ts >= mx6.t - INTERVAL 30 DAY) AS mean_30d
+    FROM base6 b CROSS JOIN mx6
+    GROUP BY b.item_id
+)
+SELECT a.item_id, a.mean_7d, a.median_7d, a.sd_7d,
+       a30.min_30d, a30.max_30d, a30.mean_30d,
+       a.vol_hourly_7d, a.vol_24h, a.mid_1d_ago, a.margin_uptime, a.margin_median_7d, a.n_7d
+FROM agg7 a
+LEFT JOIN agg30 a30 USING (item_id)
 """
 
 

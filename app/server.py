@@ -101,6 +101,13 @@ def get_thresholds(
     )
 
 
+@app.get("/healthz")
+def healthz() -> dict:
+    """Liveness probe for the container healthcheck — no DB touch, so it can't be
+    blocked by collector write-locks; just confirms uvicorn is serving."""
+    return {"status": "ok"}
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "data_mode": "demo" if DEMO_MARKER.exists() else "live", "coverage": stats()}

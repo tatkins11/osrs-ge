@@ -116,8 +116,9 @@ def summarize(tr: pd.DataFrame) -> dict:
     out = {"placed": len(tr), "fills": len(fills), "fill_rate": len(fills) / len(tr) if len(tr) else 0.0}
     if fills.empty:
         return out
-    wins = fills[fills["net"] > 0]["net"].sum()
-    losses = fills[fills["net"] < 0]["net"].sum()
+    r = fills["ret"].clip(-WINSOR, WINSOR)       # PF on winsorized returns, consistent with avg_return
+    wins = r[r > 0].sum()
+    losses = r[r < 0].sum()
     out.update({
         "items": fills["item_id"].nunique(),
         "win_rate": (fills["net"] > 0).mean(),
@@ -129,7 +130,7 @@ def summarize(tr: pd.DataFrame) -> dict:
 
 
 def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 14,
-               window_h: int = 12, min_nights: int = 5) -> dict:
+               window_h: int = 12, min_nights: int = 5, exempt_map: dict | None = None) -> dict:
     """Per-item historical overnight behaviour, for the live page:
       * fill_prob  -- fraction of past nights a lowball buy at (evening bid x (1-disc))
                       would have filled by morning (overnight low reached it);
@@ -153,6 +154,7 @@ def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 1
         hi = g["avg_high"].to_numpy("float64")
         hr = g["hour"].to_numpy()
         n = len(g)
+        ex = bool(exempt_map.get(int(iid))) if exempt_map else False
         nights = fills = wins = 0
         margins: list[float] = []
         for i in range(n):
@@ -166,7 +168,7 @@ def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 1
             fills += 1
             sells = [j for j in range(i + 1, min(i + 30, n)) if hr[j] == sell_hour and not np.isnan(hi[j])]
             if sells:
-                m = hi[sells[0]] * 0.98 - offer    # ~after-tax margin selling next midday
+                m = taxmod.net_sell(int(round(hi[sells[0]])), ex) - offer   # after-tax margin (cap + exemptions)
                 margins.append(m)
                 if m > 0:
                     wins += 1
