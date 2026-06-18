@@ -45,7 +45,7 @@ export function PriceChart({
         fontSize: 11,
       },
       grid: { vertLines: { color: "#15202d" }, horzLines: { color: "#15202d" } },
-      rightPriceScale: { borderColor: "#1e2a39" },
+      rightPriceScale: { borderColor: "#1e2a39", scaleMargins: { top: 0.06, bottom: 0.30 } },
       timeScale: { borderColor: "#1e2a39", timeVisible: true, secondsVisible: false, tickMarkFormatter: tickFmt },
       localization: { timeFormatter: fmtFull },
       crosshair: { mode: 0 },
@@ -62,12 +62,20 @@ export function PriceChart({
     chart.addLineSeries({ color: "#f5b53d", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(sel("ma"));
 
     const vol = chart.addHistogramSeries({ priceScaleId: "vol", color: "rgba(78,161,255,.30)" });
-    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.88, bottom: 0 } });
     vol.setData(
       series
         .filter((p) => p.high_vol != null || p.low_vol != null)
         .map((p) => ({ time: t(p), value: (p.high_vol ?? 0) + (p.low_vol ?? 0) }))
     );
+
+    // z-score oscillator sub-pane: how stretched vs the 7d mean, with buy/sell guides
+    const osc = chart.addLineSeries({ priceScaleId: "osc", color: "#9b8cff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    chart.priceScale("osc").applyOptions({ scaleMargins: { top: 0.72, bottom: 0.14 } });
+    osc.setData(sel("z"));
+    osc.createPriceLine({ price: 1.5, color: "rgba(255,91,110,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "z +1.5" });
+    osc.createPriceLine({ price: 0, color: "rgba(120,138,160,.4)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+    osc.createPriceLine({ price: -1.5, color: "rgba(37,208,125,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "z -1.5" });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let main: any;
@@ -120,6 +128,7 @@ export function PriceChart({
     tip.className = "chart-tip";
     tip.style.display = "none";
     el.appendChild(tip);
+    const byTime = new Map(series.map((p) => [p.time as number, p]));
     chart.subscribeCrosshairMove((param) => {
       const pt = param.point;
       if (!param.time || !pt || pt.x < 0 || pt.y < 0 || pt.x > el.clientWidth || pt.y > el.clientHeight) {
@@ -144,7 +153,12 @@ export function PriceChart({
         fairValue && fairValue > 0 && px != null
           ? `<div class="tip-v ${px >= fairValue ? "neg" : "pos"}">${px >= fairValue ? "+" : ""}${(((px / fairValue) - 1) * 100).toFixed(1)}% vs fair value</div>`
           : "";
-      tip.innerHTML = `<div class="tip-t">${fmtFull(param.time as number)}</div><div class="tip-v">${body}${volTxt}</div>${vf}`;
+      const sp = byTime.get(param.time as number);
+      const zr =
+        sp && sp.z != null
+          ? `<div class="tip-v dim">z ${sp.z.toFixed(1)}${sp.rsi != null ? ` · RSI ${Math.round(sp.rsi)}` : ""}</div>`
+          : "";
+      tip.innerHTML = `<div class="tip-t">${fmtFull(param.time as number)}</div><div class="tip-v">${body}${volTxt}</div>${vf}${zr}`;
       tip.style.display = "block";
       tip.style.left = Math.min(pt.x + 14, el.clientWidth - 190) + "px";
       tip.style.top = Math.max(6, pt.y - 12) + "px";
