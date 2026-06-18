@@ -44,6 +44,7 @@ class Thresholds:
     value_min_discount: float = 0.08          # value buy: at least this far below the established level
     value_min_confidence: int = 40            # value buy: minimum 0-100 confidence to surface
     update_drop_penalty: float = 15.0         # value-confidence penalty if the drop landed ~2d after a game update
+    update_drop_factor: float = 0.5           # crash-rank down-weight for the same update-driven drop
     update_drop_days: int = 2                 # window (days) after an update for a drop to count as update-driven
     overnight_disc: float = 0.10              # overnight lowball: buy offer this far below the current bid
     vol_spike: float = 2.0                    # "unusual volume": last 24h >= this multiple of a typical day
@@ -240,6 +241,9 @@ def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None
         d["post_update_title"] = np.where(d["post_update_drop"], near_title, None)
         conf = np.where(d["post_update_drop"], conf - th.update_drop_penalty, conf)
     d["value_confidence"] = np.clip(conf, 0.0, 100.0).round()
+    # crash ranking shares the update-proximity logic: an update-driven crash recovers worse, so
+    # down-weight it in the Crashes sort (display profit unchanged -- penalise, don't exclude).
+    d["crash_score"] = d["crash_exp_profit"].astype("float64") * np.where(d["post_update_drop"], th.update_drop_factor, 1.0)
     # horizon by liquidity (study: liquid dislocations revert in days; thin / high-value take longer)
     d["value_horizon"] = np.select([gpv >= 200_000_000, gpv >= 20_000_000],
                                     ["1-3 days", "~1 week"], default="2-4 weeks")
@@ -298,7 +302,7 @@ TABLE_COLS = [
     "high_vol", "low_vol", "vol_side", "vol_daily_7d", "vol_24h", "vol_ratio", "chg_24h", "margin_uptime", "margin_median_7d", "price_age_min",
     "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "mr_exp_profit", "confidence",
-    "established", "drawdown", "crash_target", "crash_exp_margin", "crash_exp_roi", "crash_exp_profit", "is_crash",
+    "established", "drawdown", "crash_target", "crash_exp_margin", "crash_exp_roi", "crash_exp_profit", "crash_score", "is_crash",
     "value_discount", "level_health", "value_target", "value_exp_margin", "value_exp_roi", "value_exp_profit",
     "value_confidence", "value_horizon", "is_value_buy", "post_update_drop", "post_update_title",
     "alch_floor", "alch_support",
@@ -338,7 +342,7 @@ def crash_table(th: Thresholds | None = None, con=None, limit: int = 100) -> lis
     if d.empty:
         return []
     d = d[d["is_crash"] & (d["crash_exp_profit"].fillna(0) >= th.min_profit)]
-    d = d.sort_values("crash_exp_profit", ascending=False).head(limit)
+    d = d.sort_values("crash_score", ascending=False).head(limit)   # update-driven crashes ranked lower
     return _records(d, TABLE_COLS)
 
 

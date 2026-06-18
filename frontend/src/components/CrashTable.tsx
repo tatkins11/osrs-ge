@@ -13,7 +13,7 @@ export function CrashTable({
   selectedId: number | null;
   onSelect: (id: number) => void;
 }) {
-  const { sorted, sort } = useSortable(rows, "crash_exp_profit");
+  const { sorted, sort } = useSortable(rows, "crash_score"); // server's update-aware rank (down-weights update-driven crashes)
   return (
     <div className="tbl-scroll">
       <table className="tbl">
@@ -34,7 +34,17 @@ export function CrashTable({
         <tbody>
           {sorted.map((r) => (
             <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
-              <td className="name left">{r.name}</td>
+              <td className="name left">
+                {r.name}
+                {r.post_update_drop ? (
+                  <span
+                    style={{ marginLeft: 6, color: "#f5b53d", fontSize: "0.78em", whiteSpace: "nowrap" }}
+                    title={`Crash coincided with a game update${r.post_update_title ? `: "${r.post_update_title}"` : ""}. Update-driven drops historically recover ~30% worse (PF 0.48 vs 0.67) — more likely a permanent repricing. Ranked lower.`}
+                  >
+                    ⚠ update
+                  </span>
+                ) : null}
+              </td>
               <td className="neg">{pct(r.drawdown, 0)}</td>
               <td>{gp(r.established)}</td>
               <td>{gp(r.sell_price)}</td>
