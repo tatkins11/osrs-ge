@@ -1,13 +1,16 @@
-# OSRS GE Terminal — backend dependencies
-fastapi>=0.115
-uvicorn>=0.34
-httpx>=0.27
-duckdb>=1.1
-pandas>=2.2
-numpy>=2.1
-pydantic>=2.9
-truststore>=0.10   # verify TLS against the Windows store (corporate proxy CAs)
+# OSRS GE Terminal — backend dependencies.
+# Pinned to the verified, running versions for reproducible builds — a rebuild
+# months later resolves identically (a silent DuckDB minor bump could change file
+# locking or the on-disk format). Bump these deliberately, not implicitly.
+fastapi==0.137.1
+uvicorn==0.49.0
+httpx==0.28.1
+duckdb==1.5.4
+pandas==3.0.3
+numpy==2.4.6
+pydantic==2.13.4
+truststore==0.10.4   # verify TLS against the OS trust store (corporate proxy CAs)
 
 # Added in later passes for deeper statistics:
-# scipy>=1.14
-# statsmodels>=0.14
+# scipy==1.14.x
+# statsmodels==0.14.x

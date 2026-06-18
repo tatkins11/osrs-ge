@@ -144,10 +144,11 @@ start fresh, `docker compose down -v` (deletes the volume).
 
 1. Buy a domain (~$10/yr), add an **A record** pointing to `YOUR_SERVER_IP`.
 2. In `.env`, change `SITE_ADDRESS=https://YOUR_IP` to `SITE_ADDRESS=your-domain.com`.
-3. In `Caddyfile`, delete the `tls internal` line.
-4. `docker compose up -d` — Caddy auto-fetches a free, trusted Let's Encrypt
-   certificate. `https://your-domain.com` is now green-lock clean, and a real
-   domain is also less likely to be category-filtered at work than a bare IP.
+3. `docker compose up -d` — Caddy reads `SITE_ADDRESS` and auto-fetches a free,
+   trusted Let's Encrypt certificate (no Caddyfile edit needed; a bare IP instead
+   gets a self-signed cert automatically). `https://your-domain.com` is now
+   green-lock clean, and a real domain is also less likely to be category-filtered
+   at work than a bare IP.
 
 ---
 
