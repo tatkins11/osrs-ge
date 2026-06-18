@@ -350,36 +350,59 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
     liquid, stable item; it fills only if the price dumps overnight (caught while you
     sleep), then sell next day toward fair value. Backtest-validated as a modest,
     infrequent reversion edge (deep offers recover; shallow ones bleed the spread)."""
+    from . import overnight as on
     th = th or Thresholds()
-    d = market_signals(th, con)
-    if d.empty:
+    own = con is None
+    con = con or connect(read_only=True)
+    try:
+        d = market_signals(th, con)
+        if d.empty:
+            return []
+        disc = th.overnight_disc
+        bid = d["buy_price"].astype("float64")     # instasell (the bid)
+        ask = d["sell_price"].astype("float64")    # instabuy (where you sell back next day)
+        est = d["established"].astype("float64")
+        exempt = d["exempt"].to_numpy()
+        buy_offer = np.floor(bid * (1.0 - disc))
+        net_t = ask - taxmod.sell_tax_array(ask, exempt)       # sell back at the current ask, after tax (best case)
+        d["on_buy"] = buy_offer
+        d["on_target"] = np.round(ask)
+        d["on_margin"] = net_t - buy_offer                     # captured discount if it reverts, after tax & spread
+        d["on_roi"] = np.where(buy_offer > 0, d["on_margin"] / buy_offer, np.nan)
+        gpv = d["mid"].fillna(0) * d["vol_daily_7d"].fillna(0)
+        spread_pct = np.where(bid > 0, (ask - bid) / bid, np.nan)
+        vol = d["volatility_7d"].fillna(0.0)
+        elig = (
+            d["tradeable"] & est.notna()
+            & (buy_offer >= th.min_price) & (buy_offer <= th.max_price)
+            & (d["drawdown"].abs() <= 0.06)                    # at fair value (bet on a FUTURE dump, not an existing crash)
+            & d["level_health"].fillna(0).between(0.85, 1.3)   # stable established level (kills the noisy-median mirage)
+            & (spread_pct <= 0.05)                             # tight spread -> can realistically sell back near the ask
+            & vol.between(0.02, 0.8)
+            & (d["on_margin"] > 0) & (d["on_roi"] >= th.min_roi)
+            & (gpv >= 25_000_000)
+        )
+        cand = d[elig].copy()
+        if cand.empty:
+            return []
+        # real historical odds: how often the lowball fills overnight, and wins when it does
+        stats = on.fill_stats(cand["item_id"].tolist(), con, disc)
+    finally:
+        if own:
+            con.close()
+
+    cand["on_fill_prob"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("fill_prob"))
+    cand["on_win_rate"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("win_rate"))
+    cand["on_exp_margin"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("exp_margin"))
+    cand["on_nights"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("nights"))
+    # keep only realistic, positive-edge setups: a meaningful fill chance AND a winning history when filled
+    keep = (cand["on_fill_prob"].fillna(0) >= 0.30) & (cand["on_win_rate"].fillna(0) >= 0.55)
+    cand = cand[keep]
+    if cand.empty:
         return []
-    disc = th.overnight_disc
-    bid = d["buy_price"].astype("float64")     # instasell (the bid)
-    ask = d["sell_price"].astype("float64")    # instabuy (where you sell back next day)
-    est = d["established"].astype("float64")
-    exempt = d["exempt"].to_numpy()
-    buy_offer = np.floor(bid * (1.0 - disc))
-    net_t = ask - taxmod.sell_tax_array(ask, exempt)           # sell back at the current market ask, after tax
-    d["on_buy"] = buy_offer
-    d["on_target"] = np.round(ask)
-    d["on_margin"] = net_t - buy_offer                         # ~= the captured discount, after tax & spread
-    d["on_roi"] = np.where(buy_offer > 0, d["on_margin"] / buy_offer, np.nan)
-    gpv = d["mid"].fillna(0) * d["vol_daily_7d"].fillna(0)
-    spread_pct = np.where(bid > 0, (ask - bid) / bid, np.nan)
-    vol = d["volatility_7d"].fillna(0.0)
-    elig = (
-        d["tradeable"] & est.notna()
-        & (buy_offer >= th.min_price) & (buy_offer <= th.max_price)
-        & (d["drawdown"].abs() <= 0.06)                        # currently AT fair value (bet on a future dump, not already crashed)
-        & d["level_health"].fillna(0).between(0.85, 1.3)       # stable, reliable established level (kills the noisy-median mirage)
-        & (spread_pct <= 0.05)                                 # tight spread -> can realistically sell back near the ask
-        & vol.between(0.02, 0.6)                               # moves enough to plausibly dump overnight, not pure noise
-        & (d["on_margin"] > 0) & (d["on_roi"] >= th.min_roi)
-        & (gpv >= 25_000_000)
-    )
-    d = d[elig].sort_values("volatility_7d", ascending=False).head(limit)  # rank by fill-likelihood (margin is ~constant)
-    return _records(d, TABLE_COLS + ["on_buy", "on_target", "on_margin", "on_roi"])
+    cand = cand.sort_values(["on_fill_prob", "on_win_rate"], ascending=False).head(limit)
+    return _records(cand, TABLE_COLS + ["on_buy", "on_target", "on_margin", "on_roi",
+                                        "on_fill_prob", "on_win_rate", "on_exp_margin", "on_nights"])
 
 
 def full_table(th: Thresholds | None = None, con=None) -> list[dict]:

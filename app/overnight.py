@@ -128,6 +128,57 @@ def summarize(tr: pd.DataFrame) -> dict:
     return out
 
 
+def fill_stats(item_ids, con, disc: float, buy_hour: int = 1, sell_hour: int = 13,
+               window_h: int = 14, min_nights: int = 5) -> dict:
+    """Per-item historical overnight behaviour, for the live page:
+      * fill_prob  -- fraction of past nights a lowball buy at (evening bid x (1-disc))
+                      would have filled by morning (overnight low reached it);
+      * win_rate   -- of the nights it filled, fraction where selling next midday profits;
+      * exp_margin -- median realised after-tax margin per unit on filled nights.
+    Hours are UTC; defaults ~9pm/9am US Eastern (the user's routine)."""
+    ids = [int(i) for i in item_ids]
+    if not ids:
+        return {}
+    ph = ",".join(str(i) for i in ids)
+    h = con.execute(
+        f"""SELECT item_id, ts, avg_high, avg_low, CAST(date_part('hour', ts) AS INTEGER) AS hour
+            FROM history WHERE timestep = '1h' AND item_id IN ({ph})
+              AND avg_high IS NOT NULL AND avg_low IS NOT NULL ORDER BY item_id, ts"""
+    ).df()
+    out: dict = {}
+    for iid, g in h.groupby("item_id"):
+        g = g.reset_index(drop=True)
+        lo = g["avg_low"].to_numpy("float64")
+        hi = g["avg_high"].to_numpy("float64")
+        hr = g["hour"].to_numpy()
+        n = len(g)
+        nights = fills = wins = 0
+        margins: list[float] = []
+        for i in range(n):
+            if hr[i] != buy_hour or np.isnan(lo[i]):
+                continue
+            nights += 1
+            offer = lo[i] * (1.0 - disc)
+            w = lo[i + 1: i + 1 + window_h]
+            if w.size == 0 or np.nanmin(w) > offer:
+                continue  # never dipped to the offer overnight
+            fills += 1
+            sells = [j for j in range(i + 1, min(i + 30, n)) if hr[j] == sell_hour and not np.isnan(hi[j])]
+            if sells:
+                m = hi[sells[0]] * 0.98 - offer    # ~after-tax margin selling next midday
+                margins.append(m)
+                if m > 0:
+                    wins += 1
+        if nights >= min_nights:
+            out[int(iid)] = {
+                "fill_prob": fills / nights,
+                "win_rate": (wins / fills) if fills else None,
+                "exp_margin": float(np.median(margins)) if margins else None,
+                "nights": int(nights),
+            }
+    return out
+
+
 def _pct(x):
     return "-" if x is None or (isinstance(x, float) and np.isnan(x)) else f"{x * 100:.1f}%"
 

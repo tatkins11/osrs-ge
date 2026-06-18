@@ -237,11 +237,11 @@ export default function App() {
               )}
               {tab === "overnight" && (
                 <div className="crash-banner">
-                  Overnight lowball offers — place these buy offers (at "Buy offer") before you log off; they fill
-                  only if the price dumps overnight, then recover toward "Sell target" the next day. Backtested as a
-                  modest, infrequent reversion edge: a ~10% offer fills ~5% of nights and recovers ~79% of the time for
-                  ~+7%. Set several and expect most to <b>not</b> fill. (The directional "prices rise overnight" bet
-                  does not work — this is dip-catching via resting orders.)
+                  Overnight lowball offers — place these buy offers (at "Buy offer") before you log off; each fills only
+                  if the price dumps overnight, then you sell next day toward "Sell target". Now ranked by real{" "}
+                  <b>Fill chance</b> (how often it's actually filled by morning over the last ~2 weeks) and{" "}
+                  <b>Win rate</b> when filled. Fills are inherently infrequent — place several, and even a 50%
+                  fill-chance item only fills about half the nights. A filled order can sit underwater until it reverts.
                 </div>
               )}
               {tab === "crashes" ? (

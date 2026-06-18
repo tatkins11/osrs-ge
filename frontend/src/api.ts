@@ -68,6 +68,10 @@ export interface Row {
   on_target?: number | null;
   on_margin?: number | null;
   on_roi?: number | null;
+  on_fill_prob?: number | null;
+  on_win_rate?: number | null;
+  on_exp_margin?: number | null;
+  on_nights?: number | null;
   reasons?: string[];
   [k: string]: unknown;
 }
