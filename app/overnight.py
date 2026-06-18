@@ -128,14 +128,15 @@ def summarize(tr: pd.DataFrame) -> dict:
     return out
 
 
-def fill_stats(item_ids, con, disc: float, buy_hour: int = 1, sell_hour: int = 13,
-               window_h: int = 14, min_nights: int = 5) -> dict:
+def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 14,
+               window_h: int = 12, min_nights: int = 5) -> dict:
     """Per-item historical overnight behaviour, for the live page:
       * fill_prob  -- fraction of past nights a lowball buy at (evening bid x (1-disc))
                       would have filled by morning (overnight low reached it);
       * win_rate   -- of the nights it filled, fraction where selling next midday profits;
       * exp_margin -- median realised after-tax margin per unit on filled nights.
-    Hours are UTC; defaults ~9pm/9am US Eastern (the user's routine)."""
+    Hours are UTC; defaults map to ~9pm place / ~9am sell US Central (CDT = UTC-5),
+    with a ~12h overnight fill window (place 02:00 UTC -> check ~13:00 UTC)."""
     ids = [int(i) for i in item_ids]
     if not ids:
         return {}
