@@ -46,4 +46,5 @@ tasks.register('run', JavaExec) {
     group = 'application'
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'com.mapletree.geexport.GeExportPluginTest'
+    enableAssertions = true   // RuneLite's ExternalPluginManager.loadBuiltin requires -ea
 }
