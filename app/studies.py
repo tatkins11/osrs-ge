@@ -17,7 +17,7 @@ import pandas as pd
 
 from . import tax as taxmod
 from .crash import _load, backtest_item as crash_bt
-from .db import connect, get_items_df
+from .db import connect, get_items_df, get_updates_df
 from .sectors import classify_one
 
 WINSOR = 0.50
@@ -190,11 +190,66 @@ def seasonality(hist6, items):
     print("  by day-of-week vs weekly mean: " + " ".join(f"{days[d]} {dow.get(d, float('nan')):+.2f}%" for d in range(7)))
 
 
+def _secs(s):
+    return pd.to_datetime(s).astype("datetime64[s]").astype("int64")   # robust to us/ns dtype
+
+
+# --- 6. News-driven drops: buy the update-tank, or avoid it? -----------------
+def newsdrop(timestep="24h", drop_pct=0.10, k_fwd=7):
+    con = connect(read_only=True)
+    try:
+        hist = _load(con, timestep)
+        items = get_items_df(con).set_index("item_id")
+        upd = get_updates_df(con)
+    finally:
+        con.close()
+    up = np.sort(_secs(upd["ts"]).to_numpy()) if not upd.empty else np.array([], dtype="int64")
+    DAY = 86_400
+
+    def near(t):   # an update within +/- 1 day of the drop bar
+        return up.size > 0 and bool(np.any((up >= t - DAY) & (up <= t + DAY)))
+
+    rows = []
+    for iid, g in hist.groupby("item_id"):
+        if not _liquid(g):
+            continue
+        g = g.sort_values("ts").reset_index(drop=True)
+        n = len(g)
+        if n < k_fwd + 2:
+            continue
+        mid = g["mid"].to_numpy(float); ask = g["avg_high"].to_numpy(float); bid = g["avg_low"].to_numpy(float)
+        ts = g["ts"].astype("datetime64[s]").astype("int64").to_numpy()
+        ex = _exempt(items, iid)
+        i = 1
+        while i < n - k_fwd:
+            if mid[i] > 0 and mid[i - 1] > 0 and mid[i] <= mid[i - 1] * (1 - drop_pct):
+                a, b = ask[i], bid[i + k_fwd]
+                if a > 0 and not np.isnan(a) and not np.isnan(b):
+                    rows.append({"adj": near(int(ts[i])), "net": (taxmod.net_sell(int(round(b)), ex) - a) / a})
+                i += k_fwd   # no overlap
+            else:
+                i += 1
+    df = pd.DataFrame(rows)
+    print(f"\n[6] NEWS-DRIVEN DROPS — 1-bar drops >= {drop_pct*100:.0f}% ({timestep}), forward {k_fwd} bars net of cost ({len(df)} drops):")
+    if df.empty:
+        print("  none."); return
+
+    def line(lab, d):
+        if not len(d):
+            print(f"  {lab:<20}{0:>7}"); return
+        r = d["net"].clip(-WINSOR, WINSOR); w, l = r[r > 0].sum(), r[r < 0].sum()
+        pf = "inf" if l >= 0 else f"{w/abs(l):.2f}"
+        print(f"  {lab:<20}n={len(d):>6}  win {(d['net']>0).mean()*100:>3.0f}%  net {r.mean()*100:+5.1f}%  PF {pf}")
+    line("update-adjacent", df[df.adj])
+    line("no recent update", df[~df.adj])
+    line("ALL drops", df)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     ap = argparse.ArgumentParser()
     ap.add_argument("--study", default="all",
-                    choices=["all", "movers", "crashliq", "sectorrev", "flipuptime", "seasonality"])
+                    choices=["all", "movers", "crashliq", "sectorrev", "flipuptime", "seasonality", "news"])
     args = ap.parse_args()
     con = connect(read_only=True)
     try:
@@ -212,6 +267,8 @@ def main() -> None:
         flipuptime(hist, items)
     if args.study in ("all", "seasonality"):
         seasonality(hist, items)
+    if args.study in ("all", "news"):
+        newsdrop()
     print()
 
 
