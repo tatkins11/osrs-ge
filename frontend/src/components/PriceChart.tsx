@@ -61,7 +61,7 @@ export function PriceChart({
     band("rgba(123,211,252,.35)").setData(sel("lower"));
     chart.addLineSeries({ color: "#f5b53d", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(sel("ma"));
 
-    const vol = chart.addHistogramSeries({ priceScaleId: "vol", color: "rgba(78,161,255,.30)" });
+    const vol = chart.addHistogramSeries({ priceScaleId: "vol", color: "rgba(78,161,255,.30)", lastValueVisible: false, priceLineVisible: false });
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.88, bottom: 0 } });
     vol.setData(
       series
