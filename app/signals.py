@@ -256,6 +256,7 @@ TABLE_COLS = [
     "established", "drawdown", "crash_target", "crash_exp_margin", "crash_exp_roi", "crash_exp_profit", "is_crash",
     "value_discount", "level_health", "value_target", "value_exp_margin", "value_exp_roi", "value_exp_profit",
     "value_confidence", "value_horizon", "is_value_buy",
+    "alch_floor", "alch_support",
     "signal", "flip_ok", "tradeable", "flip_score", "reversion_score",
 ]
 
@@ -415,6 +416,39 @@ def full_table(th: Thresholds | None = None, con=None) -> list[dict]:
     buy = d["buy_price"].fillna(0)
     d = d[(buy >= th.min_price) & (buy <= th.max_price)]
     return _records(d, TABLE_COLS)
+
+
+def snapshot_signals(th: Thresholds | None = None, con=None, per_kind: int = 25) -> list[dict]:
+    """Flatten the current top signals (flips / crashes / value / overnight) into
+    normalized rows for the signal log, so realized outcomes can later be measured
+    against what the engine recommended at the time."""
+    th = th or Thresholds()
+    own = con is None
+    con = con or connect(read_only=True)
+    try:
+        groups = [
+            ("flip", flip_table(th, con, limit=per_kind), "roi", "buy_price", "sell_price", "roi", "net_margin", None),
+            ("crash", crash_table(th, con, limit=per_kind), "crash_exp_roi", "sell_price", "crash_target",
+             "crash_exp_roi", "crash_exp_margin", None),
+            ("value", invest_table(th, con, limit=per_kind), "value_confidence", "sell_price", "value_target",
+             "value_exp_roi", "value_exp_margin", "value_horizon"),
+            ("overnight", overnight_table(th, con, limit=per_kind), "on_fill_prob", "on_buy", "on_target",
+             "on_roi", "on_margin", None),
+        ]
+    finally:
+        if own:
+            con.close()
+    out: list[dict] = []
+    for kind, recs, score_k, entry_k, target_k, roi_k, margin_k, horizon_k in groups:
+        for i, r in enumerate(recs):
+            out.append({
+                "kind": kind, "item_id": r.get("item_id"), "name": r.get("name"), "rank": i + 1,
+                "score": r.get(score_k), "entry": r.get(entry_k), "target": r.get(target_k),
+                "exp_roi": r.get(roi_k), "exp_margin": r.get(margin_k),
+                "horizon": r.get(horizon_k) if horizon_k else kind,
+                "mid": r.get("mid"), "established": r.get("established"),
+            })
+    return out
 
 
 def _fmt(n) -> str:

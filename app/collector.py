@@ -19,7 +19,7 @@ import pandas as pd
 
 from .api_client import OsrsPricesClient
 from .config import DEMO_MARKER, POLL_INTERVAL_SECONDS
-from .db import ensure_db, insert_history, insert_snapshots, stats, upsert_items, utcnow
+from .db import ensure_db, ensure_log_db, insert_history, insert_signal_log, insert_snapshots, stats, upsert_items, utcnow
 
 log = logging.getLogger("collector")
 
@@ -130,6 +130,18 @@ def collect_once(client: OsrsPricesClient | None = None, con=None) -> int:
             client.close()
 
 
+def _log_signals() -> int:
+    """Hourly snapshot of the engine's current top signals into the signal-log DB.
+    Reads the prices DB read-only; never raises into the collect loop (caller guards)."""
+    from .signals import snapshot_signals  # local import keeps collector startup lean
+    recs = snapshot_signals()
+    if not recs:
+        return 0
+    df = pd.DataFrame(recs)
+    df.insert(0, "ts", utcnow())
+    return insert_signal_log(df)
+
+
 def _sleep_to_next(interval: int, offset: int = 20) -> None:
     """Sleep until just after the next interval boundary (so the 5m bucket is ready)."""
     now = time.time()
@@ -149,6 +161,7 @@ def run_once() -> None:
 def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
     _setup_logging()
     ensure_db()
+    ensure_log_db()
     log.info("collector starting; interval=%ss", interval)
     with OsrsPricesClient() as client:
         refresh_catalog(client)
@@ -157,11 +170,19 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
         except Exception:
             log.exception("startup 1h gap-fill failed")
         current_day = utcnow().date()
+        current_hour = None
         while True:
             try:
                 collect_once(client=client)
             except Exception:  # never let one bad cycle kill the loop
                 log.exception("collect cycle failed")
+            try:  # hourly signal-log snapshot (guarded; must never break collection)
+                hour = utcnow().replace(minute=0, second=0, microsecond=0)
+                if hour != current_hour:
+                    log.info("signal-log snapshot: %d rows", _log_signals())
+                    current_hour = hour
+            except Exception:
+                log.exception("signal-log snapshot failed")
             try:
                 day = utcnow().date()
                 if day != current_day:

@@ -25,6 +25,7 @@ export function CrashTable({
             <th>Exp / ea</th>
             <th>Exp ROI</th>
             <th>Profit / 4h</th>
+            <th title="Buy price vs its high-alch floor — low / 🛡 = alching caps the downside on this dip.">Downside</th>
             <th>Vol / day</th>
           </tr>
         </thead>
@@ -39,12 +40,18 @@ export function CrashTable({
               <td className="pos">{gp(r.crash_exp_margin)}</td>
               <td className="pos">{pct(r.crash_exp_roi, 1)}</td>
               <td className="pos">{gpShort(r.crash_exp_profit)}</td>
+              <td
+                className={r.alch_support == null ? "dim" : r.alch_support <= 0.15 ? "pos" : "dim"}
+                title="distance above the high-alch floor"
+              >
+                {r.alch_support == null ? "–" : (r.alch_support <= 0.15 ? "🛡 " : "") + pct(r.alch_support, 0)}
+              </td>
               <td className="dim">{gpShort(r.vol_daily_7d)}</td>
             </tr>
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={9} className="left muted">
+              <td colSpan={10} className="left muted">
                 No crashes clearing the filters right now — they're intermittent. Lower "Min profit", or check back later.
               </td>
             </tr>

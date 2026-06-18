@@ -12,6 +12,9 @@ DB_PATH = Path(os.getenv("OSRS_GE_DB_PATH", DATA_DIR / "osrs_ge.duckdb"))
 # Trades live in their OWN DuckDB file so the API can write them without fighting the
 # collector for the prices-DB lock (DuckDB allows only one read-write process per file).
 TRADES_DB_PATH = Path(os.getenv("OSRS_GE_TRADES_DB_PATH", DATA_DIR / "trades.duckdb"))
+# Signal log lives in its OWN file too, written only by the collector (hourly), so it
+# never contends with the prices-DB writer or the trades-DB writer.
+LOG_DB_PATH = Path(os.getenv("OSRS_GE_LOG_DB_PATH", DATA_DIR / "signals_log.duckdb"))
 DEMO_MARKER = DATA_DIR / ".demo_mode"  # present when the DB holds synthetic demo data
 
 # --- OSRS Wiki Real-time Prices API -----------------------------------------

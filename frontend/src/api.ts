@@ -59,6 +59,8 @@ export interface Row {
   value_confidence?: number | null;
   value_horizon?: string;
   is_value_buy?: boolean;
+  alch_floor?: number | null;
+  alch_support?: number | null; // buy price vs high-alch floor (fraction above; low = downside-protected)
   qty?: number | null;
   avg_cost?: number | null;
   unrealized?: number | null;

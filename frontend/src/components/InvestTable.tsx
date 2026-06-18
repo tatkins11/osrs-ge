@@ -65,6 +65,7 @@ export function InvestTable({
             <th>Fair value</th>
             <th>Upside</th>
             <th>Discount</th>
+            <th title="Buy price vs its high-alch floor (highalch − nature rune). Low / 🛡 = alching caps the downside.">Downside</th>
             <th>Vol/day</th>
           </tr>
         </thead>
@@ -78,12 +79,18 @@ export function InvestTable({
               <td>{gp(r.value_target)}</td>
               <td className="pos">{pct(r.value_exp_roi, 1)}</td>
               <td className="pos">{pct(r.value_discount, 0)}</td>
+              <td
+                className={r.alch_support == null ? "dim" : r.alch_support <= 0.15 ? "pos" : "dim"}
+                title="distance above the high-alch floor"
+              >
+                {r.alch_support == null ? "–" : (r.alch_support <= 0.15 ? "🛡 " : "") + pct(r.alch_support, 0)}
+              </td>
               <td className="dim">{gpShort(r.vol_daily_7d)}</td>
             </tr>
           ))}
           {buys.length === 0 && (
             <tr>
-              <td colSpan={8} className="left muted">
+              <td colSpan={9} className="left muted">
                 No value buys clear the filters right now — lower Min confidence / Min discount in the controls, or
                 widen the price range.
               </td>

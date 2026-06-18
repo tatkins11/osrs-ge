@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 import duckdb
 import pandas as pd
 
-from .config import DB_PATH, TRADES_DB_PATH
+from .config import DB_PATH, LOG_DB_PATH, TRADES_DB_PATH
 from .tax import is_exempt
 
 log = logging.getLogger(__name__)
@@ -355,5 +355,79 @@ def delete_trade(trade_id: int) -> None:
     con = connect_trades()
     try:
         con.execute("DELETE FROM trades WHERE id = ?", [int(trade_id)])
+    finally:
+        con.close()
+
+
+# --- signal log (separate DB file; collector-owned, hourly snapshots) -------
+_LOG_SCHEMA = """
+CREATE SEQUENCE IF NOT EXISTS signal_log_id_seq;
+CREATE TABLE IF NOT EXISTS signal_log (
+    id          BIGINT PRIMARY KEY DEFAULT nextval('signal_log_id_seq'),
+    ts          TIMESTAMP,
+    kind        VARCHAR,     -- flip | crash | value | overnight
+    item_id     INTEGER,
+    name        VARCHAR,
+    rank        INTEGER,     -- position within that kind at snapshot time
+    score       DOUBLE,      -- kind-specific headline (roi / confidence / fill_prob)
+    entry       DOUBLE,      -- recommended buy price
+    target      DOUBLE,      -- recommended sell / fair value
+    exp_roi     DOUBLE,
+    exp_margin  DOUBLE,
+    horizon     VARCHAR,
+    mid         DOUBLE,      -- market mid at snapshot, for later evaluation
+    established DOUBLE
+);
+"""
+_LOG_COLS = ["id", "ts", "kind", "item_id", "name", "rank", "score", "entry", "target",
+             "exp_roi", "exp_margin", "horizon", "mid", "established"]
+
+
+def connect_log(read_only: bool = False, retries: int = 12, retry_wait: float = 0.5):
+    """Open the signal-log DB (its own file)."""
+    last_err: Exception | None = None
+    for _ in range(retries):
+        try:
+            return duckdb.connect(str(LOG_DB_PATH), read_only=read_only)
+        except duckdb.Error as e:
+            last_err = e
+            time.sleep(retry_wait)
+    raise RuntimeError(f"could not open log DB at {LOG_DB_PATH}: {last_err}") from last_err
+
+
+def ensure_log_db() -> None:
+    con = connect_log()
+    try:
+        con.execute(_LOG_SCHEMA)
+    finally:
+        con.close()
+
+
+def insert_signal_log(df: pd.DataFrame, con=None) -> int:
+    if df is None or df.empty:
+        return 0
+    own = con is None
+    con = con or connect_log()
+    try:
+        con.execute(_LOG_SCHEMA)  # idempotent
+        cols = [c for c in _LOG_COLS if c != "id" and c in df.columns]
+        con.register("sl_df", df[cols])
+        con.execute(f"INSERT INTO signal_log ({', '.join(cols)}) SELECT {', '.join(cols)} FROM sl_df")
+        con.unregister("sl_df")
+        return len(df)
+    finally:
+        if own:
+            con.close()
+
+
+def get_signal_log_df() -> pd.DataFrame:
+    try:
+        con = connect_log(read_only=True)
+    except RuntimeError:
+        return pd.DataFrame(columns=_LOG_COLS)  # file not created yet
+    try:
+        return con.execute("SELECT * FROM signal_log ORDER BY ts, id").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=_LOG_COLS)
     finally:
         con.close()

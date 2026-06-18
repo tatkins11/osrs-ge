@@ -192,6 +192,12 @@ export function ItemPanel({
           <Tile k="7d mean" v={gpShort(st.mean_7d)} />
           <Tile k="30d low" v={gpShort(st.min_30d)} />
           <Tile k="30d high" v={gpShort(st.max_30d)} />
+          <Tile k="Alch floor" v={gpShort(sr.alch_floor as number)} />
+          <Tile
+            k="vs alch floor"
+            v={pct(sr.alch_support as number, 0)}
+            cls={((sr.alch_support as number) ?? 1) <= 0.15 ? "pos" : ""}
+          />
         </div>
       </div>
 

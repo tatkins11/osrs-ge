@@ -128,6 +128,15 @@ def market_table(con=None, bankroll: int = DEFAULT_BANKROLL) -> pd.DataFrame:
     md1 = df["mid_1d_ago"].astype("float64")
     df["chg_24h"] = np.where(md1 > 0, (df["mid"] - md1) / md1, np.nan)
 
+    # high-alch price floor: alching gives most items a near-hard downside of
+    # (high-alch value - nature rune cost). alch_support = how far ABOVE that floor the
+    # price sits (small/negative = downside protected; alching absorbs supply).
+    nat = latest.loc[latest["item_id"] == 561, "instabuy"]
+    nat_cost = float(nat.iloc[0]) if (len(nat) and pd.notna(nat.iloc[0])) else 110.0
+    ha = df["highalch"].astype("float64")
+    df["alch_floor"] = np.where(ha > 0, ha - nat_cost, np.nan)
+    df["alch_support"] = np.where((df["alch_floor"] > 0) & (buy > 0), (buy - df["alch_floor"]) / buy, np.nan)
+
     now = pd.Timestamp(utcnow())
     last_trade = df[["high_time", "low_time"]].max(axis=1)
     df["price_age_min"] = (now - last_trade).dt.total_seconds() / 60.0
