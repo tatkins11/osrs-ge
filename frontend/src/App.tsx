@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getCrashes, getFlips, getInvest, getItems, getMeta, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Row, type SectorsResponse } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getCrashes, getFlips, getInvest, getItems, getMeta, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Row, type SectorsResponse, type TradePrefill } from "./api";
 import { gpShort } from "./format";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
@@ -43,8 +43,15 @@ const REFRESH_MS = 60_000;
 
 export default function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
-  const [tab, setTab] = useState<Tab>("flips");
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [tab, setTab] = useState<Tab>(() => {
+    try { return (localStorage.getItem("ge.tab") as Tab) || "flips"; } catch { return "flips"; }
+  });
+  const [filters, setFilters] = useState<Filters>(() => {
+    try { const s = localStorage.getItem("ge.filters"); return s ? { ...DEFAULT_FILTERS, ...JSON.parse(s) } : DEFAULT_FILTERS; }
+    catch { return DEFAULT_FILTERS; }
+  });
+  const [prefill, setPrefill] = useState<(TradePrefill & { nonce: number }) | null>(null);
+  const prefillN = useRef(0);
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -57,6 +64,16 @@ export default function App() {
   const [sectorsData, setSectorsData] = useState<SectorsResponse | null>(null);
   const [investData, setInvestData] = useState<InvestResponse | null>(null);
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
+
+  // log-a-trade from a signal row: stash a prefill (new nonce each click) and jump to Portfolio
+  const onLog = useCallback((p: TradePrefill) => {
+    setPrefill({ ...p, nonce: (prefillN.current += 1) });
+    setTab("portfolio");
+  }, []);
+
+  // persist filters + active tab across reloads
+  useEffect(() => { try { localStorage.setItem("ge.tab", tab); } catch { /* ignore */ } }, [tab]);
+  useEffect(() => { try { localStorage.setItem("ge.filters", JSON.stringify(filters)); } catch { /* ignore */ } }, [filters]);
 
   useEffect(() => {
     getMeta().then(setMeta).catch(() => {});
@@ -185,7 +202,14 @@ export default function App() {
 
       <div className="main">
         {tab === "portfolio" ? (
-          <Portfolio refreshNonce={nonce} />
+          <>
+            <div className="table-wrap">
+              <Portfolio refreshNonce={nonce} prefill={prefill} onSelect={setSelected} />
+            </div>
+            <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
+              <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
+            </div>
+          </>
         ) : tab === "sectors" ? (
           <>
             <div className="table-wrap">
@@ -226,6 +250,7 @@ export default function App() {
                 sells={investData?.sells ?? []}
                 selectedId={selected}
                 onSelect={setSelected}
+                onLog={onLog}
               />
             </div>
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
@@ -260,13 +285,13 @@ export default function App() {
                 </div>
               )}
               {tab === "crashes" ? (
-                <CrashTable rows={shown} selectedId={selected} onSelect={setSelected} />
+                <CrashTable rows={shown} selectedId={selected} onSelect={setSelected} onLog={onLog} />
               ) : tab === "movers" ? (
                 <VolumeTable rows={shown} selectedId={selected} onSelect={setSelected} />
               ) : tab === "overnight" ? (
                 <OvernightTable rows={shown} selectedId={selected} onSelect={setSelected} />
               ) : (
-                <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} defaultSort={defaultSort} />
+                <MarketTable key={tab} rows={shown} selectedId={selected} onSelect={setSelected} onLog={onLog} defaultSort={defaultSort} />
               )}
             </div>
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>

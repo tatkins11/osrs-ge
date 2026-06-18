@@ -1,4 +1,4 @@
-import type { Row } from "../api";
+import type { Row, TradePrefill } from "../api";
 import { gp, gpShort, pct } from "../format";
 import { SortTh, useSortable } from "./sortable";
 
@@ -8,10 +8,12 @@ export function CrashTable({
   rows,
   selectedId,
   onSelect,
+  onLog,
 }: {
   rows: Row[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  onLog?: (p: TradePrefill) => void;
 }) {
   const { sorted, sort } = useSortable(rows, "crash_score"); // server's update-aware rank (down-weights update-driven crashes)
   return (
@@ -35,6 +37,12 @@ export function CrashTable({
           {sorted.map((r) => (
             <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
               <td className="name left">
+                {onLog && (
+                  <button className="logbtn" title="Log a buy of this item in Portfolio"
+                    onClick={(e) => { e.stopPropagation(); onLog({ item_id: r.item_id, name: r.name, side: "buy", price: Math.round(r.sell_price ?? r.mid ?? 0) }); }}>
+                    ＋
+                  </button>
+                )}
                 {r.name}
                 {r.post_update_drop ? (
                   <span

@@ -268,9 +268,45 @@ export interface Trade {
   price: number;
   note: string;
 }
+export interface TradePrefill {
+  item_id: number;
+  name: string;
+  side: "buy" | "sell";
+  price: number;
+}
+export interface ClosedTrip {
+  item_id: number;
+  name: string;
+  qty: number;
+  buy_avg: number;
+  sell_price: number;
+  gross: number;
+  tax: number;
+  net: number;
+  roi: number | null;
+  buy_ts: string;
+  sell_ts: string;
+  hold_days: number;
+  sector: string | null;
+}
+export interface PortfolioStats {
+  n_closed: number;
+  win_rate: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  best: number | null;
+  worst: number | null;
+  total_tax: number;
+  avg_hold_days: number | null;
+  realized_total: number;
+}
 export interface Portfolio {
   open_positions: OpenPosition[];
   trades: Trade[];
+  closed_trips: ClosedTrip[];
+  stats: PortfolioStats;
+  realized_by_item: { item_id: number; name: string; net: number }[];
+  equity_curve: { ts: string; cum: number }[];
   realized_total: number;
   unrealized_total: number;
   invested: number;
@@ -305,3 +341,10 @@ export const deleteTrade = (id: number) =>
     if (!r.ok) throw new Error(`delete -> ${r.status}`);
     return r.json();
   });
+export const updateTrade = (id: number, patch: { qty?: number; price?: number; note?: string; side?: string }) =>
+  fetch(`/api/trades/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }).then(
+    (r) => {
+      if (!r.ok) throw new Error(`update -> ${r.status}`);
+      return r.json();
+    }
+  );

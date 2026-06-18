@@ -25,7 +25,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import delete_trade, ensure_trades_db, get_items_df, get_updates_df, insert_trade, stats
+from .db import delete_trade, ensure_trades_db, get_items_df, get_updates_df, insert_trade, stats, update_trade
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -263,6 +263,25 @@ def add_trade(t: TradeIn) -> dict:
     if t.qty <= 0 or t.price < 0:
         raise HTTPException(status_code=400, detail="qty must be > 0 and price >= 0")
     insert_trade(t.item_id, t.side, t.qty, t.price, t.note or "")
+    return {"ok": True}
+
+
+class TradePatch(BaseModel):
+    qty: int | None = None
+    price: int | None = None
+    note: str | None = None
+    side: str | None = None
+
+
+@app.patch("/api/trades/{trade_id}")
+def edit_trade(trade_id: int, t: TradePatch) -> dict:
+    if t.side is not None and t.side not in ("buy", "sell"):
+        raise HTTPException(status_code=400, detail="side must be 'buy' or 'sell'")
+    if t.qty is not None and t.qty <= 0:
+        raise HTTPException(status_code=400, detail="qty must be > 0")
+    if t.price is not None and t.price < 0:
+        raise HTTPException(status_code=400, detail="price must be >= 0")
+    update_trade(trade_id, qty=t.qty, price=t.price, note=t.note, side=t.side)
     return {"ok": True}
 
 

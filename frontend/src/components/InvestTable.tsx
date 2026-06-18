@@ -1,4 +1,4 @@
-import type { Row } from "../api";
+import type { Row, TradePrefill } from "../api";
 import { gp, gpShort, num, pct } from "../format";
 import { SortTh, useSortable } from "./sortable";
 
@@ -16,11 +16,13 @@ export function InvestTable({
   sells,
   selectedId,
   onSelect,
+  onLog,
 }: {
   buys: Row[];
   sells: Row[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  onLog?: (p: TradePrefill) => void;
 }) {
   const { sorted, sort } = useSortable(buys, "value_confidence");
   return (
@@ -77,6 +79,12 @@ export function InvestTable({
               <td><Conf c={r.value_confidence} /></td>
               <td className="left"><span className="hz-chip">{r.value_horizon}</span></td>
               <td className="name left">
+                {onLog && (
+                  <button className="logbtn" title="Log a buy of this item in Portfolio"
+                    onClick={(e) => { e.stopPropagation(); onLog({ item_id: r.item_id, name: r.name, side: "buy", price: Math.round(r.sell_price ?? r.mid ?? 0) }); }}>
+                    ＋
+                  </button>
+                )}
                 {r.name}
                 {r.post_update_drop ? (
                   <span

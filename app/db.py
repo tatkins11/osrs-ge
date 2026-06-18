@@ -399,6 +399,28 @@ def delete_trade(trade_id: int) -> None:
         con.close()
 
 
+def update_trade(trade_id: int, qty=None, price=None, note=None, side=None) -> None:
+    """Patch a logged trade in place (e.g. bump qty as a buy order fills). Only the
+    provided fields change."""
+    sets, params = [], []
+    if qty is not None:
+        sets.append("qty = ?"); params.append(int(qty))
+    if price is not None:
+        sets.append("price = ?"); params.append(int(price))
+    if note is not None:
+        sets.append("note = ?"); params.append(note)
+    if side is not None:
+        sets.append("side = ?"); params.append(side)
+    if not sets:
+        return
+    params.append(int(trade_id))
+    con = connect_trades()
+    try:
+        con.execute(f"UPDATE trades SET {', '.join(sets)} WHERE id = ?", params)
+    finally:
+        con.close()
+
+
 # --- signal log (separate DB file; collector-owned, hourly snapshots) -------
 _LOG_SCHEMA = """
 CREATE SEQUENCE IF NOT EXISTS signal_log_id_seq;

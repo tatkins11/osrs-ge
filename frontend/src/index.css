@@ -204,6 +204,10 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .trade-form input:focus, .trade-form select:focus { outline: none; border-color: var(--accent); }
 .del { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; cursor: pointer; padding: 1px 8px; font-size: 11px; }
 .del:hover { color: var(--red); border-color: var(--red); }
+.edit-in { width: 72px; background: var(--elev); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 2px 5px; font-size: 12px; font-family: var(--mono); }
+.logbtn { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; cursor: pointer; padding: 0 6px; font-size: 11px; margin-right: 6px; line-height: 1.5; }
+.logbtn:hover { color: var(--green); border-color: var(--green); }
+.se-row.clickable { cursor: pointer; }
 
 .crash-banner {
   margin: 8px; padding: 8px 12px; border-radius: 7px; font-size: 12px; line-height: 1.4;

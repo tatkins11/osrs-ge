@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   createColumnHelper,
   flexRender,
@@ -7,15 +7,33 @@ import {
   useReactTable,
   type SortingState,
 } from "@tanstack/react-table";
-import type { Row } from "../api";
+import type { Row, TradePrefill } from "../api";
 import { age, fixed, gp, gpShort, num, pct } from "../format";
 import { SignalBadge } from "./SignalBadge";
 
 const colh = createColumnHelper<Row>();
 const sign = (v?: number | null) => (v == null ? "" : v > 0 ? "pos" : v < 0 ? "neg" : "");
 
-const columns = [
-  colh.accessor("name", { header: "Item", cell: (c) => <span className="name">{c.getValue() as string}</span>, meta: { left: true } }),
+const makeColumns = (onLog?: (p: TradePrefill) => void) => [
+  colh.accessor("name", {
+    header: "Item",
+    cell: (c) => (
+      <span className="name">
+        {onLog && (
+          <button className="logbtn" title="Log a buy of this item in Portfolio"
+            onClick={(e) => {
+              e.stopPropagation();
+              const r = c.row.original;
+              onLog({ item_id: r.item_id, name: r.name, side: "buy", price: Math.round((r.buy_price ?? r.mid ?? 0) as number) });
+            }}>
+            ＋
+          </button>
+        )}
+        {c.getValue() as string}
+      </span>
+    ),
+    meta: { left: true },
+  }),
   colh.accessor("signal", { header: "Signal", cell: (c) => <SignalBadge signal={c.getValue() as string} />, meta: { left: true } }),
   colh.accessor("buy_price", { header: "Buy", cell: (c) => gp(c.getValue() as number) }),
   colh.accessor("sell_price", { header: "Sell", cell: (c) => gp(c.getValue() as number) }),
@@ -54,14 +72,17 @@ export function MarketTable({
   rows,
   selectedId,
   onSelect,
+  onLog,
   defaultSort = [],
 }: {
   rows: Row[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  onLog?: (p: TradePrefill) => void;
   defaultSort?: { id: string; desc: boolean }[];
 }) {
   const [sorting, setSorting] = useState<SortingState>(defaultSort);
+  const columns = useMemo(() => makeColumns(onLog), [onLog]);
   const table = useReactTable({
     data: rows,
     columns,
