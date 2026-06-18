@@ -68,12 +68,26 @@ agg30 AS (   -- real 30-day range/mean from 6h bars
         avg(b.mid) FILTER (WHERE b.ts >= mx6.t - INTERVAL 30 DAY) AS mean_30d
     FROM base6 b CROSS JOIN mx6
     GROUP BY b.item_id
+),
+dropd AS (   -- 1-day return per 6h bar (lag 4 bars ~ 24h) -- to spot the drop that made an item cheap
+    SELECT item_id, ts,
+           mid / NULLIF(lag(mid, 4) OVER (PARTITION BY item_id ORDER BY ts), 0) - 1.0 AS ret_1d
+    FROM base6
+),
+dropagg AS (   -- biggest 1-day drop in the last 30d + the bar it happened on (to match vs game updates)
+    SELECT d.item_id,
+        min(d.ret_1d)           FILTER (WHERE d.ts >= mx6.t - INTERVAL 30 DAY) AS worst_1d_drop,
+        arg_min(d.ts, d.ret_1d) FILTER (WHERE d.ts >= mx6.t - INTERVAL 30 DAY) AS worst_drop_ts
+    FROM dropd d CROSS JOIN mx6
+    GROUP BY d.item_id
 )
 SELECT a.item_id, a.mean_7d, a.median_7d, a.sd_7d,
        a30.min_30d, a30.max_30d, a30.mean_30d,
-       a.vol_hourly_7d, a.vol_24h, a.mid_1d_ago, a.margin_uptime, a.margin_median_7d, a.n_7d
+       a.vol_hourly_7d, a.vol_24h, a.mid_1d_ago, a.margin_uptime, a.margin_median_7d, a.n_7d,
+       dd.worst_1d_drop, dd.worst_drop_ts
 FROM agg7 a
 LEFT JOIN agg30 a30 USING (item_id)
+LEFT JOIN dropagg dd USING (item_id)
 """
 
 

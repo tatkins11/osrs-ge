@@ -59,6 +59,8 @@ export interface Row {
   value_confidence?: number | null;
   value_horizon?: string;
   is_value_buy?: boolean;
+  post_update_drop?: boolean | null; // recent drop landed within ~2d of a game update (value-trap risk)
+  post_update_title?: string | null; // title of the nearby update, for the tooltip
   alch_floor?: number | null;
   alch_support?: number | null; // buy price vs high-alch floor (fraction above; low = downside-protected)
   qty?: number | null;

@@ -24,7 +24,7 @@ import pandas as pd
 from . import tax as taxmod
 from .analytics import market_table
 from .config import DEFAULT_BANKROLL, DEFAULT_MIN_MARGIN, DEFAULT_MIN_VOLUME
-from .db import connect
+from .db import connect, get_updates_df
 
 log = logging.getLogger("signals")
 
@@ -43,6 +43,8 @@ class Thresholds:
     crash_recover_to: float = 0.95            # recovery target as a fraction of the established level
     value_min_discount: float = 0.08          # value buy: at least this far below the established level
     value_min_confidence: int = 40            # value buy: minimum 0-100 confidence to surface
+    update_drop_penalty: float = 15.0         # value-confidence penalty if the drop landed ~2d after a game update
+    update_drop_days: int = 2                 # window (days) after an update for a drop to count as update-driven
     overnight_disc: float = 0.10              # overnight lowball: buy offer this far below the current bid
     vol_spike: float = 2.0                    # "unusual volume": last 24h >= this multiple of a typical day
     z_buy: float = -1.5
@@ -73,9 +75,32 @@ def _records(df: pd.DataFrame, cols: list[str]) -> list[dict]:
     return [{k: _jsonify(v) for k, v in rec.items()} for rec in df[present].to_dict("records")]
 
 
-def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
+def _nearest_update(drop_secs: np.ndarray, up_secs: np.ndarray, up_titles: np.ndarray, win: float):
+    """For each drop time (epoch secs; NaN = no drop), find the closest game update within
+    +/-`win` secs. Returns (is_near bool[], nearest_title object[]). `up_secs` must be sorted."""
+    n = len(drop_secs)
+    near = np.zeros(n, dtype=bool)
+    titles = np.full(n, None, dtype=object)
+    if up_secs.size == 0:
+        return near, titles
+    idx = np.searchsorted(up_secs, np.nan_to_num(drop_secs, nan=0.0))
+    best = np.full(n, np.inf)
+    for off in (-1, 0):                      # the two candidate neighbours around each drop
+        j = np.clip(idx + off, 0, up_secs.size - 1)
+        dist = np.abs(up_secs[j] - drop_secs)        # NaN drop -> NaN dist -> never wins
+        better = dist < best
+        best = np.where(better, dist, best)
+        for k in np.nonzero(better & np.isfinite(dist))[0]:
+            titles[k] = up_titles[j[k]]
+    near = best <= win
+    titles = np.where(near, titles, None)
+    return near, titles
+
+
+def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None) -> pd.DataFrame:
     """Add liquidity/quality flags, position sizing, the signal label, a
-    mean-reversion trade plan, and confidence."""
+    mean-reversion trade plan, and confidence. ``updates`` (ts/title) drives the
+    update-proximity penalty on value buys."""
     if df.empty:
         return df
     d = df.copy()
@@ -200,7 +225,25 @@ def enrich(df: pd.DataFrame, th: Thresholds) -> pd.DataFrame:
     # (support<=10%: 92% win / PF 23.7 vs far>30%: 56% / PF 1.09). Reward floor-supported dips; items
     # with no meaningful floor (support NaN -> 1.0) get no bonus rather than a penalty.
     floor_bonus = 20.0 * np.clip((0.15 - d["alch_support"].fillna(1.0)) / 0.15, 0, 1)
-    d["value_confidence"] = np.minimum(100.0, base + floor_bonus).round()
+    conf = np.minimum(100.0, base + floor_bonus)
+    # update-proximity penalty (validated `--study affected`: a sharp drop within ~2 days of a
+    # game update recovers ~30% worse by PF -- more likely a permanent repricing / value trap).
+    # We can only condition on DATE proximity (the wiki doesn't expose which item each update changed).
+    d["post_update_drop"] = False
+    d["post_update_title"] = None
+    if "worst_drop_ts" in d.columns and updates is not None and not updates.empty:
+        u = updates.dropna(subset=["ts"]).sort_values("ts")
+        up_secs = pd.to_datetime(u["ts"]).astype("datetime64[s]").astype("int64").to_numpy("float64")
+        up_titles = u["title"].to_numpy(object)
+        drop_dt = pd.to_datetime(d["worst_drop_ts"], errors="coerce")
+        ds = drop_dt.astype("datetime64[s]").astype("int64").to_numpy("float64")
+        ds[~drop_dt.notna().to_numpy()] = np.nan
+        near, near_title = _nearest_update(ds, up_secs, up_titles, th.update_drop_days * 86_400.0)
+        real_drop = d["worst_1d_drop"].fillna(0.0).to_numpy("float64") <= -0.05   # ignore trivial wiggles
+        d["post_update_drop"] = near & real_drop
+        d["post_update_title"] = np.where(d["post_update_drop"], near_title, None)
+        conf = np.where(d["post_update_drop"], conf - th.update_drop_penalty, conf)
+    d["value_confidence"] = np.clip(conf, 0.0, 100.0).round()
     # horizon by liquidity (study: liquid dislocations revert in days; thin / high-value take longer)
     d["value_horizon"] = np.select([gpv >= 200_000_000, gpv >= 20_000_000],
                                     ["1-3 days", "~1 week"], default="2-4 weeks")
@@ -244,10 +287,11 @@ def market_signals(th: Thresholds | None = None, con=None) -> pd.DataFrame:
     con = con or connect(read_only=True)
     try:
         table = market_table(con, bankroll=th.bankroll)
+        updates = get_updates_df(con)
     finally:
         if own:
             con.close()
-    return enrich(table, th)
+    return enrich(table, th, updates)
 
 
 TABLE_COLS = [
@@ -260,7 +304,7 @@ TABLE_COLS = [
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "mr_exp_profit", "confidence",
     "established", "drawdown", "crash_target", "crash_exp_margin", "crash_exp_roi", "crash_exp_profit", "is_crash",
     "value_discount", "level_health", "value_target", "value_exp_margin", "value_exp_roi", "value_exp_profit",
-    "value_confidence", "value_horizon", "is_value_buy",
+    "value_confidence", "value_horizon", "is_value_buy", "post_update_drop", "post_update_title",
     "alch_floor", "alch_support",
     "signal", "flip_ok", "tradeable", "flip_score", "reversion_score",
 ]

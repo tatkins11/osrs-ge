@@ -76,7 +76,17 @@ export function InvestTable({
             <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
               <td><Conf c={r.value_confidence} /></td>
               <td className="left"><span className="hz-chip">{r.value_horizon}</span></td>
-              <td className="name left">{r.name}</td>
+              <td className="name left">
+                {r.name}
+                {r.post_update_drop ? (
+                  <span
+                    style={{ marginLeft: 6, color: "#f5b53d", fontSize: "0.78em", whiteSpace: "nowrap" }}
+                    title={`Recent drop coincided with a game update${r.post_update_title ? `: "${r.post_update_title}"` : ""}. Update-driven drops historically recover ~30% worse (PF 0.48 vs 0.67) — more likely a permanent repricing than a dip. Confidence is penalized.`}
+                  >
+                    ⚠ update
+                  </span>
+                ) : null}
+              </td>
               <td>{gp(r.sell_price)}</td>
               <td>{gp(r.value_target)}</td>
               <td className="pos">{pct(r.value_exp_roi, 1)}</td>
