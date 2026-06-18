@@ -18,14 +18,16 @@ upserts the order and, when an offer finishes with a real fill, creates one trad
 the 2% tax applied by the server).
 
 ## Requirements
-- JDK 11 (RuneLite targets Java 11).
-- Your server's ingest token (`OSRS_GE_INGEST_TOKEN`) — ask Claude / read it from the
-  VPS `.env`.
+- **JDK 11** (RuneLite targets Java 11) — e.g. Eclipse Temurin 11.
+- **Gradle** — this folder has no committed wrapper, so install Gradle (or run
+  `gradle wrapper` once to generate your own `./gradlew`).
+- **Git** to clone the repo (or download the zip).
+- Your server's ingest token (`OSRS_GE_INGEST_TOKEN`) from the VPS `.env`.
 
 ## Run it (developer mode — the simplest path for personal use)
 ```bash
 cd runelite-plugin
-./gradlew run        # downloads RuneLite + launches it with this plugin loaded
+gradle run           # downloads RuneLite + launches it with this plugin loaded
 ```
 Then in the RuneLite client:
 1. Open **Configuration** (wrench) → find **GE Terminal Export**.
@@ -35,7 +37,7 @@ Then in the RuneLite client:
 5. Watch the **Orders** tab in the web app — offers appear within a second or two, and
    filled ones flow into **Portfolio**.
 
-> `./gradlew run` is the canonical RuneLite plugin dev-run. For a permanent in-client
+> `gradle run` is the canonical RuneLite plugin dev-run. For a permanent in-client
 > install you'd publish to the RuneLite **Plugin Hub** (public review) — not needed for
 > personal use.
 
