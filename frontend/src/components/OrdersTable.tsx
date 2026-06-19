@@ -25,8 +25,53 @@ export function OrdersTable({
   const { sorted, sort } = useSortable(rows, "updated_ts");
   const open = rows.filter((o) => o.open).length;
   const run = (fn: () => Promise<unknown>) => fn().catch(() => {}).finally(() => reload());
+
+  // GE allows 8 open offers at once — map current open orders to their slots (0–7)
+  const SLOTS = 8;
+  const bySlot = new Map<number, Order>();
+  const slotCount = new Map<number, number>();
+  for (const o of rows) {
+    if (!o.open || o.slot == null || o.slot < 0 || o.slot >= SLOTS) continue;
+    slotCount.set(o.slot, (slotCount.get(o.slot) ?? 0) + 1);
+    const prev = bySlot.get(o.slot);
+    if (!prev || (o.updated_ts ?? "") > (prev.updated_ts ?? "")) bySlot.set(o.slot, o); // newest wins on a collision
+  }
+  const used = bySlot.size;
+
   return (
     <div className="tbl-scroll">
+      <div className="slot-head">
+        GE slots · <b>{used}/{SLOTS}</b> in use · {SLOTS - used} free
+      </div>
+      <div className="slot-grid">
+        {Array.from({ length: SLOTS }, (_, i) => {
+          const o = bySlot.get(i);
+          const dup = (slotCount.get(i) ?? 0) > 1;
+          return (
+            <div
+              key={i}
+              className={`slot-tile ${o ? (o.side === "buy" ? "buy" : "sell") : "free"}`}
+              onClick={o ? () => onSelect(o.item_id) : undefined}
+            >
+              <div className="slot-no">
+                Slot {i + 1}
+                {dup && (
+                  <span className="slot-dup" title="More than one open order tracked in this slot — clear the extra in the table below">⚠</span>
+                )}
+              </div>
+              {o ? (
+                <>
+                  <div className="slot-item" title={o.name}>{o.name}</div>
+                  <div className="slot-meta">{o.side} · {o.filled_qty.toLocaleString()}/{o.total_qty.toLocaleString()}</div>
+                  <div className="slot-bar"><span style={{ width: `${Math.round((o.fill_pct ?? 0) * 100)}%` }} /></div>
+                </>
+              ) : (
+                <div className="slot-free">free</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
       <div className="exp-banner">
         Live GE orders streamed from the <b>RuneLite plugin</b> (read-only). Filled orders auto-log as trades and feed
         your Portfolio round-trips — no manual entry. {open} open · {rows.length} tracked. No rows? Set up the plugin
