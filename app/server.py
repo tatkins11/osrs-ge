@@ -27,7 +27,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import delete_trade, ensure_trades_db, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, stats, update_trade
+from .db import delete_order, delete_trade, ensure_trades_db, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, stats, update_trade
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -355,6 +355,41 @@ def orders(limit: int = 100) -> list[dict]:
             "open": r.state in ("BUYING", "SELLING"),
         })
     return out
+
+
+class ResolveIn(BaseModel):
+    action: str  # 'cancel' | 'complete'
+
+
+@app.post("/api/orders/{order_id}/resolve")
+def resolve_order(order_id: str, body: ResolveIn) -> dict:
+    """Manually finalize a stuck order (the plugin missed its terminal event). Logs the
+    filled amount as a trade, exactly as a live fill would have."""
+    sel = get_orders_df()
+    sel = sel[sel["order_id"] == order_id]
+    if sel.empty:
+        raise HTTPException(status_code=404, detail="order not found")
+    r = sel.iloc[0]
+    side = str(r.side)
+    price, total, filled, spent = int(r.price or 0), int(r.total_qty or 0), int(r.filled_qty or 0), int(r.spent or 0)
+    if body.action == "complete":
+        state = "SOLD" if side == "sell" else "BOUGHT"
+        spent += max(0, total - filled) * price   # assume the unseen remainder filled at the offer price
+        filled = total
+    elif body.action == "cancel":
+        state = "CANCELLED_SELL" if side == "sell" else "CANCELLED_BUY"
+    else:
+        raise HTTPException(status_code=400, detail="action must be 'cancel' or 'complete'")
+    ev = {"order_id": order_id, "item_id": int(r.item_id), "side": side, "price": price,
+          "total_qty": total, "filled_qty": filled, "spent": spent, "state": state,
+          "slot": int(r.slot) if pd.notna(r.slot) else -1}
+    return {"ok": True, **ingest_offers([ev])}
+
+
+@app.delete("/api/orders/{order_id}")
+def remove_order(order_id: str) -> dict:
+    delete_order(order_id)
+    return {"ok": True}
 
 
 # --- serve the built frontend (if present) ----------------------------------

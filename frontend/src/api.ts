@@ -347,6 +347,18 @@ export interface Order {
   open: boolean;
 }
 export const getOrders = () => get<Order[]>("/api/orders");
+export const resolveOrder = (id: string, action: "cancel" | "complete") =>
+  fetch(`/api/orders/${encodeURIComponent(id)}/resolve`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`resolve -> ${r.status}`);
+    return r.json();
+  });
+export const deleteOrder = (id: string) =>
+  fetch(`/api/orders/${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => {
+    if (!r.ok) throw new Error(`delete order -> ${r.status}`);
+    return r.json();
+  });
 
 export const getItemNames = () => get<ItemName[]>("/api/itemnames");
 export const getPortfolio = () => get<Portfolio>("/api/portfolio");

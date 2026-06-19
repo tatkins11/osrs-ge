@@ -270,7 +270,7 @@ export default function App() {
         ) : tab === "orders" ? (
           <>
             <div className="table-wrap">
-              <OrdersTable rows={ordersData} selectedId={selected} onSelect={setSelected} />
+              <OrdersTable rows={ordersData} selectedId={selected} onSelect={setSelected} reload={() => getOrders().then(setOrdersData).catch(() => {})} />
             </div>
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
               <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />

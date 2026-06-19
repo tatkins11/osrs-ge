@@ -1,4 +1,4 @@
-import type { Order } from "../api";
+import { deleteOrder, resolveOrder, type Order } from "../api";
 import { gp, gpShort } from "../format";
 import { SortTh, useSortable } from "./sortable";
 
@@ -15,13 +15,16 @@ export function OrdersTable({
   rows,
   selectedId,
   onSelect,
+  reload,
 }: {
   rows: Order[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  reload: () => void;
 }) {
   const { sorted, sort } = useSortable(rows, "updated_ts");
   const open = rows.filter((o) => o.open).length;
+  const run = (fn: () => Promise<unknown>) => fn().catch(() => {}).finally(() => reload());
   return (
     <div className="tbl-scroll">
       <div className="exp-banner">
@@ -40,6 +43,7 @@ export function OrdersTable({
             <SortTh k="avg_fill" sort={sort}>Avg fill</SortTh>
             <SortTh k="spent" sort={sort}>Value</SortTh>
             <SortTh k="updated_ts" sort={sort} className="left">Updated (UTC)</SortTh>
+            <th className="left">Fix</th>
           </tr>
         </thead>
         <tbody>
@@ -58,11 +62,44 @@ export function OrdersTable({
               <td>{o.avg_fill ? gp(o.avg_fill) : <span className="dim">–</span>}</td>
               <td className="dim">{gpShort(o.spent)}</td>
               <td className="left dim">{o.updated_ts ? o.updated_ts.slice(0, 16).replace("T", " ") : "–"}</td>
+              <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>
+                {o.open && (
+                  <>
+                    <button
+                      className="ord-act"
+                      title="Mark fully bought/sold — logs the full quantity as a trade"
+                      onClick={() => run(() => resolveOrder(o.order_id, "complete"))}
+                    >
+                      ✓ filled
+                    </button>
+                    <button
+                      className="ord-act"
+                      title="Mark cancelled — logs the amount already filled as a trade"
+                      onClick={() => {
+                        const did = o.side === "buy" ? "bought" : "sold";
+                        if (window.confirm(`Mark "${o.name}" cancelled? Logs the ${o.filled_qty.toLocaleString()} already ${did} as a trade.`))
+                          run(() => resolveOrder(o.order_id, "cancel"));
+                      }}
+                    >
+                      ✗ cancel
+                    </button>
+                  </>
+                )}
+                <button
+                  className="ord-act del"
+                  title="Remove this order row (does not affect already-logged trades)"
+                  onClick={() => {
+                    if (window.confirm("Remove this order from the list?")) run(() => deleteOrder(o.order_id));
+                  }}
+                >
+                  🗑
+                </button>
+              </td>
             </tr>
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={8} className="left muted">
+              <td colSpan={9} className="left muted">
                 No orders yet — install the RuneLite plugin and place a GE offer; it'll appear here within seconds.
               </td>
             </tr>

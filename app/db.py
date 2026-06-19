@@ -521,6 +521,14 @@ def get_orders_df() -> pd.DataFrame:
         con.close()
 
 
+def delete_order(order_id: str) -> None:
+    con = connect_trades()
+    try:
+        con.execute("DELETE FROM orders WHERE order_id = ?", [str(order_id)])
+    finally:
+        con.close()
+
+
 # --- signal log (separate DB file; collector-owned, hourly snapshots) -------
 _LOG_SCHEMA = """
 CREATE SEQUENCE IF NOT EXISTS signal_log_id_seq;

@@ -160,6 +160,12 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .chart-legend .lg-item i { width: 11px; height: 2px; border-radius: 1px; display: inline-block; flex: none; }
 .chart-legend .lg-item b { color: var(--fg); font-weight: 600; }
 
+/* resolve-order action buttons (Orders tab) */
+.ord-actions { white-space: nowrap; }
+.ord-act { background: var(--elev); border: 1px solid var(--border); color: var(--fg-2); border-radius: 4px; padding: 1px 6px; margin: 0 1px; cursor: pointer; font-size: 10px; }
+.ord-act:hover { color: var(--fg); border-color: var(--accent); }
+.ord-act.del:hover { color: var(--red); border-color: var(--red); }
+
 /* profile bars ------------------------------------------------------------ */
 .profile { display: flex; flex-direction: column; gap: 3px; }
 .prow { display: grid; grid-template-columns: 42px 1fr 56px; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; }
