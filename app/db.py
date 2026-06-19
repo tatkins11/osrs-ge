@@ -493,6 +493,27 @@ def ingest_offers(events: list[dict]) -> dict:
                 if m:
                     oid, existing = m[0], (m[1],)
             if existing is None:
+                # One offer per slot: a genuinely new order in this slot means any order we still
+                # show as OPEN there has ended (we missed its terminal event) -> finalize it, logging
+                # a trade for whatever it had filled (BOUGHT/SOLD if complete, else CANCELLED).
+                if slot >= 0:
+                    for so in con.execute(
+                        """SELECT order_id, item_id, side, filled_qty, spent, price, total_qty
+                           FROM orders WHERE slot=? AND state IN ('BUYING','SELLING') AND trade_id IS NULL""",
+                        [slot],
+                    ).fetchall():
+                        s_oid, s_item, s_side, s_fill, s_spent, s_price, s_total = so
+                        s_state = (("BOUGHT" if s_side == "buy" else "SOLD") if (s_fill or 0) >= (s_total or 0)
+                                   else ("CANCELLED_BUY" if s_side == "buy" else "CANCELLED_SELL"))
+                        con.execute("UPDATE orders SET state=?, completed_ts=? WHERE order_id=?", [s_state, ts, s_oid])
+                        if s_fill and s_fill > 0:
+                            avg = int(round(s_spent / s_fill)) if (s_side == "buy" and (s_spent or 0) > 0) else int(s_price or 0)
+                            r2 = con.execute(
+                                "INSERT INTO trades (ts,item_id,side,qty,price,note) VALUES (?,?,?,?,?,?) RETURNING id",
+                                [ts, int(s_item), s_side, int(s_fill), int(avg), "GE auto · slot reused"],
+                            ).fetchone()
+                            con.execute("UPDATE orders SET trade_id=? WHERE order_id=?", [int(r2[0]) if r2 else None, s_oid])
+                            made += 1
                 con.execute(
                     """INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty,
                            filled_qty, spent, state, opened_ts, updated_ts, completed_ts, trade_id)
