@@ -76,6 +76,9 @@ export interface Row {
   on_win_rate?: number | null;
   on_exp_margin?: number | null;
   on_nights?: number | null;
+  on_units?: number | null;
+  on_exp_profit?: number | null;
+  on_ev?: number | null;
   reasons?: string[];
   [k: string]: unknown;
 }

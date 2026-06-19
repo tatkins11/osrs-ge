@@ -420,6 +420,12 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
         d["on_target"] = np.round(ask)
         d["on_margin"] = net_t - buy_offer                     # captured discount if it reverts, after tax & spread
         d["on_roi"] = np.where(buy_offer > 0, d["on_margin"] / buy_offer, np.nan)
+        # absolute gp per filled order -- favours high-value items and mid-value with big buy
+        # limits over tiny-but-high-fill-rate junk. No GE limit -> cap units by a day's volume.
+        units = d["buy_limit"].astype("float64")
+        units = units.where(units.notna() & (units > 0), d["vol_daily_7d"].astype("float64"))
+        d["on_units"] = units
+        d["on_exp_profit"] = d["on_margin"] * units
         gpv = d["mid"].fillna(0) * d["vol_daily_7d"].fillna(0)
         spread_pct = np.where(bid > 0, (ask - bid) / bid, np.nan)
         vol = d["volatility_7d"].fillna(0.0)
@@ -432,6 +438,7 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
             & vol.between(0.02, 0.8)
             & (d["on_margin"] > 0) & (d["on_roi"] >= th.min_roi)
             & (gpv >= 25_000_000)
+            & (d["on_exp_profit"].fillna(0) >= th.min_profit)   # meaningful absolute profit, not just a high %
         )
         cand = d[elig].copy()
         if cand.empty:
@@ -447,14 +454,16 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
     cand["on_win_rate"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("win_rate"))
     cand["on_exp_margin"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("exp_margin"))
     cand["on_nights"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("nights"))
+    cand["on_ev"] = cand["on_exp_profit"].fillna(0) * cand["on_fill_prob"].fillna(0) * cand["on_win_rate"].fillna(0)
     # keep only realistic, positive-edge setups: a meaningful fill chance AND a winning history when filled
     keep = (cand["on_fill_prob"].fillna(0) >= 0.30) & (cand["on_win_rate"].fillna(0) >= 0.55)
     cand = cand[keep]
     if cand.empty:
         return []
-    cand = cand.sort_values(["on_fill_prob", "on_win_rate"], ascending=False).head(limit)
+    cand = cand.sort_values("on_ev", ascending=False).head(limit)   # expected gp/night, not just fill odds
     return _records(cand, TABLE_COLS + ["on_buy", "on_target", "on_margin", "on_roi",
-                                        "on_fill_prob", "on_win_rate", "on_exp_margin", "on_nights"])
+                                        "on_fill_prob", "on_win_rate", "on_exp_margin", "on_nights",
+                                        "on_units", "on_exp_profit", "on_ev"])
 
 
 def full_table(th: Thresholds | None = None, con=None) -> list[dict]:

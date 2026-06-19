@@ -297,10 +297,11 @@ export default function App() {
               {tab === "overnight" && (
                 <div className="crash-banner">
                   Overnight lowball offers — place these buy offers (at "Buy offer") before you log off; each fills only
-                  if the price dumps overnight, then you sell next day toward "Sell target". Now ranked by real{" "}
-                  <b>Fill chance</b> (how often it's actually filled by morning over the last ~2 weeks) and{" "}
-                  <b>Win rate</b> when filled. Fills are inherently infrequent — place several, and even a 50%
-                  fill-chance item only fills about half the nights. A filled order can sit underwater until it reverts.
+                  if the price dumps overnight, then you sell next day toward "Sell target". Ranked by{" "}
+                  <b>expected profit/night</b> (Profit/fill × fill chance × win rate), so it favours high-value items and
+                  mid-value items with big buy limits over tiny-but-frequent fills. Raise <b>Min profit</b> to push for
+                  bigger setups. Fills are inherently infrequent — place several; even a 50% fill-chance item only fills
+                  about half the nights, and a filled order can sit underwater until it reverts.
                 </div>
               )}
               {tab === "crashes" ? (

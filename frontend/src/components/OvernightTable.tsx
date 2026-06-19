@@ -16,7 +16,7 @@ export function OvernightTable({
   selectedId: number | null;
   onSelect: (id: number) => void;
 }) {
-  const { sorted, sort } = useSortable(rows, "on_fill_prob");
+  const { sorted, sort } = useSortable(rows, "on_exp_profit");
   return (
     <div className="tbl-scroll">
       <table className="tbl">
@@ -24,6 +24,8 @@ export function OvernightTable({
           <tr>
             <SortTh k="name" sort={sort} className="left">Item</SortTh>
             <SortTh k="on_buy" sort={sort}>Buy offer (place tonight)</SortTh>
+            <SortTh k="on_units" sort={sort} title="Units you can buy in one limit window (the GE buy limit)">Qty</SortTh>
+            <SortTh k="on_exp_profit" sort={sort} title="Absolute profit if it fills and reverts: margin × qty. This is what the ranking favours.">Profit / fill</SortTh>
             <SortTh k="on_fill_prob" sort={sort} title="How often this lowball has filled by morning over the last ~2 weeks">Fill chance</SortTh>
             <SortTh k="on_win_rate" sort={sort} title="When it filled, how often selling next midday profited">Win rate</SortTh>
             <SortTh k="on_target" sort={sort}>Sell target</SortTh>
@@ -37,6 +39,8 @@ export function OvernightTable({
             <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
               <td className="name left">{r.name}</td>
               <td>{gp(r.on_buy)}</td>
+              <td className="dim">{r.on_units ? Math.round(r.on_units).toLocaleString() : "–"}</td>
+              <td className="pos">{gpShort(r.on_exp_profit)}</td>
               <td
                 className={fillCls(r.on_fill_prob)}
                 title={r.on_nights ? `${Math.round((r.on_fill_prob ?? 0) * r.on_nights)}/${r.on_nights} nights filled` : ""}
@@ -52,7 +56,7 @@ export function OvernightTable({
           ))}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={8} className="left muted">
+              <td colSpan={10} className="left muted">
                 No overnight setups clear the filters right now — good ones are infrequent. Check back later, or lower
                 the overnight discount / widen the price range.
               </td>
