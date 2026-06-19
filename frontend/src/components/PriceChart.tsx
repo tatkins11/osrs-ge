@@ -104,10 +104,21 @@ export function PriceChart({
       main.setData(sel("mid"));
     }
 
-    // decision levels (fair value / target / alch floor / your cost+breakeven) + your trades
-    for (const lv of levels) {
-      if (lv.price > 0)
-        main.createPriceLine({ price: lv.price, color: lv.color, lineWidth: 1, lineStyle: lv.dashed ? 2 : 0, axisLabelVisible: true, title: lv.title });
+    // decision levels (fair value / target / alch floor / your cost+breakeven): draw quiet dashed
+    // lines, but identify them in a compact corner legend instead of axis labels + on-plot titles —
+    // those stack up on the right and cover the most recent price action.
+    const activeLevels = levels.filter((lv) => lv.price > 0);
+    for (const lv of activeLevels) {
+      main.createPriceLine({ price: lv.price, color: lv.color, lineWidth: 1, lineStyle: lv.dashed ? 2 : 0, axisLabelVisible: false });
+    }
+    let legend: HTMLDivElement | null = null;
+    if (activeLevels.length) {
+      legend = document.createElement("div");
+      legend.className = "chart-legend";
+      legend.innerHTML = activeLevels
+        .map((lv) => `<span class="lg-item"><i style="background:${lv.color}"></i>${lv.title} <b>${gpf(lv.price)}</b></span>`)
+        .join("");
+      el.appendChild(legend);
     }
     // trade (B/S) + update (📰) markers, plus a bar -> update-title map for the tooltip
     const eventByBar = new Map<number, string>();
@@ -182,6 +193,7 @@ export function PriceChart({
     return () => {
       chart.remove();
       tip.remove();
+      legend?.remove();
     };
   }, [series, type, levels, markers, events, fairValue]);
 

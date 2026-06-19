@@ -147,6 +147,19 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .chart-tip .tip-t { color: var(--fg-2); font-size: 10px; margin-bottom: 2px; }
 .chart-tip .tip-v { font-weight: 600; }
 
+/* compact decision-level legend (top-left) so labels don't cover the price action */
+.chart-legend {
+  position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none;
+  display: flex; flex-wrap: wrap; gap: 4px 8px; max-width: 78%;
+  font-family: var(--mono); font-size: 10px; color: var(--fg-2);
+}
+.chart-legend .lg-item {
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  background: rgba(10,15,23,.6); padding: 1px 5px; border-radius: 3px;
+}
+.chart-legend .lg-item i { width: 11px; height: 2px; border-radius: 1px; display: inline-block; flex: none; }
+.chart-legend .lg-item b { color: var(--fg); font-weight: 600; }
+
 /* profile bars ------------------------------------------------------------ */
 .profile { display: flex; flex-direction: column; gap: 3px; }
 .prow { display: grid; grid-template-columns: 42px 1fr 56px; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; }
