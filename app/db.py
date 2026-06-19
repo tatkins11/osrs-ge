@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import duckdb
 import pandas as pd
@@ -478,18 +478,29 @@ def ingest_offers(events: list[dict]) -> dict:
             ts = _to_naive_utc(e.get("ts"))
             terminal = state in _TERMINAL_STATES
             existing = con.execute("SELECT trade_id FROM orders WHERE order_id = ?", [oid]).fetchone()
-            # De-dup: a still-open offer re-reported under a NEW id (e.g. the plugin restarted and
-            # lost its slot->id memory) -- match the existing OPEN order in the same slot and update
-            # that one instead of inserting a duplicate. A finalized order (trade_id set) is never
-            # matched, so a genuinely new offer reusing the slot still becomes its own row.
-            if existing is None and state in ("BUYING", "SELLING"):
-                m = con.execute(
-                    """SELECT order_id, trade_id FROM orders
-                       WHERE state IN ('BUYING','SELLING') AND trade_id IS NULL
-                         AND slot=? AND item_id=? AND price=? AND total_qty=? AND side=?
-                       ORDER BY updated_ts DESC LIMIT 1""",
-                    [slot, item_id, price, total, side],
-                ).fetchone()
+            # De-dup the same offer re-reported under a NEW id (plugin restart lost its slot->id memory).
+            if existing is None:
+                if state in ("BUYING", "SELLING"):
+                    # an open offer: match a still-OPEN same-slot order (never resurrect a finalized one)
+                    m = con.execute(
+                        """SELECT order_id, trade_id FROM orders
+                           WHERE state IN ('BUYING','SELLING') AND trade_id IS NULL
+                             AND slot=? AND item_id=? AND price=? AND total_qty=? AND side=?
+                           ORDER BY updated_ts DESC LIMIT 1""",
+                        [slot, item_id, price, total, side],
+                    ).fetchone()
+                else:
+                    # a terminal replay (e.g. a BOUGHT-but-uncollected offer re-sent next session):
+                    # match the same offer (open OR already finalized) seen recently, so its trade is
+                    # not logged twice. The window covers an overnight log-off; a genuinely new identical
+                    # buy that far apart is rare and can be edited.
+                    m = con.execute(
+                        """SELECT order_id, trade_id FROM orders
+                           WHERE slot=? AND item_id=? AND price=? AND total_qty=? AND side=?
+                             AND updated_ts >= ?
+                           ORDER BY updated_ts DESC LIMIT 1""",
+                        [slot, item_id, price, total, side, ts - timedelta(hours=18)],
+                    ).fetchone()
                 if m:
                     oid, existing = m[0], (m[1],)
             if existing is None:
