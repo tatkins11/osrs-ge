@@ -474,15 +474,30 @@ def ingest_offers(events: list[dict]) -> dict:
             total = int(e.get("total_qty") or 0)
             filled = int(e.get("filled_qty") or 0)
             spent = int(e.get("spent") or 0)
+            slot = int(e.get("slot")) if e.get("slot") is not None else -1
             ts = _to_naive_utc(e.get("ts"))
             terminal = state in _TERMINAL_STATES
             existing = con.execute("SELECT trade_id FROM orders WHERE order_id = ?", [oid]).fetchone()
+            # De-dup: a still-open offer re-reported under a NEW id (e.g. the plugin restarted and
+            # lost its slot->id memory) -- match the existing OPEN order in the same slot and update
+            # that one instead of inserting a duplicate. A finalized order (trade_id set) is never
+            # matched, so a genuinely new offer reusing the slot still becomes its own row.
+            if existing is None and state in ("BUYING", "SELLING"):
+                m = con.execute(
+                    """SELECT order_id, trade_id FROM orders
+                       WHERE state IN ('BUYING','SELLING') AND trade_id IS NULL
+                         AND slot=? AND item_id=? AND price=? AND total_qty=? AND side=?
+                       ORDER BY updated_ts DESC LIMIT 1""",
+                    [slot, item_id, price, total, side],
+                ).fetchone()
+                if m:
+                    oid, existing = m[0], (m[1],)
             if existing is None:
                 con.execute(
                     """INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty,
                            filled_qty, spent, state, opened_ts, updated_ts, completed_ts, trade_id)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)""",
-                    [oid, e.get("login"), int(e.get("slot") if e.get("slot") is not None else -1),
+                    [oid, e.get("login"), slot,
                      item_id, side, price, total, filled, spent, state, ts, ts, (ts if terminal else None)],
                 )
                 trade_id = None
