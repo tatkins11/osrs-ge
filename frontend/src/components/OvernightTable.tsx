@@ -16,20 +16,21 @@ export function OvernightTable({
   selectedId: number | null;
   onSelect: (id: number) => void;
 }) {
-  const { sorted, sort } = useSortable(rows, "on_exp_profit");
+  const { sorted, sort } = useSortable(rows, "on_ev"); // server's value-weighted rank (per-item margin × fill odds)
   return (
     <div className="tbl-scroll">
       <table className="tbl">
         <thead>
           <tr>
             <SortTh k="name" sort={sort} className="left">Item</SortTh>
+            <SortTh k="mid" sort={sort} title="Value per item — overnight now leads with higher-value items">Value / ea</SortTh>
             <SortTh k="on_buy" sort={sort}>Buy offer (place tonight)</SortTh>
             <SortTh k="on_units" sort={sort} title="Units you can buy in one limit window (the GE buy limit)">Qty</SortTh>
-            <SortTh k="on_exp_profit" sort={sort} title="Absolute profit if it fills and reverts: margin × qty. This is what the ranking favours.">Profit / fill</SortTh>
+            <SortTh k="on_exp_profit" sort={sort} title="Total if it fully fills and reverts: margin × qty (informational — ranking now favours per-item value)">Profit / fill</SortTh>
             <SortTh k="on_fill_prob" sort={sort} title="How often this lowball has filled by morning over the last ~2 weeks">Fill chance</SortTh>
             <SortTh k="on_win_rate" sort={sort} title="When it filled, how often selling next midday profited">Win rate</SortTh>
             <SortTh k="on_target" sort={sort}>Sell target</SortTh>
-            <SortTh k="on_margin" sort={sort}>Margin / ea</SortTh>
+            <SortTh k="on_margin" sort={sort} title="gp captured per item if it reverts — overnight is ranked by this × fill odds">Margin / ea</SortTh>
             <SortTh k="on_roi" sort={sort}>ROI if filled</SortTh>
             <SortTh k="vol_daily_7d" sort={sort}>Vol / day</SortTh>
           </tr>
@@ -38,6 +39,7 @@ export function OvernightTable({
           {sorted.map((r) => (
             <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
               <td className="name left">{r.name}</td>
+              <td>{gp(r.mid)}</td>
               <td>{gp(r.on_buy)}</td>
               <td className="dim">{r.on_units ? Math.round(r.on_units).toLocaleString() : "–"}</td>
               <td className="pos">{gpShort(r.on_exp_profit)}</td>
@@ -56,7 +58,7 @@ export function OvernightTable({
           ))}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={10} className="left muted">
+              <td colSpan={11} className="left muted">
                 No overnight setups clear the filters right now — good ones are infrequent. Check back later, or lower
                 the overnight discount / widen the price range.
               </td>

@@ -47,6 +47,7 @@ class Thresholds:
     update_drop_factor: float = 0.5           # crash-rank down-weight for the same update-driven drop
     update_drop_days: int = 2                 # window (days) after an update for a drop to count as update-driven
     overnight_disc: float = 0.10              # overnight lowball: buy offer this far below the current bid
+    overnight_min_margin: float = 3000.0      # min gp captured PER ITEM — favours high-value items over high-qty junk
     vol_spike: float = 2.0                    # "unusual volume": last 24h >= this multiple of a typical day
     z_buy: float = -1.5
     z_strong_buy: float = -2.5
@@ -438,7 +439,7 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
             & vol.between(0.02, 0.8)
             & (d["on_margin"] > 0) & (d["on_roi"] >= th.min_roi)
             & (gpv >= 25_000_000)
-            & (d["on_exp_profit"].fillna(0) >= th.min_profit)   # meaningful absolute profit, not just a high %
+            & (d["on_margin"].fillna(0) >= th.overnight_min_margin)   # meaningful gp PER ITEM -> value over quantity
         )
         cand = d[elig].copy()
         if cand.empty:
@@ -454,7 +455,8 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
     cand["on_win_rate"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("win_rate"))
     cand["on_exp_margin"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("exp_margin"))
     cand["on_nights"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("nights"))
-    cand["on_ev"] = cand["on_exp_profit"].fillna(0) * cand["on_fill_prob"].fillna(0) * cand["on_win_rate"].fillna(0)
+    # rank by per-ITEM expected gp (margin × odds) — surfaces high-value lowballs, not high-qty junk
+    cand["on_ev"] = cand["on_margin"].fillna(0) * cand["on_fill_prob"].fillna(0) * cand["on_win_rate"].fillna(0)
     # keep only realistic, positive-edge setups: a meaningful fill chance AND a winning history when filled
     keep = (cand["on_fill_prob"].fillna(0) >= 0.30) & (cand["on_win_rate"].fillna(0) >= 0.55)
     cand = cand[keep]
