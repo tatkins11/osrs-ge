@@ -15,9 +15,10 @@ Index construction (mirrors a sector ETF):
     read from the coarsest history timestep that covers the horizon (1h<=2w, 6h<=3mo,
     24h<=1y).
 
-TAXONOMY IS EDITABLE: the SECTORS list below is plain, ordered rules (first match
-wins -- specific sectors before broad ones). Tune the keyword patterns / curated
-OVERRIDES to fit how you think about the game; nothing else needs to change.
+CLASSIFICATION is wiki-category-driven (app/sectormap.py): each item is mapped to a
+sector from the OSRS Wiki's own categories (equipment slot, combat style, skill, drop
+source), cached in DATA_DIR/item_sectors.json. The SECTOR_DEFS list below is just the
+display + the valid sector set; edit sectormap.sector_of() to change the rules.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ import pandas as pd
 from .analytics import HORIZONS, series_changes
 from .db import connect
 from .signals import Thresholds, market_signals
+from . import sectormap
 
 log = logging.getLogger("sectors")
 
@@ -42,132 +44,61 @@ _DAYS_FOR = {"1h": 15, "6h": 95, "24h": 366}
 _TIMESTEPS = ("1h", "6h", "24h")
 _TF_TO_TIMESTEP = {"2wk": "1h", "3mo": "6h", "1yr": "24h"}
 
-# --- taxonomy ---------------------------------------------------------------
-_TIERS = r"(bronze|iron|steel|black|white|mithril|adamant|adamantite|rune|runite|dragon)"
-_GEAR = (
-    r"(dagger|sword|longsword|scimitar|2h sword|mace|warhammer|battleaxe|axe|hatchet|pickaxe|"
-    r"halberd|spear|hasta|claws|full helm|med helm|helm|platebody|platelegs|plateskirt|"
-    r"chainbody|sq shield|kiteshield|shield|boots|gauntlets|defender)"
-)
-_FISH = (
-    r"(shark|anglerfish|manta ray|sea turtle|monkfish|lobster|tuna|swordfish|salmon|trout|"
-    r"karambwan|bass|cod|herring|sardine|anchovies|mackerel|pike|shrimps|sea turtle)"
-)
-
-# (key, label, blurb, [include regex], [exclude regex])  -- matched on lower-cased name
-SECTORS: list[tuple[str, str, str, list[str], list[str]]] = [
-    ("charges", "Charges & Scales", "Consumable charges for powered weapons & gear",
-     [r"zulrah's scales", r"revenant ether", r"\bdemon tear\b", r"sunfire splinters",
-      r"rubium splinters", r"ancient essence", r"aether catalyst", r"bottled (storm|dread|mind)",
-      r"bracelet of ethereum", r"\bblighted\b", r"\bnumulite\b"], []),
-    ("fletching_mats", "Fletching Materials", "Tips, shafts, unstrung bows, bow string, feathers",
-     [r"\b(arrow|dart|javelin|bolt) ?tips?\b", r"\b(arrow|javelin) ?shafts?\b", r"\bbow string\b",
-      r"\bunstrung\b", r"((short|long)bow|crossbow) \(u\)$", r"bolts? \(unf\)$",
-      r"headless arrow", r"\bfeather"], []),
-    ("ammo", "Ammunition", "Finished arrows, bolts, darts, javelins, chinchompas",
-     [r"\barrows?\b", r"\bbolts?\b", r"\bdarts?\b", r"\bjavelins?\b", r"\bknives\b",
-      r"\bchinchompas?\b", r"\bcannonball", r"throwing axe"],
-     [r"tips?\b", r"shafts?\b", r"\(unf\)$", r"bolt of cloth"]),
-    ("runes", "Runes & Teleports", "Spellcasting reagents & teleport tablets",
-     [r"\b(air|water|earth|fire|mind|body|cosmic|chaos|nature|law|death|blood|soul|astral|wrath|"
-      r"mist|dust|mud|smoke|steam|lava|sunfire|aether|elemental|catalytic) rune",
-      r"\(tablet\)$", r"\bteleport\b"], []),
-    ("herbs_potions", "Herbs & Potions", "Herblore — herbs, doses, secondaries",
-     [r"\(\d\)$", r"\bpotion", r"\bbrew", r"\b(grimy|clean)\b",
-      r"\b(guam|marrentill|tarromin|harralander|ranarr|toadflax|irit|avantoe|kwuarm|snapdragon|"
-      r"cadantine|lantadyme|dwarf weed|torstol|huasca)\b"], []),
-    ("seeds", "Seeds & Farming", "Farming seeds, saplings, produce",
-     [r"(seed|seedling|sapling|spore)s?$", r"\bsapling$"], []),
-    ("logs", "Logs", "Woodcutting & firemaking supply",
-     [r"\blogs?$"], []),
-    ("ores_bars", "Ores & Bars", "Mining & smithing feedstock",
-     [r"(ore|bar)s?$", r"\bcoal$"], []),
-    ("gems", "Gems", "Cut & uncut gems",
-     [r"^(uncut )?(sapphire|emerald|ruby|diamond|dragonstone|onyx|zenyte|opal|jade|red topaz)( \(.*\))?$"],
-     []),
-    ("jewellery", "Jewellery", "Amulets, rings, necklaces, bracelets",
-     [r"\bamulet\b", r"\bnecklace\b", r"\bring\b", r"\bbracelet\b", r"\btiara\b", r"lightbearer"], []),
-    ("food_fishing", "Food & Fishing", "Raw & cooked food, fishing catches",
-     [r"^raw ", r"^cooked ", rf"\b{_FISH}\b",
-      r"\b(pie|stew|pizza|cake|bread|kebab|curry|sandwich)\b", r"jug of (water|wine)",
-      r"\bgrapes\b", r"minced meat", r"\bflour\b", r"tuna potato", r"\bwine of zamorak\b"], []),
-    ("bones_prayer", "Bones & Prayer", "Bones & ashes — prayer training",
-     [r"\b(bones|ashes)$", r"\bensouled\b"], []),
-    ("construction", "Construction", "POH building materials",
-     [r"\bplanks?\b", r"magic stone", r"marble block", r"limestone brick", r"bolt of cloth",
-      r"\bgold leaf\b", r"\bclockwork\b"], []),
-    ("barrows", "Barrows Gear", "Dharok / Ahrim / Karil / Guthan / Torag / Verac",
-     [r"\b(dharok's|ahrim's|karil's|guthan's|torag's|verac's)\b", r"\bbarrows\b"], []),
-    ("high_tier_pvm", "High-tier PvM Gear", "Megarares & raids/boss best-in-slot",
-     [r"twisted bow", r"scythe of vitur", r"tumeken's shadow", r"sanguinesti", r"ghrazi rapier",
-      r"\bjusticiar\b", r"avernic", r"bow of faerdhinen", r"\bbowfa\b", r"primordial", r"pegasian",
-      r"eternal (boots|crystal)", r"ancestral", r"\bmasori\b", r"\btorva\b", r"\bvirtus\b", r"zaryte",
-      r"dragon hunter", r"voidwaker", r"venator", r"osmumten", r"\belysian\b", r"\barcane\b",
-      r"\bspectral\b", r"oathplate", r"confliction gauntlets", r"tormented synapse",
-      r"soulreaper axe", r"noxious halberd", r"inquisitor's", r"\bdinh's\b", r"eye of ayak"], []),
-    ("magic_gear", "Magic Gear", "Staves, robes, tridents, wards, tomes",
-     [r"\bbattlestaff\b", r"\bstaff\b", r"\bstaves\b", r"\bwand\b", r"\btome\b", r"\bward\b",
-      r"\bmystic\b", r"\binfinity\b", r"\btrident\b", r"mage's book", r"\borb\b", r"\bkodai\b",
-      r"nightmare staff", r"\b(eldritch|harmonised|volatile)\b", r"twinflame staff", r"\boccult\b",
-      r"saturated heart", r"imbued heart"], []),
-    ("ranged_gear", "Ranged Gear", "Bows, crossbows, dragonhide, ranged armour",
-     [r"dragonhide", r"d'hide", r"\bleather\b", r"\bchaps\b", r"\bvambraces\b", r"\bcoif\b",
-      r"bow\b", r"blowpipe", r"crossbow", r"\bc'bow\b", r"\bbuckler\b", r"webweaver",
-      r"\bcrystal (bow|body|legs|helm|armour|shield|halberd)", r"karil's",
-      r"armadyl (crossbow|c'bow|helmet|chestplate|chainskirt)"], []),
-    ("melee_gear", "Melee Gear", "Tiered & boss melee weapons + armour",
-     [rf"^{_TIERS} {_GEAR}$", rf"^{_TIERS} .* {_GEAR}$", r"\bgodsword\b",
-      r"\bbandos (chestplate|tassets|boots)\b", r"saradomin sword", r"zamorakian",
-      r"abyssal (whip|dagger|bludgeon|tentacle)", r"\bgranite (maul|hammer|body|shield|longsword)\b",
-      r"fighter torso", r"\bfire cape\b", r"infernal cape", r"\bdefender\b", r"dual macuahuitl",
-      r"\bobsidian\b", r"\bbulwark\b",
-      r"\bdragon (scimitar|dagger|mace|longsword|battleaxe|halberd|claws|sword|warhammer|hasta|spear)\b"],
-     []),
-    ("treasure", "Treasure & Cosmetics", "Clue rewards & collectibles",
-     [r"3rd age", r"\bgilded\b", r"ornament kit", r"partyhat", r"h'ween", r"halloween mask",
-      r"santa hat", r"\branger boots\b", r"robin hood", r"\brangers'\b",
-      r"god (d'hide|coif|bracers|chaps|body|stole|crozier|mitre|cloak)", r"\bdecorative\b",
-      r"spirit shield", r"samurai|musketeer|cavalier|highwayman|pith helmet|bucket helm",
-      r"\bzealot's\b", r"\benchanted (hat|top|robe|bottom)\b", r"\bsled\b", r"yo-yo"], []),
-    ("skilling", "Skilling Supplies", "Misc skilling inputs & products",
-     [r"\bnails$", r"\bbait$", r"\bcompost$", r"\bbucket", r"\bmolten glass$", r"\bsoft clay$",
-      r"glassblowing", r"\bflax\b", r"\bswamp (tar|paste)$", r"\bsaltpetre$", r"\bthread$",
-      r"\bvial", r"\bball of wool\b", r"\bwool\b", r"\blimestone\b", r"\bclay\b",
-      r"\bcrushed nest\b", r"\bash(es)?$"], []),
+# --- sector list: display + the valid set. Classification is wiki-category-driven in
+# app/sectormap.py; keep these keys in sync with what sectormap.sector_of() emits.
+SECTOR_DEFS: list[tuple[str, str, str]] = [
+    ("melee_weapons", "Melee Weapons", "Swords, maces, scythes & melee best-in-slot"),
+    ("melee_armour", "Melee Armour", "Tank & strength armour, melee sets"),
+    ("ranged_gear", "Ranged Gear", "Bows, crossbows, thrown & ranged armour"),
+    ("magic_gear", "Magic Gear", "Staves, wands, tridents, robes & wards"),
+    ("jewellery", "Jewellery", "Amulets, rings, necklaces, bracelets (incl. charged)"),
+    ("runes", "Runes & Teleports", "Spell reagents & teleport tablets"),
+    ("potions", "Potions", "Finished combat & skilling potions"),
+    ("herbs", "Herbs & Secondaries", "Herblore inputs — herbs & secondaries"),
+    ("ammo", "Ammunition", "Arrows, bolts, darts, cannonballs, chinchompas"),
+    ("fletching_mats", "Fletching Materials", "Tips, shafts, unstrung bows, bowstring, feathers"),
+    ("logs", "Logs", "Woodcutting & firemaking supply"),
+    ("ores_bars", "Ores & Bars", "Mining & smithing feedstock"),
+    ("gems", "Gems", "Cut & uncut gems"),
+    ("seeds", "Seeds & Farming", "Seeds, saplings, produce"),
+    ("food_fishing", "Fish & Food", "Fishing catches, raw & cooked food"),
+    ("bones_prayer", "Bones & Prayer", "Bones, ashes & prayer materials"),
+    ("construction", "Construction", "POH building materials"),
+    ("charges", "Charges & Scales", "Powered-gear consumable charges"),
+    ("misc_skilling", "Misc Skilling", "Other crafting / smithing / skilling inputs"),
+    ("treasure", "Treasure & Cosmetics", "Clue rewards, 3rd age, holiday & collectibles"),
+    ("boss_components", "Boss Drops & Components", "Non-gear boss/raid uniques (crafted into BiS)"),
 ]
-
-# Curated name -> sector overrides (exact, case-insensitive) for items the rules miss.
-OVERRIDES: dict[str, str] = {
-    "coal": "ores_bars", "pure essence": "runes", "rune essence": "runes",
-    "daeyalt essence": "runes", "blood shard": "jewellery",
-    "snape grass": "herbs_potions", "limpwurt root": "herbs_potions",
-    "white berries": "herbs_potions", "red spiders' eggs": "herbs_potions",
-    "wine of zamorak": "herbs_potions", "crushed nest": "herbs_potions",
-    "unicorn horn dust": "herbs_potions", "eye of newt": "herbs_potions",
-    "old school bond": "treasure", "magic longbow": "ranged_gear",
-    "air orb": "magic_gear", "water orb": "magic_gear", "earth orb": "magic_gear",
-    "fire orb": "magic_gear", "lizardman fang": "skilling", "minced meat": "food_fishing",
-    "black chinchompa": "ammo", "red chinchompa": "ammo", "grey chinchompa": "ammo",
-}
-
-_COMPILED = [
-    (key, label, blurb, [re.compile(p) for p in inc], [re.compile(p) for p in exc])
-    for key, label, blurb, inc, exc in SECTORS
-]
-SECTOR_META = {key: {"key": key, "label": label, "blurb": blurb}
-               for key, label, blurb, _, _ in SECTORS}
+SECTOR_META = {k: {"key": k, "label": l, "blurb": b} for k, l, b in SECTOR_DEFS}
 SECTOR_META[MARKET_KEY] = {"key": MARKET_KEY, "label": "Whole Market",
                            "blurb": "All liquid items — the market benchmark"}
+_VALID = {k for k, _, _ in SECTOR_DEFS}
+
+# Slim name-only fallback for items not yet in the wiki-category map (brand-new items
+# before the next collector refresh; the map covers ~99% of gp-volume).
+_FALLBACK = [
+    ("logs", re.compile(r"\blogs?$")),
+    ("ores_bars", re.compile(r"\b(ore|bar)s?$|\bcoal$")),
+    ("seeds", re.compile(r"(seed|sapling|spore)s?$")),
+    ("ammo", re.compile(r"\b(arrows?|bolts?|darts?|javelins?)\b")),
+    ("potions", re.compile(r"\(\d\)$|\bpotion\b|\bbrew\b")),
+    ("jewellery", re.compile(r"\b(amulet|necklace|bracelet)\b|\bring\b")),
+    ("bones_prayer", re.compile(r"\b(bones|ashes)$")),
+    ("runes", re.compile(r"\brune\b|\bteleport\b|\(tablet\)$")),
+]
 
 
 def classify_one(name: str) -> str | None:
+    """Item -> sector via the wiki-category map (app/sectormap.py), with a slim
+    name-only fallback for items not yet in the map (brand-new items)."""
     if not name:
         return None
+    s = sectormap.load_map().get(name.lower())
+    if s in _VALID:
+        return s
     n = name.lower()
-    if n in OVERRIDES:
-        return OVERRIDES[n]
-    for key, _l, _b, inc, exc in _COMPILED:
-        if any(p.search(n) for p in inc) and not any(p.search(n) for p in exc):
+    for key, pat in _FALLBACK:
+        if pat.search(n):
             return key
     return None
 

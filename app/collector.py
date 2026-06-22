@@ -148,6 +148,18 @@ def _refresh_updates() -> int:
     return upsert_updates(fetch_updates())
 
 
+def _refresh_sectors(max_age_days: int = 6) -> int:
+    """Rebuild the wiki-category -> sector map (DATA_DIR/item_sectors.json). Item categories
+    change rarely, so skip if the cached map is younger than max_age_days."""
+    import time as _time
+    from .db import get_items_df
+    from .sectormap import MAP_PATH, build_and_save
+    if MAP_PATH.exists() and (_time.time() - MAP_PATH.stat().st_mtime) < max_age_days * 86400:
+        return -1  # still fresh
+    items = [{"item_id": int(r.item_id), "name": r.name} for r in get_items_df().itertuples() if r.name]
+    return len(build_and_save(items))
+
+
 def _sleep_to_next(interval: int, offset: int = 20) -> None:
     """Sleep until just after the next interval boundary (so the 5m bucket is ready)."""
     now = time.time()
@@ -179,6 +191,10 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
             log.info("updates refreshed: %d", _refresh_updates())
         except Exception:
             log.exception("startup updates refresh failed")
+        try:
+            log.info("sector map refreshed: %d", _refresh_sectors())
+        except Exception:
+            log.exception("startup sector-map refresh failed")
         current_day = utcnow().date()
         current_hour = None
         while True:
@@ -201,6 +217,10 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
                         log.info("updates refreshed: %d", _refresh_updates())
                     except Exception:
                         log.exception("updates refresh failed")
+                    try:
+                        log.info("sector map refreshed: %d", _refresh_sectors())
+                    except Exception:
+                        log.exception("sector-map refresh failed")
                     current_day = day
             except Exception:
                 log.exception("catalog refresh failed")
