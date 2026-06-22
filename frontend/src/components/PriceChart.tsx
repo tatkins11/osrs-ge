@@ -87,16 +87,26 @@ export function PriceChart({
         borderUpColor: "#25d07d", borderDownColor: "#ff5b6e",
         wickUpColor: "#25d07d", wickDownColor: "#ff5b6e",
       });
+      // Real OHLC candles. The wiki gives avg-high / avg-low per bar (not true OHLC), so we
+      // bucket consecutive bars into ~110 candles: close = bucket's last mid, open = previous
+      // candle's close (continuous), high/low = the bucket's extreme avg-high / avg-low. Reads
+      // far cleaner than one synthetic candle per raw bar and shows each period's real range.
+      const pts = series.filter((p) => p.mid != null);
+      const K = Math.max(1, Math.round(pts.length / 110));
       const data: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
-      let prev: number | null = null;
-      for (const p of series) {
-        if (p.mid == null) continue;
-        const open = prev ?? p.mid;
-        const close = p.mid;
-        const high = Math.max(p.avg_high ?? close, open, close);
-        const low = Math.min(p.avg_low ?? close, open, close);
-        data.push({ time: t(p), open, high, low, close });
-        prev = close;
+      let prevClose: number | null = null;
+      for (let i = 0; i < pts.length; i += K) {
+        const bk = pts.slice(i, i + K);
+        const close = bk[bk.length - 1].mid as number;
+        const open = prevClose ?? (bk[0].mid as number);
+        let hi = Math.max(open, close), lo = Math.min(open, close);
+        for (const b of bk) {
+          if (b.avg_high != null) hi = Math.max(hi, b.avg_high);
+          if (b.avg_low != null) lo = Math.min(lo, b.avg_low);
+          if (b.mid != null) { hi = Math.max(hi, b.mid); lo = Math.min(lo, b.mid); }
+        }
+        data.push({ time: bk[0].time as UTCTimestamp, open, high: hi, low: lo, close });
+        prevClose = close;
       }
       main.setData(data);
     } else {
