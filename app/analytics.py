@@ -185,12 +185,22 @@ def add_indicators(series: pd.DataFrame, window: int = 168, rsi_period: int = 14
     _mid0 = (s["avg_high"] + s["avg_low"]) / 2.0
     _valid = _mid0.dropna()
     if len(_valid) >= 5:
-        _med = _valid.rolling(11, center=True, min_periods=3).median().fillna(_valid.median())
-        _ratio = _valid / _med
-        _bad = _valid.index[(_med > 0) & ((_ratio > 4.0) | (_ratio < 0.25))]
+        # pass 1 -- kill EXTREME garbage vs the global median (robust even when several bad ticks
+        # cluster and would pollute a local window). >15x an item's own median is never a real move.
+        _g = _valid.median()
+        if _g > 0:
+            _ext = _valid.index[(_valid / _g > 15.0) | (_valid / _g < 1 / 15.0)]
+            if len(_ext):
+                s.loc[_ext, "avg_high"] = _g
+                s.loc[_ext, "avg_low"] = _g
+                _valid = ((s["avg_high"] + s["avg_low"]) / 2.0).dropna()
+        # pass 2 -- clamp remaining isolated spikes vs a robust local median (preserves real
+        # sustained moves, which track the median across their neighbours).
+        _lmed = _valid.rolling(11, center=True, min_periods=3).median().fillna(_valid.median())
+        _bad = _valid.index[(_lmed > 0) & ((_valid / _lmed > 4.0) | (_valid / _lmed < 0.25))]
         if len(_bad):
-            s.loc[_bad, "avg_high"] = _med.loc[_bad]
-            s.loc[_bad, "avg_low"] = _med.loc[_bad]
+            s.loc[_bad, "avg_high"] = _lmed.loc[_bad]
+            s.loc[_bad, "avg_low"] = _lmed.loc[_bad]
     s["mid"] = (s["avg_high"] + s["avg_low"]) / 2.0
     minp = max(2, window // 4)
     s["ma"] = s["mid"].rolling(window, min_periods=minp).mean()
