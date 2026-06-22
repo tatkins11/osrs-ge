@@ -173,6 +173,16 @@ def add_indicators(series: pd.DataFrame, window: int = 168, rsi_period: int = 14
     """Add mid, moving average, Bollinger bands, z-score and RSI. ``window`` in rows
     (168 hourly rows == 7 days)."""
     s = series.sort_values("ts").reset_index(drop=True).copy()
+    # De-spike single-bar bad ticks: thin items occasionally print one absurd trade (a fat-finger /
+    # manipulated price many x normal). If a bar's mid is wildly off the CENTERED local median, replace
+    # that bar's high/low with the median so the spike doesn't wreck the chart or the rolling stats. A
+    # genuine sustained move tracks the median across neighbours, so it stays untouched.
+    _m = (s["avg_high"].astype("float64") + s["avg_low"].astype("float64")) / 2.0
+    _med = _m.rolling(7, center=True, min_periods=3).median()
+    _bad = _med.notna() & (_med > 0) & ((_m / _med > 4.0) | (_m / _med < 0.25))
+    if _bad.any():
+        s.loc[_bad, "avg_high"] = _med[_bad]
+        s.loc[_bad, "avg_low"] = _med[_bad]
     s["mid"] = (s["avg_high"].astype("float64") + s["avg_low"].astype("float64")) / 2.0
     minp = max(2, window // 4)
     s["ma"] = s["mid"].rolling(window, min_periods=minp).mean()
