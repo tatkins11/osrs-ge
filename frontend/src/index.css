@@ -41,6 +41,8 @@ a { color: var(--accent); text-decoration: none; }
   width: 560px; flex-shrink: 0; border-left: 1px solid var(--border);
   background: var(--bg-2); overflow-y: auto;
 }
+.panel-wrap:not(.open) { display: none; }            /* nothing selected -> give the table full width */
+.main.panel-collapsed .panel-wrap { display: none; } /* user minimized the panel via the toolbar toggle */
 
 /* header ------------------------------------------------------------------ */
 .header {

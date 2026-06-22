@@ -67,6 +67,7 @@ export default function App() {
   const [investData, setInvestData] = useState<InvestResponse | null>(null);
   const [ordersData, setOrdersData] = useState<Order[]>([]);
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
 
   // log-a-trade from a signal row: stash a prefill (new nonce each click) and jump to Portfolio
   const onLog = useCallback((p: TradePrefill) => {
@@ -81,6 +82,11 @@ export default function App() {
   useEffect(() => {
     getMeta().then(setMeta).catch(() => {});
   }, [nonce]);
+
+  // picking a (new) item re-opens the panel if it was minimized
+  useEffect(() => {
+    if (selected != null) setPanelCollapsed(false);
+  }, [selected]);
 
   // clear stale rows + error on tab switch so one tab's data never renders under another's columns
   useEffect(() => {
@@ -207,10 +213,19 @@ export default function App() {
         <label className="autobox" title={`auto-refresh every ${REFRESH_MS / 1000}s`}>
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto
         </label>
+        {(selected != null || selectedSector) && (
+          <button
+            className="refresh"
+            onClick={() => setPanelCollapsed((c) => !c)}
+            title={panelCollapsed ? "Show details panel" : "Minimize details panel (more room for the table)"}
+          >
+            {panelCollapsed ? "‹ panel" : "panel ›"}
+          </button>
+        )}
         <button className="refresh" onClick={() => setNonce((n) => n + 1)} title="Refresh now">↻</button>
       </div>
 
-      <div className="main">
+      <div className={`main ${panelCollapsed ? "panel-collapsed" : ""}`}>
         {tab === "portfolio" ? (
           <>
             <div className="table-wrap">
