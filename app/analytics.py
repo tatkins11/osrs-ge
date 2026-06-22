@@ -176,16 +176,21 @@ def add_indicators(series: pd.DataFrame, window: int = 168, rsi_period: int = 14
     # work in float so the bad-tick clamp can write a fractional median (cols arrive as int/Int64)
     s["avg_high"] = pd.to_numeric(s["avg_high"], errors="coerce").astype("float64")
     s["avg_low"] = pd.to_numeric(s["avg_low"], errors="coerce").astype("float64")
-    # De-spike single-bar bad ticks: thin items occasionally print one absurd trade (a fat-finger /
-    # manipulated price many x normal). If a bar's mid is wildly off the CENTERED local median, replace
-    # that bar's high/low with the median so the spike doesn't wreck the chart or the rolling stats. A
-    # genuine sustained move tracks the median across neighbours, so it stays untouched.
-    _m = (s["avg_high"] + s["avg_low"]) / 2.0
-    _med = _m.rolling(7, center=True, min_periods=3).median()
-    _bad = _med.notna() & (_med > 0) & ((_m / _med > 4.0) | (_m / _med < 0.25))
-    if bool(_bad.any()):
-        s.loc[_bad, "avg_high"] = _med[_bad]
-        s.loc[_bad, "avg_low"] = _med[_bad]
+    # De-spike bad ticks: thin items occasionally print one absurd trade (a fat-finger / manipulated
+    # price many x normal). Flag bars whose mid is wildly off a robust local median and replace that
+    # bar's high/low with it. The median is computed over NON-NULL bars only (low-volume items have
+    # sparse hourly gaps that would otherwise leave the rolling median undefined around a spike) with a
+    # wide window (so scattered spikes don't anchor each other) and a global-median fallback at edges.
+    # Genuine sustained moves track the median across neighbours, so they stay untouched.
+    _mid0 = (s["avg_high"] + s["avg_low"]) / 2.0
+    _valid = _mid0.dropna()
+    if len(_valid) >= 5:
+        _med = _valid.rolling(11, center=True, min_periods=3).median().fillna(_valid.median())
+        _ratio = _valid / _med
+        _bad = _valid.index[(_med > 0) & ((_ratio > 4.0) | (_ratio < 0.25))]
+        if len(_bad):
+            s.loc[_bad, "avg_high"] = _med.loc[_bad]
+            s.loc[_bad, "avg_low"] = _med.loc[_bad]
     s["mid"] = (s["avg_high"] + s["avg_low"]) / 2.0
     minp = max(2, window // 4)
     s["ma"] = s["mid"].rolling(window, min_periods=minp).mean()
