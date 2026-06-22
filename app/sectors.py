@@ -230,7 +230,12 @@ def _raw_index(gmembers: pd.DataFrame, con, timestep: str) -> pd.DataFrame:
             win AS (SELECT h.item_id, h.ts, h.mid FROM h CROSS JOIN mx
                     WHERE h.ts >= mx.t - INTERVAL '{_DAYS_FOR.get(timestep, 15)}' DAY),
             base AS (SELECT item_id, arg_min(mid, ts) AS base_mid FROM win GROUP BY item_id),
-            norm AS (SELECT w.item_id, w.ts, w.mid / b.base_mid AS norm
+            -- Clip each item's normalised move to [-80%, +400%]. Cheap, low-volume items
+            -- occasionally print one absurd tick (a fat-finger / manipulated trade at 1000x+),
+            -- which would otherwise blow up the cap-weighted index for a single bar. Genuine
+            -- moves sit well inside this band, so the clip only neutralises bad ticks.
+            norm AS (SELECT w.item_id, w.ts,
+                            LEAST(GREATEST(w.mid / b.base_mid, 0.2), 5.0) AS norm
                      FROM win w JOIN base b ON w.item_id = b.item_id WHERE b.base_mid > 0)
             SELECT m.grp, n.ts, sum(n.norm * m.weight) / sum(m.weight) AS raw
             FROM norm n JOIN sector_members m ON n.item_id = m.item_id
