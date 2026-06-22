@@ -87,12 +87,13 @@ export function PriceChart({
         borderUpColor: "#25d07d", borderDownColor: "#ff5b6e",
         wickUpColor: "#25d07d", wickDownColor: "#ff5b6e",
       });
-      // Real OHLC candles. The wiki gives avg-high / avg-low per bar (not true OHLC), so we
-      // bucket consecutive bars into ~110 candles: close = bucket's last mid, open = previous
-      // candle's close (continuous), high/low = the bucket's extreme avg-high / avg-low. Reads
-      // far cleaner than one synthetic candle per raw bar and shows each period's real range.
+      // Candles from the MID series only. Using avg-high/avg-low (the bid-ask spread) for the
+      // wicks made every candle sprout a fat spread-sized wick -- wild on 1h bars / low-volume
+      // items. Instead bucket consecutive bars (~80 candles) and take OHLC of the mid within each
+      // bucket: open = prior close (continuous), close = last mid, high/low = the mid's range.
+      // That shows real price action; the bid-ask spread lives in the line view's bands + the spread stat.
       const pts = series.filter((p) => p.mid != null);
-      const K = Math.max(1, Math.round(pts.length / 110));
+      const K = Math.max(2, Math.round(pts.length / 80));
       const data: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
       let prevClose: number | null = null;
       for (let i = 0; i < pts.length; i += K) {
@@ -101,9 +102,9 @@ export function PriceChart({
         const open = prevClose ?? (bk[0].mid as number);
         let hi = Math.max(open, close), lo = Math.min(open, close);
         for (const b of bk) {
-          if (b.avg_high != null) hi = Math.max(hi, b.avg_high);
-          if (b.avg_low != null) lo = Math.min(lo, b.avg_low);
-          if (b.mid != null) { hi = Math.max(hi, b.mid); lo = Math.min(lo, b.mid); }
+          const m = b.mid as number;
+          if (m > hi) hi = m;
+          if (m < lo) lo = m;
         }
         data.push({ time: bk[0].time as UTCTimestamp, open, high: hi, low: lo, close });
         prevClose = close;
