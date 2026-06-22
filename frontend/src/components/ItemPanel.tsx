@@ -25,6 +25,30 @@ function Tile({ k, v, cls = "", copy }: { k: string; v: ReactNode; cls?: string;
   );
 }
 
+/** Shared chart style (line/candle) + timeframe (2wk/3mo/1yr) toggles — used both in
+ *  the inline panel header and inside the expanded modal so they stay in sync. */
+function ChartControls({ chartType, setChartType, tf, setTf }: {
+  chartType: "line" | "candle";
+  setChartType: (v: "line" | "candle") => void;
+  tf: string;
+  setTf: (v: "1h" | "6h" | "24h") => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 8 }}>
+      <div className="tf-toggle">
+        {([["line", "Line"], ["candle", "Candles"]] as const).map(([v, l]) => (
+          <button key={v} className={`tf ${chartType === v ? "active" : ""}`} onClick={() => setChartType(v)}>{l}</button>
+        ))}
+      </div>
+      <div className="tf-toggle">
+        {([["1h", "2wk"], ["6h", "3mo"], ["24h", "1yr"]] as const).map(([v, l]) => (
+          <button key={v} className={`tf ${tf === v ? "active" : ""}`} onClick={() => setTf(v)}>{l}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ItemPanel({
   itemId,
   filters,
@@ -225,20 +249,7 @@ export function ItemPanel({
         <div className="tf-row">
           <h4>Price history · MA · Bollinger · volume</h4>
           <div style={{ display: "flex", gap: 8 }}>
-            <div className="tf-toggle">
-              {([["line", "Line"], ["candle", "Candles"]] as const).map(([v, l]) => (
-                <button key={v} className={`tf ${chartType === v ? "active" : ""}`} onClick={() => setChartType(v)}>
-                  {l}
-                </button>
-              ))}
-            </div>
-            <div className="tf-toggle">
-              {([["1h", "2wk"], ["6h", "3mo"], ["24h", "1yr"]] as const).map(([v, l]) => (
-                <button key={v} className={`tf ${tf === v ? "active" : ""}`} onClick={() => setTf(v)}>
-                  {l}
-                </button>
-              ))}
-            </div>
+            <ChartControls chartType={chartType} setChartType={setChartType} tf={tf} setTf={setTf} />
             <button className="expand" title="Expand chart" onClick={() => setExpanded(true)}>⤢</button>
           </div>
         </div>
@@ -290,6 +301,9 @@ export function ItemPanel({
           title={`${data.item.name} · price (${tf === "1h" ? "2wk" : tf === "6h" ? "3mo" : "1yr"})`}
           onClose={() => setExpanded(false)}
         >
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <ChartControls chartType={chartType} setChartType={setChartType} tf={tf} setTf={setTf} />
+          </div>
           <PriceChart series={tf === "1h" ? data.series : tfSeries ?? []} type={chartType} className="modal-chart" levels={levels} markers={markers} events={events} fairValue={sr.established ?? undefined} />
         </ChartModal>
       )}
