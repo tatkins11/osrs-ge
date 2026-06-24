@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCrashes, getFlips, getInvest, getItems, getMeta, getOrders, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Order, type Row, type SectorsResponse, type TradePrefill } from "./api";
 import { gpShort } from "./format";
 import { Planner } from "./components/Planner";
+import { GrowthTracker } from "./components/GrowthTracker";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
 import { InvestTable } from "./components/InvestTable";
@@ -14,7 +15,7 @@ import { SectorGrid } from "./components/SectorGrid";
 import { SectorPanel } from "./components/SectorPanel";
 import { VolumeTable } from "./components/VolumeTable";
 
-type Tab = "flips" | "allocate" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "orders" | "portfolio";
+type Tab = "flips" | "allocate" | "growth" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "orders" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -33,6 +34,7 @@ const DEFAULT_FILTERS: Filters = {
 const TABS: { id: Tab; label: string }[] = [
   { id: "flips", label: "Flips" },
   { id: "allocate", label: "8-Slot Plan" },
+  { id: "growth", label: "Growth" },
   { id: "invest", label: "Invest" },
   { id: "crashes", label: "Crashes" },
   { id: "movers", label: "Movers" },
@@ -98,7 +100,7 @@ export default function App() {
 
   const deb = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (tab === "portfolio" || tab === "allocate") return; // these components self-fetch
+    if (tab === "portfolio" || tab === "allocate" || tab === "growth") return; // these components self-fetch
     window.clearTimeout(deb.current);
     let cancelled = false; // ignore a response that arrives after the tab/filters changed (race guard)
     deb.current = window.setTimeout(() => {
@@ -208,7 +210,7 @@ export default function App() {
         </div>
         <div className="spacer" />
         <span className="note">
-          {loading ? "loading…" : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : tab === "orders" ? `${ordersData.length} orders` : tab === "allocate" ? "8-slot plan" : tab === "portfolio" ? "" : `${shown.length} rows`}
+          {loading ? "loading…" : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : tab === "orders" ? `${ordersData.length} orders` : tab === "allocate" ? "8-slot plan" : tab === "growth" ? "bankroll growth" : tab === "portfolio" ? "" : `${shown.length} rows`}
           {updatedAt ? ` · updated ${ago(updatedAt)}` : ""}
           {err ? ` · error: ${err}` : ""}
         </span>
@@ -245,6 +247,13 @@ export default function App() {
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
               <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
             </div>
+          </>
+        ) : tab === "growth" ? (
+          <>
+            <div className="table-wrap">
+              <GrowthTracker filters={filters} refreshNonce={nonce} />
+            </div>
+            <div className="panel-wrap" />
           </>
         ) : tab === "sectors" ? (
           <>

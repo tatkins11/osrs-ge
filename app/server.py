@@ -44,6 +44,7 @@ from .signals import (
     volume_table,
 )
 from .planner import build_plan
+from .growth import compute_growth
 from .tax import EXEMPT_ITEM_NAMES
 
 log = logging.getLogger("server")
@@ -424,6 +425,13 @@ def plan(th: Thresholds = Depends(get_thresholds)) -> dict:
     (with a competitive price + recovery read) plus competitive BUYS for the free slots, all with
     realistic fill timelines. Reads live positions + open orders. Recommender only."""
     return build_plan(th)
+
+
+@app.get("/api/growth")
+def growth(th: Thresholds = Depends(get_thresholds)) -> dict:
+    """Bankroll growth tracker: net worth (cash + holdings), realized growth rate from the trade
+    log, the plan's modeled forward rate, an idle-capital flag, and the projected days to 1B/2B/5B."""
+    return compute_growth(th)
 
 
 # --- serve the built frontend (if present) ----------------------------------

@@ -445,6 +445,35 @@ export interface PlanResponse {
 }
 export const getPlan = (f: Filters) => get<PlanResponse>(`/api/plan?${qs(f)}`);
 
+// --- bankroll growth tracker -----------------------------------------------
+export interface GrowthTarget {
+  label: string;
+  value: number;
+  days_realized: number | null; // days to reach it at the realized rate (null = never at current rate)
+  days_modeled: number | null;  // days to reach it at the plan's modeled rate
+}
+export interface GrowthResponse {
+  bankroll: number;
+  holdings_value: number;
+  net_worth: number;
+  realized_total: number;
+  unrealized_total: number;
+  days_active: number;
+  lifetime_gp_day: number;
+  recent_gp_day: number;
+  recent_days: number;
+  daily_pct: number;        // realized growth rate (fraction/day)
+  modeled_gp_day: number;
+  modeled_pct: number;      // plan's modeled rate (fraction/day)
+  capital_in: number;
+  idle_frac: number;        // undeployed capital as a fraction of bankroll
+  win_rate: number | null;
+  n_closed: number | null;
+  history: { ts: string; value: number }[];  // reconstructed net-worth curve
+  targets: GrowthTarget[];
+}
+export const getGrowth = (f: Filters) => get<GrowthResponse>(`/api/growth?${qs(f)}`);
+
 export const getItemNames = () => get<ItemName[]>("/api/itemnames");
 export const getPortfolio = () => get<Portfolio>("/api/portfolio");
 export const addTrade = (t: { item_id: number; side: string; qty: number; price: number; note?: string }) =>
