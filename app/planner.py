@@ -205,9 +205,12 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             "reason": reason, "live": iid in live_sell_ids, "sector": p.get("sector"),
         })
 
-    # ---- 2) split holdings on/off slot + reconcile live orders ------------------------------
-    cap0 = max(0.0, float(th.bankroll) - committed)
-    per_slot_cap = float(th.max_alloc_frac or 0) * float(th.bankroll or cap0)
+    # ---- 2) capital picture + split holdings on/off slot + reconcile live orders ------------
+    free_gp = max(0.0, float(th.bankroll))                       # th.bankroll is now your FREE deployable gp
+    holdings_value = float(port.get("invested") or 0.0) + float(port.get("unrealized_total") or 0.0)
+    net_worth = free_gp + committed + holdings_value             # cash + open buys + inventory at live value
+    cap0 = free_gp                                               # capital available for NEW buys right now
+    per_slot_cap = (float(th.max_alloc_frac or 0) * net_worth) if net_worth > 0 else 0.0  # diversify vs TOTAL worth
     active_sells = [s for s in sells if s["action"] in ("SELL", "CUT")]  # need a slot now
     holding = [s for s in sells if s["action"] == "HOLD"]                # held OFF-MARKET, no slot
     active_sell_ids = {s["item_id"] for s in active_sells}
@@ -277,6 +280,8 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             units = int(min(size_for_timeline(vol_day), limit, cap_units, remaining // buy_at, offer_cap(r.name)))
             if units < 1:
                 continue
+            if mgn * units < float(th.min_rt_profit or 0):  # round-trip profit bar — skip thin flips
+                continue
             new_buys.append(_buy_row(r, iid, units, buy_at, sell_at, ex, vol_day, limit, live=False))
             remaining -= units * buy_at
 
@@ -296,9 +301,10 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
 
     expected_realized = sum(s["expected_net"] for s in active_sells if s["expected_net"])
     plan_gp_day = sum(b.get("gp_day") or 0 for b in buys)
-    bankroll = float(th.bankroll)
     return {
-        "bankroll": round(bankroll), "capital_in": round(cap0), "committed_capital": round(committed),
+        "free_gp": round(free_gp), "committed_capital": round(committed),
+        "holdings_value": round(holdings_value), "net_worth": round(net_worth),
+        "capital_in": round(cap0),
         "free_slots": int(free_slots), "slots_used": int(min(8, len(slots))),
         "n_positions": len(positions), "n_active_sells": len(active_sells),
         "n_holding": len(holding), "n_buys": len(buys),
@@ -307,6 +313,6 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             "expected_realized": round(expected_realized),
             "buy_capital": round(sum(b.get("capital") or 0 for b in buys)),
             "plan_gp_day": round(plan_gp_day),
-            "growth_day": round(plan_gp_day / bankroll, 4) if bankroll > 0 else None,
+            "growth_day": round(plan_gp_day / net_worth, 4) if net_worth > 0 else None,
         },
     }

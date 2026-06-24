@@ -56,12 +56,16 @@ export function Controls({ filters, setFilters }: { filters: Filters; setFilters
   return (
     <>
       <div className="ctrl">
-        <label>Bankroll (gp)</label>
+        <label title="Your FREE gp — cash available to deploy into new buys right now. The 8-Slot Plan + Growth add your open orders + holdings on top to get net worth.">Free gp</label>
         <NumInput value={filters.bankroll} onCommit={set("bankroll")} />
       </div>
       <div className="ctrl">
         <label>Min profit (gp)</label>
         <NumInput value={filters.minProfit} onCommit={set("minProfit")} />
+      </div>
+      <div className="ctrl">
+        <label title="8-Slot Plan only: skip any buy whose profit per round-trip is below this.">Min profit/RT</label>
+        <NumInput value={filters.minRtProfit} onCommit={set("minRtProfit")} />
       </div>
       <PriceRange
         minPrice={filters.minPrice}

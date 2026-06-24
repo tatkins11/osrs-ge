@@ -53,8 +53,9 @@ class Thresholds:
     z_strong_buy: float = -2.5
     z_sell: float = 1.5
     z_strong_sell: float = 2.5
-    bankroll: int = DEFAULT_BANKROLL
+    bankroll: int = DEFAULT_BANKROLL          # 8-Slot Plan treats this as FREE gp (deployable cash now)
     max_alloc_frac: float = 0.15              # cap any single position at 15% of bankroll
+    min_rt_profit: int = 500_000             # 8-Slot Plan: skip buys whose per-round-trip profit is below this
 
 
 def _jsonify(v):

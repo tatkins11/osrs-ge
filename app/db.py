@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import duckdb
@@ -583,6 +584,52 @@ def delete_order(order_id: str) -> None:
     con = connect_trades()
     try:
         con.execute("DELETE FROM orders WHERE order_id = ?", [str(order_id)])
+    finally:
+        con.close()
+
+
+def add_order(item_id: int, side: str, price: int, total_qty: int, filled_qty: int = 0,
+              slot: int | None = None, login: str = "manual") -> str:
+    """Create an order manually (for phone play without the RuneLite plugin). Returns the order_id."""
+    oid = "m-" + uuid.uuid4().hex[:14]
+    now = utcnow()
+    state = "BUYING" if side == "buy" else "SELLING"
+    con = connect_trades()
+    try:
+        con.execute(_TRADES_SCHEMA)
+        con.execute(
+            "INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty, filled_qty, spent, state, opened_ts, updated_ts) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [oid, login, (int(slot) if slot is not None else None), int(item_id), side, int(price),
+             int(total_qty), int(filled_qty), int(filled_qty) * int(price), state, now, now],
+        )
+        return oid
+    finally:
+        con.close()
+
+
+def update_order_fields(order_id: str, price=None, total_qty=None, filled_qty=None,
+                        slot=None, state=None) -> None:
+    """Manually edit an order (e.g. bump filled qty as it fills, or reprice) from the UI."""
+    sets, params = [], []
+    if price is not None:
+        sets.append("price = ?"); params.append(int(price))
+    if total_qty is not None:
+        sets.append("total_qty = ?"); params.append(int(total_qty))
+    if filled_qty is not None:
+        sets.append("filled_qty = ?"); params.append(int(filled_qty))
+    if slot is not None:
+        sets.append("slot = ?"); params.append(int(slot))
+    if state is not None:
+        sets.append("state = ?"); params.append(str(state))
+    if not sets:
+        return
+    sets.append("updated_ts = ?"); params.append(utcnow())
+    params.append(str(order_id))
+    con = connect_trades()
+    try:
+        con.execute(f"UPDATE orders SET {', '.join(sets)} WHERE order_id = ?", params)
+        con.execute("UPDATE orders SET spent = filled_qty * price WHERE order_id = ?", [str(order_id)])
     finally:
         con.close()
 

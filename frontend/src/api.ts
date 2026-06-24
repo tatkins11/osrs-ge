@@ -137,6 +137,7 @@ export interface Filters {
   minDiscount: number;
   zBuy: number;
   zSell: number;
+  minRtProfit: number;   // 8-Slot Plan: min profit per round-trip for a buy to be recommended
 }
 
 function qs(f: Filters): string {
@@ -152,6 +153,7 @@ function qs(f: Filters): string {
     value_min_discount: String(f.minDiscount),
     z_buy: String(f.zBuy),
     z_sell: String(f.zSell),
+    min_rt_profit: String(f.minRtProfit),
   }).toString();
 }
 
@@ -353,6 +355,16 @@ export interface Order {
   open: boolean;
 }
 export const getOrders = () => get<Order[]>("/api/orders");
+export const addOrder = (o: { item_id: number; side: "buy" | "sell"; price: number; total_qty: number; filled_qty?: number; slot?: number | null }) =>
+  fetch("/api/orders/manual", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(o) }).then((r) => {
+    if (!r.ok) throw new Error(`add order -> ${r.status}`);
+    return r.json();
+  });
+export const editOrder = (id: string, patch: { price?: number; total_qty?: number; filled_qty?: number; slot?: number | null; state?: string }) =>
+  fetch(`/api/orders/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }).then((r) => {
+    if (!r.ok) throw new Error(`edit order -> ${r.status}`);
+    return r.json();
+  });
 export const resolveOrder = (id: string, action: "cancel" | "complete") =>
   fetch(`/api/orders/${encodeURIComponent(id)}/resolve`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
@@ -429,9 +441,11 @@ export interface ReconcileItem {
   note: string;
 }
 export interface PlanResponse {
-  bankroll: number;
-  capital_in: number;
-  committed_capital: number;
+  free_gp: number;            // deployable cash right now
+  committed_capital: number;  // gp locked in open buy offers
+  holdings_value: number;     // inventory at live value
+  net_worth: number;          // free_gp + committed + holdings
+  capital_in: number;         // = free_gp (capital for new buys)
   free_slots: number;
   slots_used: number;
   n_positions: number;
@@ -453,7 +467,8 @@ export interface GrowthTarget {
   days_modeled: number | null;  // days to reach it at the plan's modeled rate
 }
 export interface GrowthResponse {
-  bankroll: number;
+  bankroll: number;        // free/cash component
+  committed: number;       // gp in open buy offers
   holdings_value: number;
   net_worth: number;
   realized_total: number;

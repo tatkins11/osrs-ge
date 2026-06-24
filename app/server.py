@@ -27,7 +27,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import delete_order, delete_trade, ensure_trades_db, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, stats, update_trade
+from .db import add_order, delete_order, delete_trade, ensure_trades_db, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, stats, update_order_fields, update_trade
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -84,6 +84,7 @@ def get_thresholds(
     z_buy: float = Query(-1.5),
     z_sell: float = Query(1.5),
     max_alloc_frac: float = Query(0.15, gt=0, le=1),
+    min_rt_profit: int = Query(500_000, ge=0),
 ) -> Thresholds:
     return Thresholds(
         min_volume=min_volume,
@@ -103,6 +104,7 @@ def get_thresholds(
         z_sell=z_sell,
         bankroll=bankroll,
         max_alloc_frac=max_alloc_frac,
+        min_rt_profit=min_rt_profit,
     )
 
 
@@ -387,6 +389,42 @@ def resolve_order(order_id: str, body: ResolveIn) -> dict:
           "total_qty": total, "filled_qty": filled, "spent": spent, "state": state,
           "slot": int(r.slot) if pd.notna(r.slot) else -1}
     return {"ok": True, **ingest_offers([ev])}
+
+
+class AddOrderIn(BaseModel):
+    item_id: int
+    side: str            # 'buy' | 'sell'
+    price: int
+    total_qty: int
+    filled_qty: int = 0
+    slot: int | None = None
+
+
+@app.post("/api/orders/manual")
+def add_manual_order(o: AddOrderIn) -> dict:
+    """Create an order by hand (phone play, no RuneLite plugin). Also used by the 8-Slot Plan's
+    quick-add. Lands in the same orders table the plugin feeds, so the plan/reconcile see it."""
+    if o.side not in ("buy", "sell"):
+        raise HTTPException(status_code=400, detail="side must be 'buy' or 'sell'")
+    if o.price <= 0 or o.total_qty <= 0:
+        raise HTTPException(status_code=400, detail="price and total_qty must be positive")
+    oid = add_order(o.item_id, o.side, o.price, o.total_qty, max(0, o.filled_qty), o.slot)
+    return {"ok": True, "order_id": oid}
+
+
+class UpdateOrderIn(BaseModel):
+    price: int | None = None
+    total_qty: int | None = None
+    filled_qty: int | None = None
+    slot: int | None = None
+    state: str | None = None
+
+
+@app.patch("/api/orders/{order_id}")
+def edit_order(order_id: str, o: UpdateOrderIn) -> dict:
+    """Manually update an order (bump filled qty as it fills, reprice, etc.)."""
+    update_order_fields(order_id, price=o.price, total_qty=o.total_qty, filled_qty=o.filled_qty, slot=o.slot, state=o.state)
+    return {"ok": True}
 
 
 @app.delete("/api/orders/{order_id}")

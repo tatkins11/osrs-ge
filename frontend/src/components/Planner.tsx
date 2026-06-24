@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { getPlan, type Filters, type PlanResponse, type PlanSlot } from "../api";
-import { gp, gpShort, pct } from "../format";
+import { gp, gpShort } from "../format";
 
 function Tile({ k, v, cls = "", title }: { k: string; v: ReactNode; cls?: string; title?: string }) {
   return (
@@ -28,11 +28,13 @@ export function Planner({
   refreshNonce,
   selectedId,
   onSelect,
+  onAddOrder,
 }: {
   filters: Filters;
   refreshNonce: number;
   selectedId: number | null;
   onSelect: (id: number) => void;
+  onAddOrder: (o: { item_id: number; side: "buy" | "sell"; price: number; qty: number }) => void | Promise<void>;
 }) {
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -59,6 +61,21 @@ export function Planner({
   const buys = plan.slots.filter((s) => s.action === "BUY");
   const SLOTS = 8;
   const liveDot = (s: { live?: boolean }) => (s.live ? <span className="pos" title="Already live on the GE">● </span> : null);
+  const addBtn = (o: { item_id: number; side: "buy" | "sell"; price?: number | null; qty?: number | null; live?: boolean }) =>
+    o.live ? (
+      <span className="dim" title="already on the GE">live</span>
+    ) : (
+      <button
+        className="ord-act"
+        title="Add this as an open order to track it (and adjust your free gp)"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (o.price && o.qty) onAddOrder({ item_id: o.item_id, side: o.side, price: o.price, qty: o.qty });
+        }}
+      >
+        ＋ order
+      </button>
+    );
 
   // at-a-glance 8-slot grid (active config only — held-off-market items don't take a slot)
   const tiles: ReactNode[] = [];
@@ -96,10 +113,10 @@ export function Planner({
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
         <Tile k="Slots in use" v={`${plan.slots_used} / 8`} title={`${plan.n_active_sells} sells/cuts + ${plan.n_buys} buys · ${plan.free_slots} free · ${plan.n_holding} held off-market`} />
-        <Tile k="Capital to deploy" v={gpShort(plan.capital_in)} cls="pos" title={`Bankroll ${gp(plan.bankroll)} − ${gp(plan.committed_capital)} committed in open buys`} />
+        <Tile k="Free gp" v={gpShort(plan.free_gp)} cls="pos" title="Deployable cash right now (your Free gp filter). New buys draw from this — auto-decrements when you ＋add a buy." />
+        <Tile k="Net worth" v={gpShort(plan.net_worth)} title={`Free ${gp(plan.free_gp)} + open buys ${gp(plan.committed_capital)} + holdings ${gp(plan.holdings_value)}`} />
         <Tile k="Realize from sells" v={gp(t.expected_realized)} cls={sign(t.expected_realized)} title="Net P&L you'd lock in by filling the SELL + CUT offers in this plan" />
         <Tile k="Buys gp/day" v={gpShort(t.plan_gp_day)} cls="pos" title="Ongoing modeled gp/day from the BUY slots (competitive margins, realistic fill rate)" />
-        <Tile k="≈ growth/day" v={t.growth_day != null ? pct(t.growth_day, 1) : "–"} cls="pos" title="Buys gp/day as a % of bankroll — the compounding rate to grow. Optimistic ceiling." />
       </div>
 
       <div className="slot-head" style={{ marginTop: 14 }}>
@@ -115,6 +132,7 @@ export function Planner({
             <th>Avg cost</th><th>Now</th><th>Exp. P&L</th>
             <th title="Recovery score 0–100 (underwater positions): higher = more likely to revert up">Recover</th>
             <th title="Rough time to sell this quantity at the item's real volume">~Sell</th><th className="left">Why</th>
+            <th className="left">Add</th>
           </tr>
         </thead>
         <tbody>
@@ -130,9 +148,10 @@ export function Planner({
               <td className={recCls(s.recovery_score)}>{s.recovery_score ?? "–"}</td>
               <td className="dim">{hrs(s.sell_h)}</td>
               <td className="left dim" title={s.reason}>{s.reason}</td>
+              <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: s.item_id, side: "sell", price: s.price, qty: s.qty, live: s.live })}</td>
             </tr>
           ))}
-          {activeSells.length === 0 && <tr><td colSpan={10} className="left muted">Nothing to sell or cut right now — your holdings are all worth holding (see below).</td></tr>}
+          {activeSells.length === 0 && <tr><td colSpan={11} className="left muted">Nothing to sell or cut right now — your holdings are all worth holding (see below).</td></tr>}
         </tbody>
       </table>
 
@@ -143,6 +162,7 @@ export function Planner({
             <th className="left">Action</th><th className="left">Item</th><th>Units</th><th>Buy at</th><th>Sell target</th>
             <th>Capital</th><th>Margin/ea</th><th>gp/day</th>
             <th title="Realistic time to buy AND sell this quantity at the item's real volume">~Round-trip</th><th className="left">Why</th>
+            <th className="left">Add</th>
           </tr>
         </thead>
         <tbody>
@@ -158,9 +178,10 @@ export function Planner({
               <td className="pos">{gpShort(b.gp_day)}</td>
               <td className="dim">{hrs(b.roundtrip_h)}</td>
               <td className="left dim" title={b.reason}>{b.reason}</td>
+              <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: b.item_id, side: "buy", price: b.price, qty: b.units, live: b.live })}</td>
             </tr>
           ))}
-          {buys.length === 0 && <tr><td colSpan={10} className="left muted">{plan.free_slots === 0 ? "All 8 slots are taken." : "No buys clear the bar (positive competitive margin + your filters)."}</td></tr>}
+          {buys.length === 0 && <tr><td colSpan={11} className="left muted">{plan.free_slots === 0 ? "All 8 slots are taken." : "No buys clear the bar (your Min profit/round-trip + filters). Lower it on the toolbar to surface smaller flips."}</td></tr>}
         </tbody>
       </table>
 

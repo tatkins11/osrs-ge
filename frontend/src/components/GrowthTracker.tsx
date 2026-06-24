@@ -115,7 +115,7 @@ export function GrowthTracker({ filters, refreshNonce }: { filters: Filters; ref
       </div>
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
-        <Tile k="Net worth" v={gpShort(g.net_worth)} title={`Cash ${gp(g.bankroll)} + holdings ${gp(g.holdings_value)}`} sub={`${gpShort(g.bankroll)} cash + ${gpShort(g.holdings_value)} held`} />
+        <Tile k="Net worth" v={gpShort(g.net_worth)} title={`Free ${gp(g.bankroll)} + open buys ${gp(g.committed)} + holdings ${gp(g.holdings_value)}`} sub={`${gpShort(g.bankroll)} free · ${gpShort(g.committed)} orders · ${gpShort(g.holdings_value)} held`} />
         <Tile k="Realized P&L" v={gp(g.realized_total)} cls={g.realized_total >= 0 ? "pos" : "neg"} title={`Over ${g.days_active} days of logged trades`} sub={g.win_rate != null ? `${pct(g.win_rate, 0)} win · ${g.n_closed} trips` : undefined} />
         <Tile k="Growth / day" v={pct(g.daily_pct, 1)} cls={g.daily_pct >= 0 ? "pos" : "neg"} title={`Realized ${gp(g.recent_gp_day)}/day over the last ${g.recent_days} days, vs net worth`} sub={`${gpShort(g.recent_gp_day)}/day realized`} />
         <Tile k={`${headline?.label ?? "1B"} ETA`} v={fmtDate(headline?.days_realized ?? null)} cls="pos" title="At your realized growth rate, compounding" sub={fmtDays(headline?.days_realized ?? null)} />

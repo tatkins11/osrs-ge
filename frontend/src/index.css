@@ -188,6 +188,10 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .slot-bar > span { display: block; height: 100%; background: rgba(37,208,125,.55); }
 .slot-tile.alloc-plan { border-left-color: var(--accent); border-style: dashed; }
 .slot-tile.alloc-plan .slot-no { color: var(--accent); }
+.ord-addbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0 10px; }
+.ord-addbar input, .ord-addbar select { background: var(--elev); border: 1px solid var(--border); color: var(--fg); border-radius: 5px; padding: 4px 6px; font-size: 12px; font-family: var(--mono); }
+.ord-addbar input:focus, .ord-addbar select:focus { outline: none; border-color: var(--accent); }
+.ord-edit input { background: var(--elev); border: 1px solid var(--accent); color: var(--fg); border-radius: 4px; padding: 2px 4px; font-family: var(--mono); font-size: 11px; }
 
 /* profile bars ------------------------------------------------------------ */
 .profile { display: flex; flex-direction: column; gap: 3px; }

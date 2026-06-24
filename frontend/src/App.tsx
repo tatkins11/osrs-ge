@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getCrashes, getFlips, getInvest, getItems, getMeta, getOrders, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Order, type Row, type SectorsResponse, type TradePrefill } from "./api";
+import { addOrder, getCrashes, getFlips, getInvest, getItems, getMeta, getOrders, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Order, type Row, type SectorsResponse, type TradePrefill } from "./api";
 import { gpShort } from "./format";
 import { Planner } from "./components/Planner";
 import { GrowthTracker } from "./components/GrowthTracker";
@@ -29,6 +29,7 @@ const DEFAULT_FILTERS: Filters = {
   minDiscount: 0.08,
   zBuy: -1.5,
   zSell: 1.5,
+  minRtProfit: 500_000,
 };
 
 const TABS: { id: Tab; label: string }[] = [
@@ -78,6 +79,23 @@ export default function App() {
     setPrefill({ ...p, nonce: (prefillN.current += 1) });
     setTab("portfolio");
   }, []);
+
+  // free gp tracking: adjust the (relabelled) bankroll filter as orders are placed/resolved
+  const adjustFreeGp = useCallback((delta: number) => {
+    setFilters((f) => ({ ...f, bankroll: Math.max(0, Math.round(f.bankroll + delta)) }));
+  }, []);
+
+  // quick-add an order from the 8-Slot Plan (or Orders form): place it, then auto-adjust free gp
+  const onAddOrder = useCallback(
+    async (o: { item_id: number; side: "buy" | "sell"; price: number; qty: number }) => {
+      try {
+        await addOrder({ item_id: o.item_id, side: o.side, price: o.price, total_qty: o.qty });
+        if (o.side === "buy") adjustFreeGp(-o.price * o.qty); // gp moves into the buy offer
+        setNonce((n) => n + 1);
+      } catch { /* surfaced by the next refresh */ }
+    },
+    [adjustFreeGp]
+  );
 
   // persist filters + active tab across reloads
   useEffect(() => { try { localStorage.setItem("ge.tab", tab); } catch { /* ignore */ } }, [tab]);
@@ -242,7 +260,7 @@ export default function App() {
         ) : tab === "allocate" ? (
           <>
             <div className="table-wrap">
-              <Planner filters={filters} refreshNonce={nonce} selectedId={selected} onSelect={setSelected} />
+              <Planner filters={filters} refreshNonce={nonce} selectedId={selected} onSelect={setSelected} onAddOrder={onAddOrder} />
             </div>
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
               <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
@@ -305,7 +323,7 @@ export default function App() {
         ) : tab === "orders" ? (
           <>
             <div className="table-wrap">
-              <OrdersTable rows={ordersData} selectedId={selected} onSelect={setSelected} reload={() => getOrders().then(setOrdersData).catch(() => {})} />
+              <OrdersTable rows={ordersData} selectedId={selected} onSelect={setSelected} adjustFreeGp={adjustFreeGp} reload={() => getOrders().then(setOrdersData).catch(() => {})} />
             </div>
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
               <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />

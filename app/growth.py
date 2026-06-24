@@ -40,12 +40,14 @@ def compute_growth(th: Thresholds | None = None, con=None) -> dict:
         if own:
             con.close()
 
-    bankroll = float(th.bankroll)
+    free_gp = float(th.bankroll)                                  # th.bankroll is now your FREE deployable gp
+    committed = float(plan.get("committed_capital") or 0.0)       # gp locked in open buy offers
     invested = float(port.get("invested") or 0.0)
     unreal = float(port.get("unrealized_total") or 0.0)
     realized_total = float(port.get("realized_total") or 0.0)
     holdings_value = invested + unreal
-    net_worth = bankroll + holdings_value
+    net_worth = free_gp + committed + holdings_value              # cash + open buys + inventory at live value
+    bankroll = free_gp                                            # (kept name for the snapshot's cash column)
     stats = port.get("stats") or {}
 
     curve = port.get("equity_curve") or []
@@ -68,9 +70,9 @@ def compute_growth(th: Thresholds | None = None, con=None) -> dict:
 
     daily_pct = (recent_gp_day / net_worth) if net_worth > 0 else 0.0
     modeled_gp_day = float(plan["totals"].get("plan_gp_day") or 0.0)
-    modeled_pct = (modeled_gp_day / bankroll) if bankroll > 0 else 0.0
-    capital_in = float(plan.get("capital_in") or 0.0)
-    idle_frac = (capital_in / bankroll) if bankroll > 0 else 0.0
+    modeled_pct = (modeled_gp_day / net_worth) if net_worth > 0 else 0.0
+    capital_in = float(plan.get("capital_in") or 0.0)            # = free gp deployable now
+    idle_frac = (capital_in / net_worth) if net_worth > 0 else 0.0  # free cash as a share of total worth
 
     # Snapshot today's net worth (once/day) and, once >=2 daily snapshots exist, chart the REAL
     # net-worth curve (which captures unrealized swings) instead of the realized-only reconstruction.
@@ -102,7 +104,8 @@ def compute_growth(th: Thresholds | None = None, con=None) -> dict:
     } for val, label in TARGETS]
 
     return {
-        "bankroll": round(bankroll), "holdings_value": round(holdings_value), "net_worth": round(net_worth),
+        "bankroll": round(bankroll), "committed": round(committed),
+        "holdings_value": round(holdings_value), "net_worth": round(net_worth),
         "realized_total": round(realized_total), "unrealized_total": round(unreal),
         "days_active": round(days_active, 1),
         "lifetime_gp_day": round(lifetime_gp_day), "recent_gp_day": round(recent_gp_day),
