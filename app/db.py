@@ -681,6 +681,10 @@ def ingest_offers(events: list[dict]) -> dict:
             n += 1
             made += _log_fill_delta(con, oid, ts, f"GE auto · slot {e.get('slot')}")  # log newly-filled qty (partial or full)
             _reconcile_order_cash(con, oid)   # apply this offer's cash delta to free_gp (reserve / proceeds / return)
+        # self-heal: log any order whose fills were never recorded (an event missed during a restart,
+        # or a partial that filled before incremental logging existed) so the portfolio catches up
+        for (so,) in con.execute("SELECT order_id FROM orders WHERE COALESCE(filled_qty,0) > COALESCE(logged_qty,0)").fetchall():
+            made += _log_fill_delta(con, so, note="GE auto · catch-up")
         return {"orders": n, "trades_created": made}
     finally:
         con.close()
