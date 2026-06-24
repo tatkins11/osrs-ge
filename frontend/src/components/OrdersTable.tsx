@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { addOrder, deleteOrder, editOrder, getItemNames, resolveOrder, type ItemName, type Order } from "../api";
+import { addOrder, deleteOrder, editOrder, getItemNames, purgeOrders, resolveOrder, type ItemName, type Order } from "../api";
 import { gp, gpShort } from "../format";
 import { SortTh, useSortable } from "./sortable";
 
@@ -68,23 +68,30 @@ export function OrdersTable({
   // a sell credits proceeds); reload re-syncs the value into the toolbar
   const resolveAdj = (o: Order, action: "cancel" | "complete") => run(() => resolveOrder(o.order_id, action));
 
-  // GE 8-slot grid
+  // GE 8-slot grid: place orders that carry a real slot #, then fill the gaps with unslotted
+  // (manual) open orders so every open order shows up regardless of slot number.
   const SLOTS = 8;
   const bySlot = new Map<number, Order>();
   const slotCount = new Map<number, number>();
-  let unslotted = 0;
-  for (const o of rows) {
-    if (!o.open) continue;
-    if (o.slot == null || o.slot < 0 || o.slot >= SLOTS) { unslotted++; continue; }
-    slotCount.set(o.slot, (slotCount.get(o.slot) ?? 0) + 1);
-    const prev = bySlot.get(o.slot);
-    if (!prev || (o.updated_ts ?? "") > (prev.updated_ts ?? "")) bySlot.set(o.slot, o);
+  const openOrders = rows.filter((o) => o.open);
+  const unslottedOrders: Order[] = [];
+  for (const o of openOrders) {
+    if (o.slot != null && o.slot >= 0 && o.slot < SLOTS) {
+      slotCount.set(o.slot, (slotCount.get(o.slot) ?? 0) + 1);
+      const prev = bySlot.get(o.slot);
+      if (!prev || (o.updated_ts ?? "") > (prev.updated_ts ?? "")) bySlot.set(o.slot, o);
+    } else {
+      unslottedOrders.push(o);
+    }
   }
-  const used = open; // count all open orders as used slots (manual orders may not carry a slot number)
+  for (let i = 0, u = 0; i < SLOTS && u < unslottedOrders.length; i++) {
+    if (!bySlot.has(i)) bySlot.set(i, unslottedOrders[u++]);
+  }
+  const used = openOrders.length;
 
   return (
     <div className="tbl-scroll">
-      <div className="slot-head">GE slots · <b>{used}/{SLOTS}</b> in use · {Math.max(0, SLOTS - used)} free{unslotted > 0 ? ` · ${unslotted} without a slot #` : ""}</div>
+      <div className="slot-head">GE slots · <b>{used}/{SLOTS}</b> in use · {Math.max(0, SLOTS - used)} free</div>
       <div className="slot-grid">
         {Array.from({ length: SLOTS }, (_, i) => {
           const o = bySlot.get(i);
@@ -121,7 +128,20 @@ export function OrdersTable({
       <div className="exp-banner">
         Add/update orders by hand here when you're on mobile (no RuneLite plugin) — adding a buy, cancelling, or
         completing a sell adjusts your <b>free gp</b> automatically. The plugin (when running) streams orders here too.
-        {open} open · {rows.length} tracked.
+        {" "}{open} open · {rows.length} tracked.
+        {rows.length - open > 0 && (
+          <button
+            className="ord-act"
+            style={{ marginLeft: 8 }}
+            title="Remove bought/sold/cancelled orders from this list. Your trades + P&L are unaffected."
+            onClick={() => {
+              const fin = rows.length - open;
+              if (window.confirm(`Clear ${fin} finished (bought/sold/cancelled) orders from the history? Your trades + P&L are unaffected.`)) run(() => purgeOrders());
+            }}
+          >
+            🧹 clear {rows.length - open} finished
+          </button>
+        )}
       </div>
 
       <table className="tbl">

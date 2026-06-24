@@ -27,7 +27,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import add_order, delete_order, delete_trade, ensure_trades_db, get_free_gp, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, set_free_gp, stats, update_order_fields, update_trade
+from .db import add_order, delete_order, delete_trade, ensure_trades_db, get_free_gp, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, purge_terminal_orders, set_free_gp, stats, update_order_fields, update_trade
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -425,6 +425,12 @@ def edit_order(order_id: str, o: UpdateOrderIn) -> dict:
     """Manually update an order (bump filled qty as it fills, reprice, etc.)."""
     update_order_fields(order_id, price=o.price, total_qty=o.total_qty, filled_qty=o.filled_qty, slot=o.slot, state=o.state)
     return {"ok": True}
+
+
+@app.post("/api/orders/purge")
+def purge_orders() -> dict:
+    """Clear finished (bought/sold/cancelled) orders from the tracker; trades + P&L untouched."""
+    return {"ok": True, "deleted": purge_terminal_orders()}
 
 
 @app.delete("/api/orders/{order_id}")

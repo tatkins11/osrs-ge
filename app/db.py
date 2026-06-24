@@ -725,6 +725,20 @@ def update_order_fields(order_id: str, price=None, total_qty=None, filled_qty=No
         con.close()
 
 
+def purge_terminal_orders() -> int:
+    """Remove finished orders (bought/sold/cancelled) from the tracker. Trades + P&L live in a
+    separate table and are untouched; terminal orders' cash is already baked into free_gp, so
+    deleting them doesn't move it. Returns how many rows were removed."""
+    con = connect_trades()
+    try:
+        _ensure_schema(con)
+        n = con.execute("SELECT count(*) FROM orders WHERE state NOT IN ('BUYING','SELLING')").fetchone()
+        con.execute("DELETE FROM orders WHERE state NOT IN ('BUYING','SELLING')")
+        return int(n[0]) if n else 0
+    finally:
+        con.close()
+
+
 def record_net_worth(net_worth, bankroll, holdings_value, realized_total, unrealized_total, invested, ts=None) -> bool:
     """Snapshot today's net worth for the growth curve (at most one row per day). Best-effort:
     returns True if a new row was written, False if today's already exists or the write failed."""

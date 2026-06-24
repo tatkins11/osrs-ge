@@ -377,6 +377,11 @@ export const deleteOrder = (id: string) =>
     if (!r.ok) throw new Error(`delete order -> ${r.status}`);
     return r.json();
   });
+export const purgeOrders = () =>
+  fetch("/api/orders/purge", { method: "POST" }).then((r) => {
+    if (!r.ok) throw new Error(`purge -> ${r.status}`);
+    return r.json();
+  });
 
 // --- 8-slot capital allocator ----------------------------------------------
 export interface AllocRec {
