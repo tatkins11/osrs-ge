@@ -590,25 +590,28 @@ def ingest_offers(events: list[dict]) -> dict:
             # De-dup the same offer re-reported under a NEW id (plugin restart lost its slot->id memory).
             if existing is None:
                 if state in ("BUYING", "SELLING"):
-                    # an open offer: match a still-OPEN same-slot order (never resurrect a finalized one)
+                    # an open offer: match a still-OPEN order for the same item/price/qty/side. Match an
+                    # exact slot OR a slot-less manual order (entered on phone) so the plugin adopts the
+                    # manual order instead of duplicating it (which would double-reserve the cash).
                     m = con.execute(
                         """SELECT order_id, trade_id FROM orders
                            WHERE state IN ('BUYING','SELLING') AND trade_id IS NULL
-                             AND slot=? AND item_id=? AND price=? AND total_qty=? AND side=?
-                           ORDER BY updated_ts DESC LIMIT 1""",
-                        [slot, item_id, price, total, side],
+                             AND item_id=? AND price=? AND total_qty=? AND side=?
+                             AND (slot=? OR slot IS NULL OR slot < 0)
+                           ORDER BY (slot=?) DESC, updated_ts DESC LIMIT 1""",
+                        [item_id, price, total, side, slot, slot],
                     ).fetchone()
                 else:
-                    # a terminal replay (e.g. a BOUGHT-but-uncollected offer re-sent next session):
-                    # match the same offer (open OR already finalized) seen recently, so its trade is
-                    # not logged twice. The window covers an overnight log-off; a genuinely new identical
-                    # buy that far apart is rare and can be edited.
+                    # a terminal replay (e.g. a BOUGHT offer re-sent, or a manual order the plugin now
+                    # reports filled): match the same offer (open OR finalized) seen recently — exact slot
+                    # OR a slot-less manual order — so its trade isn't logged twice and cash isn't doubled.
                     m = con.execute(
                         """SELECT order_id, trade_id FROM orders
-                           WHERE slot=? AND item_id=? AND price=? AND total_qty=? AND side=?
+                           WHERE item_id=? AND price=? AND total_qty=? AND side=?
                              AND updated_ts >= ?
-                           ORDER BY updated_ts DESC LIMIT 1""",
-                        [slot, item_id, price, total, side, ts - timedelta(hours=18)],
+                             AND (slot=? OR slot IS NULL OR slot < 0)
+                           ORDER BY (slot=?) DESC, updated_ts DESC LIMIT 1""",
+                        [item_id, price, total, side, ts - timedelta(hours=18), slot, slot],
                     ).fetchone()
                 if m:
                     oid, existing = m[0], (m[1],)
@@ -647,8 +650,9 @@ def ingest_offers(events: list[dict]) -> dict:
                 trade_id = existing[0]
                 con.execute(
                     """UPDATE orders SET item_id=?, side=?, price=?, total_qty=?, filled_qty=?, spent=?,
-                           state=?, updated_ts=?, completed_ts=COALESCE(completed_ts, ?) WHERE order_id=?""",
-                    [item_id, side, price, total, filled, spent, state, ts, (ts if terminal else None), oid],
+                           state=?, slot=COALESCE(NULLIF(?, -1), slot), updated_ts=?,
+                           completed_ts=COALESCE(completed_ts, ?) WHERE order_id=?""",
+                    [item_id, side, price, total, filled, spent, state, slot, ts, (ts if terminal else None), oid],
                 )
             n += 1
             if terminal and filled > 0 and trade_id is None:
