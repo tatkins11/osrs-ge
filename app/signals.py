@@ -505,6 +505,9 @@ def slot_allocator(th: Thresholds | None = None, con=None, free_slots: int = 8,
         return out
     c = d[d["flip_ok"].fillna(False) & ~d["item_id"].astype(int).isin(excl)
           & (d["slip_margin"].fillna(-1.0) > 0)].sort_values("gp_per_h", ascending=False)
+    # cap any one slot's capital so the bankroll spreads across the 8 parallel slots (and respects
+    # the user's per-position risk limit) instead of dumping everything into the single best item
+    per_slot_cap = float(th.max_alloc_frac or 0) * float(th.bankroll or cap0)
     remaining, recs, skipped = cap0, [], 0
     for r in c.itertuples():
         if len(recs) >= free_slots:
@@ -516,8 +519,11 @@ def slot_allocator(th: Thresholds | None = None, con=None, free_slots: int = 8,
             skipped += 1
             continue
         limit = max(1.0, float(r.buy_limit) if pd.notna(r.buy_limit) else (float(r.vol_daily_7d or 0) / 12.0))
-        units = int(min(limit, remaining // buy))
+        slot_cap_units = (per_slot_cap // buy) if per_slot_cap > 0 else limit
+        units = int(min(limit, remaining // buy, slot_cap_units))
         if units < 1:
+            # too pricey for the per-slot risk cap (one unit > max_alloc_frac of bankroll) -> skip, keep capital
+            skipped += 1
             continue
         cap_used = units * buy
         hourly_vol = float(r.vol_daily_7d or 0) / 24.0
