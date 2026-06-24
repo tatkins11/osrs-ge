@@ -23,7 +23,7 @@ const DEFAULT_FILTERS: Filters = {
   minProfit: 500_000,
   minPrice: 1_000,
   maxPrice: 2_147_483_647,
-  minConfidence: 40,
+  minConfidence: 75,
   minDiscount: 0.08,
   zBuy: -1.5,
   zSell: 1.5,

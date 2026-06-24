@@ -1,0 +1,229 @@
+"""One-off research on accumulated signal-log + real-trade data (run on the VPS).
+
+    python -m app.research            # runs all four
+    python -m app.research calib trades decay rotation
+
+All forward-return numbers are NET OF COST (buy at the ask, sell at the bid, 2% sell
+tax) — same conservative basis as the backtests, so a positive number is real edge.
+"""
+from __future__ import annotations
+
+import sys
+from collections import defaultdict, deque
+
+import numpy as np
+import pandas as pd
+
+from . import tax as taxmod
+from .db import connect, get_items_df, get_signal_log_df, get_trades_df
+from .sectors import classify_one
+
+
+def _items():
+    it = get_items_df()
+    return (dict(zip(it.item_id, it.name)),
+            {int(i): bool(e) for i, e in zip(it.item_id, it.exempt)})
+
+
+def _hist(item_ids, timestep, con):
+    if not len(item_ids):
+        return pd.DataFrame(columns=["item_id", "ts", "avg_high", "avg_low", "mid"])
+    ids = ",".join(str(int(i)) for i in set(int(x) for x in item_ids))
+    return con.execute(
+        f"SELECT item_id, ts, CAST(avg_high AS DOUBLE) AS avg_high, CAST(avg_low AS DOUBLE) AS avg_low, "
+        f"(CAST(avg_high AS DOUBLE)+CAST(avg_low AS DOUBLE))/2.0 AS mid FROM history "
+        f"WHERE timestep='{timestep}' AND item_id IN ({ids}) AND avg_high IS NOT NULL AND avg_low IS NOT NULL"
+    ).df()
+
+
+# --- 1) Invest calibration --------------------------------------------------
+def calib(fwd_days: int = 3):
+    sl = get_signal_log_df()
+    _, exempt = _items()
+    val = sl[sl.kind == "value"].sort_values("ts")
+    first = val.groupby("item_id", as_index=False).first()
+    last_ts = sl.ts.max()
+    first = first[first.ts <= last_ts - pd.Timedelta(days=fwd_days)]
+    con = connect(read_only=True)
+    h = _hist(first.item_id.tolist(), "1h", con)
+    con.close()
+    rows = []
+    for r in first.itertuples():
+        if pd.isna(r.entry) or r.entry <= 0:
+            continue
+        fw = h[(h.item_id == r.item_id) & (h.ts > r.ts) & (h.ts <= r.ts + pd.Timedelta(days=fwd_days))]
+        if fw.empty:
+            continue
+        ex = exempt.get(int(r.item_id), False)
+        entry = float(r.entry)
+        end_bid = float(fw.sort_values("ts").avg_low.iloc[-1])
+        net_end = taxmod.net_sell(int(round(end_bid)), ex) - entry
+        reached = bool(pd.notna(r.target) and fw.mid.max() >= r.target)
+        disc = ((r.established - r.mid) / r.established) if (pd.notna(r.established) and r.established) else np.nan
+        rows.append({"conf": r.score, "horizon": r.horizon, "disc": disc,
+                     "ret_end": net_end / entry, "win_end": net_end > 0, "reached_target": reached})
+    d = pd.DataFrame(rows)
+    print(f"\n=== [1] INVEST CALIBRATION — {len(d)} value signals w/ >={fwd_days}d forward (net of cost) ===")
+    if d.empty:
+        return d
+    print(f"  overall: reached fair value {d.reached_target.mean()*100:.0f}% | profitable at {fwd_days}d {d.win_end.mean()*100:.0f}% | mean {fwd_days}d ret {d.ret_end.mean()*100:+.1f}%")
+    d["bucket"] = pd.cut(d.conf, [0, 50, 65, 80, 101], labels=["<50", "50-65", "65-80", "80+"])
+    g = d.groupby("bucket", observed=True).agg(n=("conf", "size"), reached=("reached_target", "mean"),
+                                               win=("win_end", "mean"), ret=("ret_end", "mean"))
+    print("  by CONFIDENCE bucket (is higher confidence actually better?):")
+    for b, x in g.iterrows():
+        print(f"    {str(b):6} n={int(x.n):4}  reached {x.reached*100:3.0f}%  profitable {x.win*100:3.0f}%  mean{fwd_days}d {x.ret*100:+5.1f}%")
+    print("  by HORIZON:")
+    for hz, x in d.groupby("horizon").agg(n=("conf", "size"), reached=("reached_target", "mean"), ret=("ret_end", "mean")).iterrows():
+        print(f"    {str(hz):10} n={int(x.n):4}  reached {x.reached*100:3.0f}%  mean{fwd_days}d {x.ret*100:+5.1f}%")
+    return d
+
+
+# --- 2) Real trade P&L ------------------------------------------------------
+def trades():
+    t = get_trades_df().sort_values("ts")
+    name, exempt = _items()
+    lots = defaultdict(deque)
+    trips = []
+    for r in t.itertuples():
+        iid = int(r.item_id)
+        if r.side == "buy":
+            lots[iid].append([int(r.qty), float(r.price), r.ts])
+        else:
+            q, ex = int(r.qty), exempt.get(iid, False)
+            net_px = taxmod.net_sell(int(round(r.price)), ex)
+            while q > 0 and lots[iid]:
+                lot = lots[iid][0]
+                take = min(q, lot[0])
+                trips.append({"item": name.get(iid, str(iid)), "sector": classify_one(name.get(iid, "")) or "(other)",
+                              "pnl": (net_px - lot[1]) * take, "hold_h": (r.ts - lot[2]).total_seconds() / 3600})
+                lot[0] -= take
+                q -= take
+                if lot[0] == 0:
+                    lots[iid].popleft()
+    tr = pd.DataFrame(trips)
+    print(f"\n=== [2] REAL TRADE P&L — {len(t)} trades -> {len(tr)} matched round-trips ===")
+    if tr.empty:
+        print("  (no completed round-trips yet)")
+        return tr
+    wins = tr[tr.pnl > 0].pnl
+    losses = tr[tr.pnl < 0].pnl
+    print(f"  realized net P&L: {tr.pnl.sum():,.0f} | win rate {(tr.pnl > 0).mean()*100:.0f}% | "
+          f"avg win {wins.mean() if len(wins) else 0:,.0f} | avg loss {losses.mean() if len(losses) else 0:,.0f} | median hold {tr.hold_h.median():.0f}h")
+    print("  by sector:")
+    for s, x in tr.groupby("sector").agg(n=("pnl", "size"), pnl=("pnl", "sum")).sort_values("pnl", ascending=False).iterrows():
+        print(f"    {s:18} n={int(x.n):3}  pnl {x.pnl:>12,.0f}")
+    # which traded items were also logged signals (rough source attribution)
+    sl = get_signal_log_df()
+    kinds_by_item = sl.groupby("item_id").kind.agg(lambda s: set(s)).to_dict()
+    id_by_name = {v: k for k, v in name.items()}
+    src = defaultdict(lambda: [0, 0.0])
+    for s, x in tr.groupby("item").agg(n=("pnl", "size"), pnl=("pnl", "sum")).iterrows():
+        ks = kinds_by_item.get(id_by_name.get(s), set()) or {"(unsignalled)"}
+        for k in ks:
+            src[k][0] += int(x.n)
+            src[k][1] += x.pnl
+    print("  by signal source (item appeared as this kind in the log):")
+    for k, (n, p) in sorted(src.items(), key=lambda kv: -kv[1][1]):
+        print(f"    {k:14} round-trips touching {n:3}  pnl {p:>12,.0f}")
+    return tr
+
+
+# --- 3) Signal decay --------------------------------------------------------
+def decay(fwd_days: int = 3):
+    sl = get_signal_log_df()
+    _, exempt = _items()
+    val = sl[sl.kind == "value"].copy()
+    first = val.groupby("item_id").ts.transform("min")
+    val["age_d"] = (val.ts - first).dt.total_seconds() / 86400
+    last_ts = sl.ts.max()
+    val = val[val.ts <= last_ts - pd.Timedelta(days=fwd_days)]
+    # one snapshot per (item, integer age-day) to avoid over-weighting hourly dups
+    val["age_bin"] = val.age_d.round().astype(int)
+    samp = val.sort_values("ts").groupby(["item_id", "age_bin"], as_index=False).first()
+    con = connect(read_only=True)
+    h = _hist(samp.item_id.tolist(), "1h", con)
+    con.close()
+    rows = []
+    for r in samp.itertuples():
+        if pd.isna(r.entry) or r.entry <= 0:
+            continue
+        fw = h[(h.item_id == r.item_id) & (h.ts > r.ts) & (h.ts <= r.ts + pd.Timedelta(days=fwd_days))]
+        if fw.empty:
+            continue
+        ex = exempt.get(int(r.item_id), False)
+        net_end = taxmod.net_sell(int(round(float(fw.sort_values("ts").avg_low.iloc[-1]))), ex) - float(r.entry)
+        rows.append({"age": "fresh (<1d)" if r.age_d < 1 else ("mid (1-3d)" if r.age_d < 3 else "stale (>=3d)"),
+                     "ret": net_end / r.entry, "win": net_end > 0})
+    d = pd.DataFrame(rows)
+    print(f"\n=== [3] SIGNAL DECAY — value signals' {fwd_days}d forward return by how long they'd been showing ===")
+    if d.empty:
+        return d
+    for a in ["fresh (<1d)", "mid (1-3d)", "stale (>=3d)"]:
+        s = d[d.age == a]
+        if len(s):
+            print(f"    {a:12} n={len(s):4}  profitable {s.win.mean()*100:3.0f}%  mean ret {s.ret.mean()*100:+5.1f}%")
+    return d
+
+
+# --- 4) Sector rotation -----------------------------------------------------
+def rotation():
+    from .signals import Thresholds, market_signals
+    from . import sectormap
+    d = market_signals(Thresholds())
+    d = d[d.name.notna()].copy()
+    d["sector"] = d.name.str.lower().map(sectormap.load_map())
+    d["gpv"] = d.mid.fillna(0) * d.vol_daily_7d.fillna(0)
+    d = d[d.sector.notna() & (d.gpv > 5_000_000)]
+    con = connect(read_only=True)
+    h = _hist(d.item_id.tolist(), "24h", con)
+    con.close()
+    sec = dict(zip(d.item_id, d.sector))
+    gpv = dict(zip(d.item_id, d.gpv))
+    h["sector"] = h.item_id.map(sec)
+    h["ret"] = h.sort_values("ts").groupby("item_id").mid.pct_change().clip(-0.5, 0.5)
+    h["w"] = h.item_id.map(gpv)
+    # gp-weighted daily sector return
+    h = h.dropna(subset=["ret", "sector"])
+    sret = (h.assign(rw=h.ret * h.w).groupby(["sector", "ts"]).agg(rw=("rw", "sum"), w=("w", "sum")))
+    sret["r"] = sret.rw / sret.w
+    piv = sret.reset_index().pivot(index="ts", columns="sector", values="r").sort_index()
+    # weekly (5-trading-day) compounded returns, pooled corr(week_t, week_{t+1})
+    wk = (1 + piv).rolling(5).apply(np.prod, raw=True) - 1
+    wk = wk.iloc[4::5]  # non-overlapping weeks
+    pairs = []
+    for s in wk.columns:
+        v = wk[s].dropna().values
+        for i in range(len(v) - 1):
+            pairs.append((v[i], v[i + 1]))
+    pairs = np.array(pairs)
+    print("\n=== [4] SECTOR ROTATION — does a sector's weekly return predict next week? ===")
+    if len(pairs) >= 8:
+        c = np.corrcoef(pairs[:, 0], pairs[:, 1])[0, 1]
+        sign = "MOMENTUM (winners keep winning)" if c > 0.1 else ("REVERSION (winners give back)" if c < -0.1 else "NO usable signal")
+        print(f"  pooled corr(week_t, week_t+1) = {c:+.2f} over {len(pairs)} sector-week pairs -> {sign}")
+    else:
+        print(f"  only {len(pairs)} sector-week pairs — not enough history yet for week-over-week")
+    # lag-1 DAILY autocorr as a shorter-window read
+    dpairs = []
+    for s in piv.columns:
+        v = piv[s].dropna().values
+        for i in range(len(v) - 1):
+            dpairs.append((v[i], v[i + 1]))
+    dpairs = np.array(dpairs)
+    if len(dpairs) >= 30:
+        dc = np.corrcoef(dpairs[:, 0], dpairs[:, 1])[0, 1]
+        print(f"  daily lag-1 autocorr = {dc:+.2f} over {len(dpairs)} sector-day pairs "
+              f"({'momentum' if dc > 0.05 else 'reversion' if dc < -0.05 else 'none'})")
+
+
+def main():
+    which = sys.argv[1:] or ["calib", "trades", "decay", "rotation"]
+    if "calib" in which: calib()
+    if "trades" in which: trades()
+    if "decay" in which: decay()
+    if "rotation" in which: rotation()
+
+
+if __name__ == "__main__":
+    main()
