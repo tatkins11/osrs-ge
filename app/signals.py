@@ -515,14 +515,16 @@ def slot_allocator(th: Thresholds | None = None, con=None, free_slots: int = 8,
         if remaining < buy:
             skipped += 1
             continue
-        cap_units = float(r.buy_limit) if pd.notna(r.buy_limit) else (float(r.vol_daily_7d or 0) / 12.0)
-        units = int(min(max(1.0, cap_units), remaining // buy))
+        limit = max(1.0, float(r.buy_limit) if pd.notna(r.buy_limit) else (float(r.vol_daily_7d or 0) / 12.0))
+        units = int(min(limit, remaining // buy))
         if units < 1:
             continue
         cap_used = units * buy
         hourly_vol = float(r.vol_daily_7d or 0) / 24.0
         fill_h = units / hourly_vol if hourly_vol > 0 else 240.0
-        cycle_h = min(240.0, max(0.5, 2.0 * fill_h))
+        limit_h = 4.0 * units / limit          # buy-limit cadence: a full-limit batch can't re-buy for 4h
+        buy_h = max(fill_h, limit_h)           # acquiring these units is gated by BOTH volume and the limit
+        cycle_h = min(240.0, max(1.0, 2.0 * buy_h))  # +sell leg; floor 1h (no sub-hour round-trips)
         slip = float(r.slip_margin or 0)
         recs.append({
             "item_id": int(r.item_id), "name": r.name,
