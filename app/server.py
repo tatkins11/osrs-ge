@@ -43,6 +43,7 @@ from .signals import (
     slot_allocator,
     volume_table,
 )
+from .planner import build_plan
 from .tax import EXEMPT_ITEM_NAMES
 
 log = logging.getLogger("server")
@@ -415,6 +416,14 @@ def allocator(th: Thresholds = Depends(get_thresholds)) -> dict:
     res["committed_capital"] = round(committed)
     res["bankroll"] = round(float(th.bankroll))
     return res
+
+
+@app.get("/api/plan")
+def plan(th: Thresholds = Depends(get_thresholds)) -> dict:
+    """The unified 8-slot decision engine: a SELL / HOLD / CUT verdict on every open position
+    (with a competitive price + recovery read) plus competitive BUYS for the free slots, all with
+    realistic fill timelines. Reads live positions + open orders. Recommender only."""
+    return build_plan(th)
 
 
 # --- serve the built frontend (if present) ----------------------------------

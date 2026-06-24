@@ -392,6 +392,47 @@ export interface AllocatorPlan {
 }
 export const getAllocator = (f: Filters) => get<AllocatorPlan>(`/api/allocator?${qs(f)}`);
 
+// --- unified 8-slot decision engine (SELL/HOLD/CUT + BUY) -------------------
+export interface PlanSlot {
+  action: "SELL" | "HOLD" | "CUT" | "BUY";
+  item_id: number;
+  name: string;
+  price: number | null;        // list price (sells) or buy price (buys)
+  qty?: number;                // sells
+  units?: number;              // buys
+  avg_cost?: number;           // sells
+  cur_price?: number | null;
+  target?: number | null;
+  sell_target?: number;        // buys
+  capital?: number;            // buys
+  margin?: number;             // buys (after-tax, competitive)
+  gp_day?: number;             // buys
+  expected_net?: number | null;// sells: P&L you'd realize
+  unrealized?: number | null;
+  unrealized_pct?: number | null;
+  recovery_score?: number | null; // underwater holdings: 0-100, higher = more likely to recover
+  buy_h?: number;
+  sell_h?: number;
+  roundtrip_h?: number;
+  reason: string;
+  live: boolean;               // a matching open order already exists on the GE
+  sector?: string | null;
+}
+export interface PlanResponse {
+  bankroll: number;
+  capital_in: number;
+  committed_capital: number;
+  used_slots: number;
+  free_slots: number;
+  n_positions: number;
+  n_sells: number;
+  n_buys: number;
+  slots: PlanSlot[];
+  bench: PlanSlot[];
+  totals: { expected_realized: number; buy_capital: number; plan_gp_day: number; growth_day: number | null };
+}
+export const getPlan = (f: Filters) => get<PlanResponse>(`/api/plan?${qs(f)}`);
+
 export const getItemNames = () => get<ItemName[]>("/api/itemnames");
 export const getPortfolio = () => get<Portfolio>("/api/portfolio");
 export const addTrade = (t: { item_id: number; side: string; qty: number; price: number; note?: string }) =>

@@ -176,7 +176,9 @@ td.tag-cell, th.tag-cell { text-align: left; }
 .slot-tile.free { border-style: dashed; opacity: 0.45; }
 .slot-tile.buy { border-left: 3px solid var(--green); cursor: pointer; }
 .slot-tile.sell { border-left: 3px solid var(--red); cursor: pointer; }
-.slot-tile.buy:hover, .slot-tile.sell:hover { border-color: var(--accent); }
+.slot-tile.hold { border-left: 3px solid var(--amber); cursor: pointer; }
+.slot-tile.buy:hover, .slot-tile.sell:hover, .slot-tile.hold:hover { border-color: var(--accent); }
+.slot-tile .badge { font-size: 9px; padding: 0 4px; }
 .slot-no { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
 .slot-dup { color: var(--amber, #f5b53d); margin-left: 5px; }
 .slot-item { font-size: 12px; color: var(--fg); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCrashes, getFlips, getInvest, getItems, getMeta, getOrders, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Order, type Row, type SectorsResponse, type TradePrefill } from "./api";
 import { gpShort } from "./format";
-import { Allocator } from "./components/Allocator";
+import { Planner } from "./components/Planner";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
 import { InvestTable } from "./components/InvestTable";
@@ -32,7 +32,7 @@ const DEFAULT_FILTERS: Filters = {
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "flips", label: "Flips" },
-  { id: "allocate", label: "Allocate" },
+  { id: "allocate", label: "8-Slot Plan" },
   { id: "invest", label: "Invest" },
   { id: "crashes", label: "Crashes" },
   { id: "movers", label: "Movers" },
@@ -240,7 +240,7 @@ export default function App() {
         ) : tab === "allocate" ? (
           <>
             <div className="table-wrap">
-              <Allocator filters={filters} refreshNonce={nonce} selectedId={selected} onSelect={setSelected} />
+              <Planner filters={filters} refreshNonce={nonce} selectedId={selected} onSelect={setSelected} />
             </div>
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
               <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
