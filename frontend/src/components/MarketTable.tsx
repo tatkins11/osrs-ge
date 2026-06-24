@@ -38,6 +38,10 @@ const makeColumns = (onLog?: (p: TradePrefill) => void) => [
   colh.accessor("buy_price", { header: "Buy", cell: (c) => gp(c.getValue() as number) }),
   colh.accessor("sell_price", { header: "Sell", cell: (c) => gp(c.getValue() as number) }),
   colh.accessor("net_margin", { header: "Net/ea", cell: (c) => <span className={sign(c.getValue() as number)}>{gp(c.getValue() as number)}</span> }),
+  colh.accessor("slip_margin", {
+    header: () => <span title="After-slippage margin — assumes you buy near the MID (where real fills land), not the bid. The honest net/ea you'll actually keep.">Real/ea</span>,
+    cell: (c) => <span className={sign(c.getValue() as number)}>{gp(c.getValue() as number)}</span>,
+  }),
   colh.accessor("roi", { header: "ROI", cell: (c) => <span className={sign(c.getValue() as number)}>{pct(c.getValue() as number, 2)}</span> }),
   colh.accessor("buy_limit", { header: "Limit", cell: (c) => num(c.getValue() as number) }),
   colh.accessor("realistic_profit", {
@@ -47,6 +51,10 @@ const makeColumns = (onLog?: (p: TradePrefill) => void) => [
   colh.accessor("profit_per_cycle", {
     header: () => <span title="Theoretical max: net margin x full buy limit (only achievable if volume allows)">Max/4h</span>,
     cell: (c) => <span className="dim">{gpShort(c.getValue() as number)}</span>,
+  }),
+  colh.accessor("gp_per_h", {
+    header: () => <span title="Capital velocity: modeled gp per HOUR (margin x how fast a buy-limit fills at market volume). Sort by this to recycle capital fastest. Relative ranking — absolute is optimistic.">gp/hr</span>,
+    cell: (c) => <span className="pos">{gpShort(c.getValue() as number)}</span>,
   }),
   colh.accessor("vol_daily_7d", { header: "Vol/day", cell: (c) => <span className="dim">{gpShort(c.getValue() as number)}</span> }),
   colh.accessor("margin_uptime", {

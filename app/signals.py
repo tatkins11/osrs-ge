@@ -131,6 +131,21 @@ def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None
     d["units_per_4h"] = np.where(limit.notna(), np.minimum(limit, flow_4h), flow_4h)
     d["realistic_profit"] = d["net_margin"] * d["units_per_4h"]
 
+    # After-slippage margin: real fills land near the MID, not the bid (slippage study: buys land
+    # ~0.7% above mid), so you don't capture the buy-side spread the raw margin assumes. Haircut the
+    # margin to a buy-at-mid assumption -> the honest edge you'll actually keep.
+    midf = d["mid"].astype("float64")
+    d["slip_margin"] = d["net_margin"].astype("float64") - (midf - buy).clip(lower=0)
+    d["slip_roi"] = np.where(midf > 0, d["slip_margin"] / midf, np.nan)
+    # Capital velocity (gp/hour): how fast a flip recycles capital. cycle ~= 2 x (units / hourly vol)
+    # for the buy + sell legs. Relative ranking metric -- absolute is optimistic (assumes you capture
+    # whole-market flow), but the ordering surfaces fast-recycling flips the raw-margin rank buries.
+    hourly_vol = d["vol_daily_7d"].fillna(0.0).astype("float64") / 24.0
+    unit_cycle = np.where(limit.notna() & (limit > 0), limit, flow_4h)
+    fill_h = np.where(hourly_vol > 0, unit_cycle / np.maximum(hourly_vol, 1e-9), 240.0)
+    cycle_h = np.clip(2.0 * fill_h, 0.5, 240.0)
+    d["gp_per_h"] = (d["net_margin"].astype("float64") * unit_cycle) / cycle_h
+
     # Flip quality gates: liquid, fresh, not junk, and realistically worth >= min_profit/4h.
     d["flip_ok"] = (
         d["tradeable"]
@@ -299,7 +314,7 @@ TABLE_COLS = [
     "item_id", "name", "members", "exempt", "buy_limit",
     "buy_price", "sell_price", "mid",
     "tax", "gross_margin", "net_margin", "roi",
-    "profit_per_cycle", "realistic_profit", "units_per_4h", "sugg_units", "sugg_capital", "sugg_profit", "affordable",
+    "profit_per_cycle", "realistic_profit", "slip_margin", "slip_roi", "gp_per_h", "units_per_4h", "sugg_units", "sugg_capital", "sugg_profit", "affordable",
     "high_vol", "low_vol", "vol_side", "vol_daily_7d", "vol_24h", "vol_ratio", "chg_24h", "margin_uptime", "margin_median_7d", "price_age_min",
     "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "mr_exp_profit", "confidence",

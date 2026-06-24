@@ -217,12 +217,93 @@ def rotation():
               f"({'momentum' if dc > 0.05 else 'reversion' if dc < -0.05 else 'none'})")
 
 
+# --- A) flip slippage / fill quality (real order data) ----------------------
+def slippage():
+    from .db import get_orders_df
+    o = get_orders_df()
+    name, _ = _items()
+    o = o[o.filled_qty.fillna(0).astype(float) > 0].copy()
+    print(f"\n=== [A] FLIP SLIPPAGE / FILL QUALITY — {len(o)} filled orders ===")
+    if o.empty:
+        return
+    o["fill_pct"] = o.filled_qty.astype(float) / o.total_qty.astype(float).replace(0, np.nan)
+    full = (o.fill_pct >= 0.999).mean()
+    print(f"  fill completeness: {full*100:.0f}% fully filled | median {o.fill_pct.median()*100:.0f}% of order qty")
+    con = connect(read_only=True)
+    h = _hist(o.item_id.tolist(), "1h", con).sort_values("ts")
+    con.close()
+    rows = []
+    for r in o[o.side == "buy"].itertuples():
+        filled = float(r.filled_qty or 0)
+        if filled <= 0 or pd.isna(r.spent):
+            continue
+        avg_fill = float(r.spent) / filled
+        hh = h[(h.item_id == int(r.item_id)) & (h.ts <= r.opened_ts)]
+        if hh.empty:
+            continue
+        mid = float(hh.mid.iloc[-1])
+        rows.append({"below_mid": (mid - avg_fill) / mid, "at_or_under_offer": avg_fill <= float(r.price) * 1.0005})
+    b = pd.DataFrame(rows)
+    if len(b):
+        print(f"  BUY fills ({len(b)}): bought a mean {b.below_mid.mean()*100:+.1f}% vs market mid at placement "
+              f"(median {b.below_mid.median()*100:+.1f}%; positive = below mid = good)")
+        print(f"    filled at/under your offer price: {b.at_or_under_offer.mean()*100:.0f}%")
+        print("    -> predicted flip margins assume you buy at the bid; gap from mid here is the realistic buy-leg capture")
+
+
+# --- B) capital velocity (gp/hour) ------------------------------------------
+def velocity():
+    from .signals import Thresholds, flip_table
+    t = get_trades_df().sort_values("ts")
+    _, exempt = _items()
+    lots, trips = defaultdict(deque), []
+    for r in t.itertuples():
+        iid = int(r.item_id)
+        if r.side == "buy":
+            lots[iid].append([int(r.qty), float(r.price), r.ts])
+        else:
+            q, ex = int(r.qty), exempt.get(iid, False)
+            net = taxmod.net_sell(int(round(r.price)), ex)
+            while q > 0 and lots[iid]:
+                lot = lots[iid][0]
+                take = min(q, lot[0])
+                hrs = (r.ts - lot[2]).total_seconds() / 3600
+                if hrs > 0.05:
+                    trips.append({"gph": (net - lot[1]) * take / hrs, "hrs": hrs})
+                lot[0] -= take
+                q -= take
+                if lot[0] == 0:
+                    lots[iid].popleft()
+    tr = pd.DataFrame(trips)
+    print("\n=== [B] CAPITAL VELOCITY (gp/hour) ===")
+    if len(tr):
+        print(f"  your round-trips: median hold {tr.hrs.median():.1f}h | median {tr.gph.median():,.0f} gp/hr | best {tr.gph.max():,.0f} gp/hr")
+    fl = pd.DataFrame(flip_table(Thresholds(), limit=250))
+    if fl.empty:
+        print("  no current flips to rank")
+        return
+    hv = fl["vol_daily_7d"].fillna(0) / 24.0                       # units traded per hour (whole market)
+    fill_h = np.where(hv > 0, fl["buy_limit"].fillna(0) / hv, np.inf)
+    cycle_h = np.clip(2 * fill_h, 0.5, 240)                        # buy leg + sell leg, floored/capped
+    fl["gp_per_h"] = (fl["net_margin"].fillna(0) * fl["buy_limit"].fillna(0)) / cycle_h
+    fl["est_cycle_h"] = cycle_h
+    raw = fl.sort_values("realistic_profit", ascending=False).head(12)["name"].tolist()
+    vel = fl.sort_values("gp_per_h", ascending=False)
+    print("  current flips, top 10 by modeled gp/HOUR (turnover-adjusted) vs raw profit/cycle:")
+    for r in vel.head(10).itertuples():
+        flag = "" if r.name in raw else "  <- NOT in raw-profit top 12"
+        print(f"    {str(r.name)[:24]:24} gp/hr {r.gp_per_h:>11,.0f}  cycle ~{r.est_cycle_h:4.1f}h  profit/cycle {r.realistic_profit:>10,.0f}{flag}")
+    print("  -> if the velocity list differs a lot from the raw list, a gp/hour rank would recycle capital faster")
+
+
 def main():
     which = sys.argv[1:] or ["calib", "trades", "decay", "rotation"]
     if "calib" in which: calib()
     if "trades" in which: trades()
     if "decay" in which: decay()
     if "rotation" in which: rotation()
+    if "slippage" in which: slippage()
+    if "velocity" in which: velocity()
 
 
 if __name__ == "__main__":

@@ -13,6 +13,9 @@ export interface Row {
   roi?: number | null;
   profit_per_cycle?: number | null;
   realistic_profit?: number | null;
+  slip_margin?: number | null;
+  slip_roi?: number | null;
+  gp_per_h?: number | null;
   units_per_4h?: number | null;
   sugg_units?: number | null;
   sugg_capital?: number | null;
