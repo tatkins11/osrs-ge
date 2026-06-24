@@ -204,6 +204,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         sells.append({
             "action": action, "item_id": iid, "name": p["name"], "qty": int(qty),
             "price": round(list_at) if list_at else None, "avg_cost": round(avg_cost),
+            "breakeven": p.get("breakeven"),  # gross sell to recover cost after tax (for lucky-exit listing)
             "cur_price": p.get("cur_price"), "target": round(target) if target else None,
             "expected_net": expected_net, "unrealized": p.get("unrealized"),
             "unrealized_pct": p.get("unrealized_pct"), "sell_h": leg_h,
@@ -316,20 +317,29 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     active_sells.sort(key=lambda s: ({"CUT": 0, "SELL": 1}.get(s["action"], 2), -(s.get("expected_net") or 0)))
     buys = kept_buy_rows + new_buys
 
-    # opportunistic: rather than leave slots empty, LIST the best holds at their target — costs
-    # nothing to let the offer sit, and a lucky spike to fair value gets captured for free.
+    # opportunistic: rather than leave slots empty, LIST holds at a hopeful price — costs nothing to
+    # let the offer sit. Profitable holds list at their fair-value target (capture the upside);
+    # underwater holds list at BREAKEVEN (a lucky spike lets you escape clean). The hope price must
+    # be above the current price, else there's nothing to wait for.
     open_slots = max(0, 8 - len(active_sells) - len(buys))
     listed = []
     if open_slots > 0 and holding:
+        # profitable holds first (real upside), then underwater ones (long-shot clean exits)
         for h in sorted(holding, key=lambda x: (x.get("expected_net") or 0), reverse=True):
             if len(listed) >= open_slots:
                 break
-            if (h.get("expected_net") or 0) <= 0:   # only list where a target fill is a win
+            cur = _f(h.get("cur_price")) or 0.0
+            profit = (h.get("expected_net") or 0) > 0
+            price = (_f(h.get("target")) or 0.0) if profit else (_f(h.get("breakeven")) or 0.0)
+            if not price or (cur and price <= cur * 1.001):  # nothing to hope for if it's at/below market
                 continue
             row = dict(h)
             row["action"] = "LIST"
-            row["price"] = h.get("target") or h.get("price")
-            row["reason"] = "free slot — listed at fair value to catch a lucky spike (no cost to wait)"
+            row["price"] = round(price)
+            if not profit:
+                row["expected_net"] = 0   # a breakeven fill is ~zero P&L (you escape clean)
+            row["reason"] = ("free slot — listed at fair value to catch a spike (no cost to wait)" if profit
+                             else "free slot — listed at breakeven for a lucky clean exit (no cost to wait)")
             listed.append(row)
         promoted = {h["item_id"] for h in listed}
         holding = [h for h in holding if h["item_id"] not in promoted]
