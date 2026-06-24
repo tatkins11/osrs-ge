@@ -28,8 +28,10 @@ from . import tax as taxmod
 from .db import connect, get_free_gp, get_orders_df
 from .signals import Thresholds, market_signals
 
-CAPTURE = 0.125          # realistic share of an item's daily volume one flipper can transact
-TARGET_RT_H = 24.0       # size orders to buy+sell within ~a day (the realistic-timeline cap)
+CAPTURE = 0.04           # realistic share of an item's daily volume you transact per leg. Conservative:
+                         # a competitively-priced offer waits in a queue, so real fills are slow. Lowered
+                         # from 0.125 on live feedback that buys+sells take much longer; tune w/ order data.
+TARGET_RT_H = 24.0       # aim to size orders to buy+sell within ~a day at that (slow) rate
 PRICE_EDGE = 0.10        # balanced nudge: give up ~10% of the spread per side to win the queue
 HOLD_MIN = 50.0          # recovery score >= this -> hold an underwater position
 CUT_MAX = 35.0           # recovery score < this -> cut it
@@ -68,7 +70,7 @@ def timeline(units: float, vol_day: float, limit: float):
     rate = CAPTURE * max(0.0, vol_day) / 24.0            # units/hour you can transact one side
     leg_h = units / rate if rate > 0 else 720.0
     gate_h = 4.0 if (limit and units >= limit) else 0.0  # full-limit batch can't re-buy for 4h
-    rt_h = min(720.0, max(1.0, max(2.0 * leg_h, gate_h + leg_h)))  # floor 1h: no sub-hour round-trips
+    rt_h = min(720.0, max(2.0, max(2.0 * leg_h, gate_h + leg_h)))  # floor 2h: even liquid flips take a while
     daily_units = min(units * (24.0 / rt_h), CAPTURE * max(0.0, vol_day))
     return round(leg_h, 1), round(rt_h, 1), max(0.0, daily_units)
 
