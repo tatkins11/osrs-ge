@@ -256,6 +256,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     # reconcile each live order against the plan: keep / reprice / cancel
     reconcile = []
     kept_buy_ids = set()
+    kept_buy_info: dict[int, tuple] = {}   # iid -> (price, total_qty, filled_qty) of the actual order
     if not open_orders.empty:
         for o in open_orders.itertuples():
             iid, side = int(o.item_id), str(o.side)
@@ -277,6 +278,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
                 if iid in good_buy_ids:
                     status, note = "keep", f"still a good buy — keep filling ({prog})"
                     kept_buy_ids.add(iid)
+                    kept_buy_info[iid] = (int(o.price or 0), int(o.total_qty or 0), int(o.filled_qty or 0))
                 else:
                     status, note = "cancel", "no longer a good buy — cancel & redeploy"
             reconcile.append({"order_id": getattr(o, "order_id", None), "item_id": iid, "name": nm,
@@ -304,13 +306,16 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             new_buys.append(_buy_row(r, iid, units, buy_at, sell_at, ex, vol_day, limit, live=False))
             remaining -= units * buy_at
 
-    # live buys we're keeping -> show them as slots too (already placed)
+    # live buys we're keeping -> show them at their ACTUAL order size (the remaining qty already
+    # placed), NOT a re-sized ideal — the gp is committed; we're not suggesting buying more.
     kept_buy_rows = []
     for iid in kept_buy_ids:
         mgn, buy_at, sell_at, ex, vol_day, limit, r = cand_rows[iid]
-        units = max(1, int(min(size_for_timeline(vol_day), limit, offer_cap(r.name))))
-        row = _buy_row(r, iid, units, buy_at, sell_at, ex, vol_day, limit, live=True)
-        row["reason"] = "live buy — keep filling"
+        o_price, o_total, o_filled = kept_buy_info.get(iid, (0, 0, 0))
+        rem_units = max(1, o_total - o_filled)           # what's left to fill on the existing order
+        order_buy = float(o_price) if o_price > 0 else buy_at
+        row = _buy_row(r, iid, rem_units, order_buy, sell_at, ex, vol_day, limit, live=True)
+        row["reason"] = f"live buy — keep filling ({o_filled:,}/{o_total:,})"
         kept_buy_rows.append(row)
 
     # ---- 4) assemble ------------------------------------------------------------------------
