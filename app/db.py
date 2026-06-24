@@ -357,8 +357,19 @@ CREATE TABLE IF NOT EXISTS orders (   -- live GE offers streamed from the RuneLi
     completed_ts TIMESTAMP,
     trade_id     BIGINT               -- linked trade once a fill is finalized (NULL until then)
 );
+CREATE TABLE IF NOT EXISTS net_worth_log (  -- one row per day: snapshot of total worth for the growth curve
+    day             DATE PRIMARY KEY,
+    ts              TIMESTAMP,
+    net_worth       BIGINT,
+    bankroll        BIGINT,          -- liquid cash component (the user's bankroll filter at snapshot time)
+    holdings_value  BIGINT,          -- open positions at live value, net of tax
+    realized_total  BIGINT,
+    unrealized_total BIGINT,
+    invested        BIGINT
+);
 """
 _TRADE_COLS = ["id", "ts", "item_id", "side", "qty", "price", "note"]
+_NW_COLS = ["day", "ts", "net_worth", "bankroll", "holdings_value", "realized_total", "unrealized_total", "invested"]
 
 
 def connect_trades(read_only: bool = False, retries: int = 12, retry_wait: float = 0.5):
@@ -572,6 +583,44 @@ def delete_order(order_id: str) -> None:
     con = connect_trades()
     try:
         con.execute("DELETE FROM orders WHERE order_id = ?", [str(order_id)])
+    finally:
+        con.close()
+
+
+def record_net_worth(net_worth, bankroll, holdings_value, realized_total, unrealized_total, invested, ts=None) -> bool:
+    """Snapshot today's net worth for the growth curve (at most one row per day). Best-effort:
+    returns True if a new row was written, False if today's already exists or the write failed."""
+    ts = ts or utcnow()
+    day = ts.date() if hasattr(ts, "date") else ts
+    try:
+        con = connect_trades()
+    except RuntimeError:
+        return False
+    try:
+        con.execute(_TRADES_SCHEMA)
+        if con.execute("SELECT 1 FROM net_worth_log WHERE day = ?", [day]).fetchone():
+            return False
+        con.execute(
+            "INSERT INTO net_worth_log (day, ts, net_worth, bankroll, holdings_value, realized_total, unrealized_total, invested) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [day, ts, int(net_worth), int(bankroll), int(holdings_value), int(realized_total), int(unrealized_total), int(invested)],
+        )
+        return True
+    except duckdb.Error:
+        return False
+    finally:
+        con.close()
+
+
+def get_net_worth_log_df() -> pd.DataFrame:
+    try:
+        con = connect_trades(read_only=True)
+    except RuntimeError:
+        return pd.DataFrame(columns=_NW_COLS)
+    try:
+        return con.execute("SELECT * FROM net_worth_log ORDER BY day").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=_NW_COLS)
     finally:
         con.close()
 

@@ -469,7 +469,9 @@ export interface GrowthResponse {
   idle_frac: number;        // undeployed capital as a fraction of bankroll
   win_rate: number | null;
   n_closed: number | null;
-  history: { ts: string; value: number }[];  // reconstructed net-worth curve
+  history: { ts: string; value: number }[];  // net-worth curve (daily snapshots, or reconstructed early on)
+  history_source: "snapshots" | "realized";
+  n_snapshots: number;
   targets: GrowthTarget[];
 }
 export const getGrowth = (f: Filters) => get<GrowthResponse>(`/api/growth?${qs(f)}`);

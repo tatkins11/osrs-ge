@@ -129,7 +129,14 @@ export function GrowthTracker({ filters, refreshNonce }: { filters: Filters; ref
         </div>
       )}
 
-      <div className="slot-head" style={{ marginTop: 14 }}>Net worth → {headline?.label ?? "billions"} (log scale)</div>
+      <div className="slot-head" style={{ marginTop: 14 }}>
+        Net worth → {headline?.label ?? "billions"} (log scale){" "}
+        <span className="dim" style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+          {g.history_source === "snapshots"
+            ? `· real daily net worth (${g.n_snapshots} snapshots)`
+            : "· reconstructed from realized P&L — real daily snapshots start now"}
+        </span>
+      </div>
       <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 6px 4px" }}>
         <GrowthChart g={g} />
       </div>

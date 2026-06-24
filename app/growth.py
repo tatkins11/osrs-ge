@@ -13,7 +13,7 @@ import math
 import pandas as pd
 
 from . import portfolio as pf
-from .db import connect
+from .db import connect, get_net_worth_log_df, record_net_worth
 from .planner import build_plan
 from .signals import Thresholds
 
@@ -72,6 +72,29 @@ def compute_growth(th: Thresholds | None = None, con=None) -> dict:
     capital_in = float(plan.get("capital_in") or 0.0)
     idle_frac = (capital_in / bankroll) if bankroll > 0 else 0.0
 
+    # Snapshot today's net worth (once/day) and, once >=2 daily snapshots exist, chart the REAL
+    # net-worth curve (which captures unrealized swings) instead of the realized-only reconstruction.
+    try:
+        record_net_worth(net_worth, bankroll, holdings_value, realized_total, unreal, invested)
+    except Exception:  # noqa: BLE001 - snapshot is best-effort, never break the endpoint
+        pass
+    history_source = "realized"
+    nwlog = get_net_worth_log_df()
+    if len(nwlog) >= 2:
+        nwlog = nwlog.sort_values("day")
+        hist = [{"ts": str(r.day), "value": int(r.net_worth)} for r in nwlog.itertuples()]
+        history_source = "snapshots"
+        last_ts = pd.Timestamp(nwlog["ts"].iloc[-1])
+        cutoff = last_ts - pd.Timedelta(days=7)
+        prior = nwlog[pd.to_datetime(nwlog["ts"]) <= cutoff]
+        ref = prior.iloc[-1] if not prior.empty else nwlog.iloc[0]
+        nw_then = float(ref["net_worth"])
+        span_d = max(0.5, (last_ts - pd.Timestamp(ref["ts"])).total_seconds() / 86400.0)
+        if span_d >= 2.0 and nw_then > 0:   # enough span for a meaningful net-worth growth rate
+            daily_pct = (net_worth / nw_then) ** (1.0 / span_d) - 1.0
+            recent_gp_day = (net_worth - nw_then) / span_d
+            win_days = span_d
+
     targets = [{
         "label": label, "value": val,
         "days_realized": _days_to(net_worth, val, daily_pct),
@@ -87,5 +110,6 @@ def compute_growth(th: Thresholds | None = None, con=None) -> dict:
         "daily_pct": round(daily_pct, 4), "modeled_gp_day": round(modeled_gp_day), "modeled_pct": round(modeled_pct, 4),
         "capital_in": round(capital_in), "idle_frac": round(idle_frac, 3),
         "win_rate": stats.get("win_rate"), "n_closed": stats.get("n_closed"),
-        "history": hist, "targets": targets,
+        "history": hist, "history_source": history_source, "n_snapshots": int(len(nwlog)),
+        "targets": targets,
     }
