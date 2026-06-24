@@ -373,9 +373,26 @@ CREATE TABLE IF NOT EXISTS net_worth_log (  -- one row per day: snapshot of tota
     unrealized_total BIGINT,
     invested        BIGINT
 );
+CREATE SEQUENCE IF NOT EXISTS plan_log_id_seq;
+CREATE TABLE IF NOT EXISTS plan_log (   -- ~hourly snapshot of what the 8-Slot Plan recommended (for calibration)
+    id        BIGINT PRIMARY KEY DEFAULT nextval('plan_log_id_seq'),
+    ts        TIMESTAMP,
+    action    VARCHAR,     -- BUY | SELL | CUT | HOLD
+    item_id   INTEGER,
+    name      VARCHAR,
+    price     BIGINT,      -- recommended price (buy-at for buys, list-at for sells/holds)
+    qty       BIGINT,      -- units (buys) or qty held (sells/holds)
+    margin    BIGINT,      -- per-unit competitive margin (buys)
+    gp_day    BIGINT,      -- modeled gp/day (buys)
+    exp_net   BIGINT,      -- realizable P&L (sells/cuts)
+    recovery  INTEGER,     -- recovery score 0-100 (holds/cuts)
+    target    BIGINT,      -- sell target (buys) / fair value (holds)
+    cur_price BIGINT       -- market price at snapshot (baseline for outcome eval)
+);
 """
 _TRADE_COLS = ["id", "ts", "item_id", "side", "qty", "price", "note"]
 _NW_COLS = ["day", "ts", "net_worth", "bankroll", "holdings_value", "realized_total", "unrealized_total", "invested"]
+_PLAN_LOG_COLS = ["id", "ts", "action", "item_id", "name", "price", "qty", "margin", "gp_day", "exp_net", "recovery", "target", "cur_price"]
 
 
 def connect_trades(read_only: bool = False, retries: int = 12, retry_wait: float = 0.5):
@@ -773,6 +790,52 @@ def get_net_worth_log_df() -> pd.DataFrame:
         return con.execute("SELECT * FROM net_worth_log ORDER BY day").df()
     except duckdb.Error:
         return pd.DataFrame(columns=_NW_COLS)
+    finally:
+        con.close()
+
+
+def insert_plan_log(plan: dict, ts=None) -> int:
+    """Snapshot what the 8-Slot Plan recommended (best-effort, at most ~one per hour) so a later
+    calibration can measure whether the buys filled/profited and the cut/hold calls were right."""
+    recs = (plan.get("slots") or []) + (plan.get("holding") or [])
+    if not recs:
+        return 0
+    ts = ts or utcnow()
+    try:
+        con = connect_trades()
+    except RuntimeError:
+        return 0
+    try:
+        _ensure_schema(con)
+        last = con.execute("SELECT max(ts) FROM plan_log").fetchone()
+        if last and last[0] is not None and (ts - last[0]).total_seconds() < 3300:  # ~55 min dedup
+            return 0
+        rows = [[
+            ts, str(s.get("action") or ""), int(s.get("item_id") or 0), str(s.get("name") or ""),
+            int(s.get("price") or 0), int(s.get("units") or s.get("qty") or 0),
+            int(s.get("margin") or 0), int(s.get("gp_day") or 0), int(s.get("expected_net") or 0),
+            int(s.get("recovery_score") or 0), int(s.get("target") or s.get("sell_target") or 0),
+            int(s.get("cur_price") or s.get("price") or 0),
+        ] for s in recs]
+        con.executemany(
+            "INSERT INTO plan_log (ts, action, item_id, name, price, qty, margin, gp_day, exp_net, recovery, target, cur_price) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        return len(rows)
+    except duckdb.Error:
+        return 0
+    finally:
+        con.close()
+
+
+def get_plan_log_df() -> pd.DataFrame:
+    try:
+        con = connect_trades(read_only=True)
+    except RuntimeError:
+        return pd.DataFrame(columns=_PLAN_LOG_COLS)
+    try:
+        return con.execute("SELECT * FROM plan_log ORDER BY ts, id").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=_PLAN_LOG_COLS)
     finally:
         con.close()
 

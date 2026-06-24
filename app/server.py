@@ -27,7 +27,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import add_order, delete_order, delete_trade, ensure_trades_db, get_free_gp, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, purge_terminal_orders, set_free_gp, stats, update_order_fields, update_trade
+from .db import add_order, delete_order, delete_trade, ensure_trades_db, get_free_gp, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_plan_log, insert_trade, purge_terminal_orders, set_free_gp, stats, update_order_fields, update_trade
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -468,7 +468,12 @@ def plan(th: Thresholds = Depends(get_thresholds)) -> dict:
     """The unified 8-slot decision engine: a SELL / HOLD / CUT verdict on every open position
     (with a competitive price + recovery read) plus competitive BUYS for the free slots, all with
     realistic fill timelines. Reads live positions + open orders. Recommender only."""
-    return build_plan(th)
+    res = build_plan(th)
+    try:
+        insert_plan_log(res)   # ~hourly snapshot for later calibration; never breaks the response
+    except Exception:  # noqa: BLE001
+        pass
+    return res
 
 
 @app.get("/api/growth")
