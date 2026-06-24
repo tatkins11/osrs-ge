@@ -526,17 +526,20 @@ def slot_allocator(th: Thresholds | None = None, con=None, free_slots: int = 8,
             skipped += 1
             continue
         cap_used = units * buy
-        hourly_vol = float(r.vol_daily_7d or 0) / 24.0
+        vol_day = float(r.vol_daily_7d or 0)
+        hourly_vol = vol_day / 24.0
         fill_h = units / hourly_vol if hourly_vol > 0 else 240.0
-        limit_h = 4.0 * units / limit          # buy-limit cadence: a full-limit batch can't re-buy for 4h
-        buy_h = max(fill_h, limit_h)           # acquiring these units is gated by BOTH volume and the limit
-        cycle_h = min(240.0, max(1.0, 2.0 * buy_h))  # +sell leg; floor 1h (no sub-hour round-trips)
+        cycle_h = min(240.0, max(1.0, 2.0 * fill_h))   # one buy+sell round-trip of this batch
+        # Honest daily throughput is the MIN of three ceilings, so thin high-value items can't
+        # pretend to round-trip 24x/day: (1) round-trip time, (2) the 6 four-hour buy-limit
+        # windows per day, (3) liquidity -- you can't trade more than ~half the item's daily volume.
+        daily_units = min(units * (24.0 / cycle_h), limit * 6.0, 0.5 * vol_day)
         slip = float(r.slip_margin or 0)
         recs.append({
             "item_id": int(r.item_id), "name": r.name,
             "buy": round(buy), "sell_target": round(float(r.sell_price or 0)),
             "units": units, "capital": round(cap_used), "slip_margin": round(slip),
-            "gp_day": round(slip * units * (24.0 / cycle_h)), "cycle_h": round(cycle_h, 1),
+            "gp_day": round(slip * max(0.0, daily_units)), "cycle_h": round(cycle_h, 1),
         })
         remaining -= cap_used
     out["recommendations"] = recs
