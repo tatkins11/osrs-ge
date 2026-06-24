@@ -356,8 +356,10 @@ CREATE TABLE IF NOT EXISTS orders (   -- live GE offers streamed from the RuneLi
     opened_ts    TIMESTAMP,
     updated_ts   TIMESTAMP,
     completed_ts TIMESTAMP,
-    trade_id     BIGINT,              -- linked trade once a fill is finalized (NULL until then)
-    cash_done    BIGINT DEFAULT 0     -- cash impact already applied to free_gp for this order (idempotent delta)
+    trade_id     BIGINT,              -- first linked trade (NULL until a fill is logged)
+    cash_done    BIGINT DEFAULT 0,    -- cash impact already applied to free_gp for this order (idempotent delta)
+    logged_qty   BIGINT DEFAULT 0,    -- filled qty already written to the trade log (for incremental partial fills)
+    logged_spent BIGINT DEFAULT 0     -- gp already accounted for those logged fills
 );
 CREATE TABLE IF NOT EXISTS settings (   -- small key/value store (free_gp baseline, etc.)
     key   VARCHAR PRIMARY KEY,
@@ -410,10 +412,11 @@ def connect_trades(read_only: bool = False, retries: int = 12, retry_wait: float
 def _ensure_schema(con) -> None:
     """Create the trades schema + run lightweight migrations (idempotent)."""
     con.execute(_TRADES_SCHEMA)
-    try:  # add cash_done to orders tables created before the free-gp tracker
-        con.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS cash_done BIGINT DEFAULT 0")
-    except duckdb.Error:
-        pass
+    for col in ("cash_done BIGINT DEFAULT 0", "logged_qty BIGINT DEFAULT 0", "logged_spent BIGINT DEFAULT 0"):
+        try:  # add columns to orders tables created before these features
+            con.execute(f"ALTER TABLE orders ADD COLUMN IF NOT EXISTS {col}")
+        except duckdb.Error:
+            pass
 
 
 def ensure_trades_db() -> None:
@@ -460,6 +463,34 @@ def _reconcile_order_cash(con, oid: str) -> None:
         if cur is not None:                                  # only move free_gp once a baseline is set
             _set_setting(con, "free_gp", max(0.0, float(cur) + delta))  # free gp can't go negative
         con.execute("UPDATE orders SET cash_done=? WHERE order_id=?", [int(target), oid])
+
+
+def _log_fill_delta(con, oid: str, ts=None, note: str = "GE fill") -> int:
+    """Log a trade for any newly-filled quantity since the last log, so the portfolio + P&L update
+    on PARTIAL fills (not just at order close). Tracks logged_qty/logged_spent for idempotency."""
+    r = con.execute(
+        "SELECT item_id, side, price, filled_qty, spent, logged_qty, logged_spent FROM orders WHERE order_id=?", [oid]
+    ).fetchone()
+    if not r:
+        return 0
+    item_id, side, price, filled, spent, logged_qty, logged_spent = r
+    dq = int(filled or 0) - int(logged_qty or 0)
+    if dq <= 0:
+        return 0
+    dspent = int(spent or 0) - int(logged_spent or 0)
+    # buys record the real average fill (Δspent/Δqty) so P&L is exact; sells record the gross offer
+    # price and the tax engine takes the 2% on the sell side.
+    avg = int(round(dspent / dq)) if (side == "buy" and dspent > 0) else int(price or 0)
+    ts = ts or utcnow()
+    row = con.execute(
+        "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?,?,?,?,?,?) RETURNING id",
+        [ts, int(item_id), side, dq, avg, note],
+    ).fetchone()
+    con.execute(
+        "UPDATE orders SET logged_qty=?, logged_spent=?, trade_id=COALESCE(trade_id, ?) WHERE order_id=?",
+        [int(filled or 0), int(spent or 0), int(row[0]) if row else None, oid],
+    )
+    return 1
 
 
 def get_free_gp():
@@ -629,14 +660,7 @@ def ingest_offers(events: list[dict]) -> dict:
                         s_state = (("BOUGHT" if s_side == "buy" else "SOLD") if (s_fill or 0) >= (s_total or 0)
                                    else ("CANCELLED_BUY" if s_side == "buy" else "CANCELLED_SELL"))
                         con.execute("UPDATE orders SET state=?, completed_ts=? WHERE order_id=?", [s_state, ts, s_oid])
-                        if s_fill and s_fill > 0:
-                            avg = int(round(s_spent / s_fill)) if (s_side == "buy" and (s_spent or 0) > 0) else int(s_price or 0)
-                            r2 = con.execute(
-                                "INSERT INTO trades (ts,item_id,side,qty,price,note) VALUES (?,?,?,?,?,?) RETURNING id",
-                                [ts, int(s_item), s_side, int(s_fill), int(avg), "GE auto · slot reused"],
-                            ).fetchone()
-                            con.execute("UPDATE orders SET trade_id=? WHERE order_id=?", [int(r2[0]) if r2 else None, s_oid])
-                            made += 1
+                        made += _log_fill_delta(con, s_oid, ts, "GE auto · slot reused")  # log its unlogged fills
                         _reconcile_order_cash(con, s_oid)   # displaced order finalized -> settle its cash
                 con.execute(
                     """INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty,
@@ -655,15 +679,7 @@ def ingest_offers(events: list[dict]) -> dict:
                     [item_id, side, price, total, filled, spent, state, slot, ts, (ts if terminal else None), oid],
                 )
             n += 1
-            if terminal and filled > 0 and trade_id is None:
-                avg_price = int(round(spent / filled)) if (side == "buy" and spent > 0) else price
-                # same connection (nesting connect_trades() would deadlock the single writer)
-                row = con.execute(
-                    "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?,?,?,?,?,?) RETURNING id",
-                    [ts, item_id, side, filled, avg_price, f"GE auto · slot {e.get('slot')}"],
-                ).fetchone()
-                con.execute("UPDATE orders SET trade_id=? WHERE order_id=?", [int(row[0]) if row else None, oid])
-                made += 1
+            made += _log_fill_delta(con, oid, ts, f"GE auto · slot {e.get('slot')}")  # log newly-filled qty (partial or full)
             _reconcile_order_cash(con, oid)   # apply this offer's cash delta to free_gp (reserve / proceeds / return)
         return {"orders": n, "trades_created": made}
     finally:
@@ -713,6 +729,7 @@ def add_order(item_id: int, side: str, price: int, total_qty: int, filled_qty: i
              int(total_qty), int(filled_qty), int(filled_qty) * int(price), state, now, now],
         )
         _reconcile_order_cash(con, oid)   # placing a buy reserves gp out of free_gp; a pre-filled sell credits proceeds
+        _log_fill_delta(con, oid, now, "manual order")  # log any qty entered as already filled
         return oid
     finally:
         con.close()
@@ -741,6 +758,7 @@ def update_order_fields(order_id: str, price=None, total_qty=None, filled_qty=No
         _ensure_schema(con)
         con.execute(f"UPDATE orders SET {', '.join(sets)} WHERE order_id = ?", params)
         con.execute("UPDATE orders SET spent = filled_qty * price WHERE order_id = ?", [str(order_id)])
+        _log_fill_delta(con, str(order_id), note="manual fill update")  # newly-filled qty -> portfolio
         _reconcile_order_cash(con, str(order_id))   # reflect repriced/filled changes in free_gp
     finally:
         con.close()
