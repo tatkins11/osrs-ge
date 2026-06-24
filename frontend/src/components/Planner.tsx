@@ -109,6 +109,9 @@ export function Planner({
         your stock <b>held off-market</b> (no slot wasted) until its price comes in. Prices nudge into the spread to win
         the queue; quantities + profits are throttled to what the market actually fills in the shown time.{" "}
         <b>Recommender only.</b> <span className="pos">●</span> = already live on the GE.
+        {plan.mirage_skipped > 0 && (
+          <> · <span className="dim">filtered <b>{plan.mirage_skipped}</b> stale/illiquid outliers (ghost spreads — wide bid-ask or a margin that doesn't hold)</span></>
+        )}
       </div>
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>

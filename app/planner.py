@@ -33,6 +33,12 @@ TARGET_RT_H = 24.0       # size orders to buy+sell within ~a day (the realistic-
 PRICE_EDGE = 0.10        # balanced nudge: give up ~10% of the spread per side to win the queue
 HOLD_MIN = 50.0          # recovery score >= this -> hold an underwater position
 CUT_MAX = 35.0           # recovery score < this -> cut it
+# Margin-mirage guards for the plan's BUYS: a real, capturable flip has a modest spread, a margin
+# that actually persists, and one that isn't a wild multiple of the item's own norm. Anything else
+# is a stale/illiquid ghost quote (one side of the spread hasn't traded) -> don't recommend it.
+MAX_SPREAD_FRAC = 0.12     # raw bid-ask spread above ~12% of price = stale/illiquid, not capturable
+MIN_MARGIN_UPTIME = 0.45   # the margin must hold at least this fraction of the last 7 days to be real
+MARGIN_SANITY_MULT = 3.0   # skip a margin more than this x the item's own 7d-typical (transient blowout)
 # Items the GE restricts to ONE per slot per offer (you can't stack the offer). Only bonds.
 ONE_PER_SLOT = {"old school bond"}
 
@@ -220,6 +226,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     # candidate buy universe (flip_ok + positive competitive margin): used to size buys AND to
     # judge whether an existing live buy order is still worth keeping
     cand_rows: dict[int, tuple] = {}
+    mirage = 0
     if not ms.empty:
         cands = ms[ms["flip_ok"].fillna(False) & (ms["slip_margin"].fillna(-1.0) > 0)]
         for r in cands.itertuples(index=False):
@@ -229,6 +236,16 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             ex = bool(getattr(r, "exempt", False))
             mgn = taxmod.net_sell(int(round(sell_at)), ex) - buy_at
             if mgn <= 0:
+                continue
+            # mirage guard: drop stale/illiquid ghost spreads so they never reach the plan
+            mid = _f(getattr(r, "mid", None)) or 0.0
+            raw_spread = (_f(r.sell_price) or 0.0) - (_f(r.buy_price) or 0.0)
+            up = _f(getattr(r, "margin_uptime", None))
+            med = _f(getattr(r, "margin_median_7d", None))
+            if (mid > 0 and raw_spread / mid > MAX_SPREAD_FRAC) \
+               or (up is not None and up < MIN_MARGIN_UPTIME) \
+               or (med and med > 0 and mgn > MARGIN_SANITY_MULT * med):
+                mirage += 1
                 continue
             vol_day = _f(r.vol_daily_7d) or 0.0
             limit = _f(r.buy_limit) or (vol_day / 12.0)
@@ -308,7 +325,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         "capital_in": round(cap0),
         "free_slots": int(free_slots), "slots_used": int(min(8, len(slots))),
         "n_positions": len(positions), "n_active_sells": len(active_sells),
-        "n_holding": len(holding), "n_buys": len(buys),
+        "n_holding": len(holding), "n_buys": len(buys), "mirage_skipped": int(mirage),
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
             "expected_realized": round(expected_realized),
