@@ -67,7 +67,7 @@ except Exception:
 
 
 def get_thresholds(
-    bankroll: int = Query(DEFAULT_BANKROLL, ge=0),
+    bankroll: int = Query(DEFAULT_BANKROLL),   # free gp; clamped >=0 below (a stale negative must not 422)
     min_volume: int = Query(DEFAULT_MIN_VOLUME, ge=0),
     min_gp_volume: int = Query(25_000_000, ge=0),
     max_age_min: float = Query(360.0, ge=0),
@@ -102,7 +102,7 @@ def get_thresholds(
         overnight_disc=overnight_disc,
         z_buy=z_buy,
         z_sell=z_sell,
-        bankroll=bankroll,
+        bankroll=max(0, bankroll),
         max_alloc_frac=max_alloc_frac,
         min_rt_profit=min_rt_profit,
     )

@@ -458,7 +458,7 @@ def _reconcile_order_cash(con, oid: str) -> None:
     if delta:
         cur = _get_setting(con, "free_gp", None)
         if cur is not None:                                  # only move free_gp once a baseline is set
-            _set_setting(con, "free_gp", float(cur) + delta)
+            _set_setting(con, "free_gp", max(0.0, float(cur) + delta))  # free gp can't go negative
         con.execute("UPDATE orders SET cash_done=? WHERE order_id=?", [int(target), oid])
 
 
@@ -470,7 +470,7 @@ def get_free_gp():
         return None
     try:
         r = con.execute("SELECT value FROM settings WHERE key='free_gp'").fetchone()
-        return float(r[0]) if (r and r[0] is not None) else None
+        return float(max(0.0, r[0])) if (r and r[0] is not None) else None  # never report negative
     except duckdb.Error:
         return None
     finally:
@@ -687,7 +687,7 @@ def delete_order(order_id: str) -> None:
         if r and r[0] and str(r[1] or "").upper() == "BUYING":  # removing a live buy returns its reserved gp
             cur = _get_setting(con, "free_gp", None)
             if cur is not None:
-                _set_setting(con, "free_gp", float(cur) - int(r[0]))
+                _set_setting(con, "free_gp", max(0.0, float(cur) - int(r[0])))
         con.execute("DELETE FROM orders WHERE order_id = ?", [str(order_id)])
     finally:
         con.close()

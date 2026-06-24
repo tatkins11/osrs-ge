@@ -110,7 +110,7 @@ export default function App() {
   // the filter on every refresh so the plan/market sizing reflect the live value.
   useEffect(() => {
     getAccount()
-      .then((a) => { if (a.free_gp != null) setFilters((f) => (f.bankroll === a.free_gp ? f : { ...f, bankroll: a.free_gp as number })); })
+      .then((a) => { if (a.free_gp != null) { const v = Math.max(0, a.free_gp); setFilters((f) => (f.bankroll === v ? f : { ...f, bankroll: v })); } })
       .catch(() => {});
   }, [nonce]);
 
