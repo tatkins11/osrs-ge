@@ -529,11 +529,12 @@ def slot_allocator(th: Thresholds | None = None, con=None, free_slots: int = 8,
         vol_day = float(r.vol_daily_7d or 0)
         hourly_vol = vol_day / 24.0
         fill_h = units / hourly_vol if hourly_vol > 0 else 240.0
-        cycle_h = min(240.0, max(1.0, 2.0 * fill_h))   # one buy+sell round-trip of this batch
-        # Honest daily throughput is the MIN of three ceilings, so thin high-value items can't
-        # pretend to round-trip 24x/day: (1) round-trip time, (2) the 6 four-hour buy-limit
-        # windows per day, (3) liquidity -- you can't trade more than ~half the item's daily volume.
-        daily_units = min(units * (24.0 / cycle_h), limit * 6.0, 0.5 * vol_day)
+        cycle_h = min(240.0, max(1.0, 2.0 * fill_h))   # informational: ~one buy+sell round-trip
+        # Honest daily throughput. The buy limit only resets every 4h, so you can re-buy a slot at
+        # most 6x/day (units * 6) no matter how fast one batch fills -- this is what keeps a thin
+        # megarare from pretending to round-trip 24x/day. Then bound by liquidity: you realistically
+        # capture only a slice (~25%) of an item's daily traded volume.
+        daily_units = min(units * 6.0, 0.25 * vol_day)
         slip = float(r.slip_margin or 0)
         recs.append({
             "item_id": int(r.item_id), "name": r.name,
