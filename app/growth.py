@@ -40,13 +40,14 @@ def compute_growth(th: Thresholds | None = None, con=None) -> dict:
         if own:
             con.close()
 
-    free_gp = float(th.bankroll)                                  # th.bankroll is now your FREE deployable gp
+    # capital picture comes straight from the plan (which uses the server-persisted free gp)
+    free_gp = float(plan.get("free_gp") or 0.0)
     committed = float(plan.get("committed_capital") or 0.0)       # gp locked in open buy offers
     invested = float(port.get("invested") or 0.0)
     unreal = float(port.get("unrealized_total") or 0.0)
     realized_total = float(port.get("realized_total") or 0.0)
-    holdings_value = invested + unreal
-    net_worth = free_gp + committed + holdings_value              # cash + open buys + inventory at live value
+    holdings_value = float(plan.get("holdings_value") or (invested + unreal))
+    net_worth = float(plan.get("net_worth") or (free_gp + committed + holdings_value))
     bankroll = free_gp                                            # (kept name for the snapshot's cash column)
     stats = port.get("stats") or {}
 

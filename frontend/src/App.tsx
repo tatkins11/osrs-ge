@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { addOrder, getCrashes, getFlips, getInvest, getItems, getMeta, getOrders, getOvernight, getSectors, getVolume, type Filters, type InvestResponse, type Meta, type Order, type Row, type SectorsResponse, type TradePrefill } from "./api";
+import { addOrder, getAccount, getCrashes, getFlips, getInvest, getItems, getMeta, getOrders, getOvernight, getSectors, getVolume, setFreeGp, type Filters, type InvestResponse, type Meta, type Order, type Row, type SectorsResponse, type TradePrefill } from "./api";
 import { gpShort } from "./format";
 import { Planner } from "./components/Planner";
 import { GrowthTracker } from "./components/GrowthTracker";
@@ -80,21 +80,22 @@ export default function App() {
     setTab("portfolio");
   }, []);
 
-  // free gp tracking: adjust the (relabelled) bankroll filter as orders are placed/resolved
-  const adjustFreeGp = useCallback((delta: number) => {
-    setFilters((f) => ({ ...f, bankroll: Math.max(0, Math.round(f.bankroll + delta)) }));
+  // free gp is server-persisted now (auto-adjusts as orders fill). Editing the field POSTs it;
+  // the value is re-synced from the server on every refresh so plugin/order changes flow in.
+  const onBankrollCommit = useCallback((v: number) => {
+    setFilters((f) => ({ ...f, bankroll: Math.max(0, Math.round(v)) }));
+    setFreeGp(Math.max(0, Math.round(v))).catch(() => {});
   }, []);
 
-  // quick-add an order from the 8-Slot Plan (or Orders form): place it, then auto-adjust free gp
+  // quick-add an order from the 8-Slot Plan (or Orders form): place it; the server reconciles free gp
   const onAddOrder = useCallback(
     async (o: { item_id: number; side: "buy" | "sell"; price: number; qty: number }) => {
       try {
         await addOrder({ item_id: o.item_id, side: o.side, price: o.price, total_qty: o.qty });
-        if (o.side === "buy") adjustFreeGp(-o.price * o.qty); // gp moves into the buy offer
-        setNonce((n) => n + 1);
+        setNonce((n) => n + 1); // refresh pulls the server-adjusted free gp + the new order
       } catch { /* surfaced by the next refresh */ }
     },
-    [adjustFreeGp]
+    []
   );
 
   // persist filters + active tab across reloads
@@ -103,6 +104,14 @@ export default function App() {
 
   useEffect(() => {
     getMeta().then(setMeta).catch(() => {});
+  }, [nonce]);
+
+  // free gp lives server-side now (auto-adjusts as orders are placed/filled/cancelled). Pull it into
+  // the filter on every refresh so the plan/market sizing reflect the live value.
+  useEffect(() => {
+    getAccount()
+      .then((a) => { if (a.free_gp != null) setFilters((f) => (f.bankroll === a.free_gp ? f : { ...f, bankroll: a.free_gp as number })); })
+      .catch(() => {});
   }, [nonce]);
 
   // picking a (new) item re-opens the panel if it was minimized
@@ -221,7 +230,7 @@ export default function App() {
             </button>
           ))}
         </div>
-        <Controls filters={filters} setFilters={setFilters} />
+        <Controls filters={filters} setFilters={setFilters} onBankrollCommit={onBankrollCommit} />
         <div className="ctrl search">
           <label>Search</label>
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="item name…" />
@@ -323,7 +332,7 @@ export default function App() {
         ) : tab === "orders" ? (
           <>
             <div className="table-wrap">
-              <OrdersTable rows={ordersData} selectedId={selected} onSelect={setSelected} adjustFreeGp={adjustFreeGp} reload={() => getOrders().then(setOrdersData).catch(() => {})} />
+              <OrdersTable rows={ordersData} selectedId={selected} onSelect={setSelected} reload={() => { getOrders().then(setOrdersData).catch(() => {}); setNonce((n) => n + 1); }} />
             </div>
             <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
               <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />

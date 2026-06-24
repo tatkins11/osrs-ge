@@ -17,13 +17,11 @@ export function OrdersTable({
   rows,
   selectedId,
   onSelect,
-  adjustFreeGp,
   reload,
 }: {
   rows: Order[];
   selectedId: number | null;
   onSelect: (id: number) => void;
-  adjustFreeGp: (delta: number) => void;
   reload: () => void;
 }) {
   const { sorted, sort } = useSortable(rows, "updated_ts");
@@ -53,7 +51,7 @@ export function OrdersTable({
     if (!(p > 0) || !(tq > 0)) return setFormErr("price and qty must be > 0");
     setFormErr(null);
     addOrder({ item_id, side, price: p, total_qty: tq, filled_qty: fq })
-      .then(() => { if (side === "buy") adjustFreeGp(-p * (tq - fq)); setQ(""); setPrice(""); setQty(""); setFilled(""); })
+      .then(() => { setQ(""); setPrice(""); setQty(""); setFilled(""); }) // server reconciles free gp; reload re-syncs
       .catch((e) => setFormErr(String(e)))
       .finally(() => reload());
   };
@@ -66,12 +64,9 @@ export function OrdersTable({
     run(() => editOrder(o.order_id, { price: Math.round(Number(ef.price)), filled_qty: Math.round(Number(ef.filled)), total_qty: Math.round(Number(ef.total)) }))
       && setEditId(null);
 
-  // resolve with free-gp adjustment (cancel a buy returns unfilled gp; completing a sell returns proceeds)
-  const resolveAdj = (o: Order, action: "cancel" | "complete") => {
-    if (action === "cancel" && o.side === "buy") adjustFreeGp(o.price * Math.max(0, o.total_qty - o.filled_qty));
-    if (action === "complete" && o.side === "sell") adjustFreeGp(Math.round(o.price * o.total_qty * 0.98)); // ~net of 2% tax
-    run(() => resolveOrder(o.order_id, action));
-  };
+  // the server reconciles free gp on resolve (cancel a buy returns the unfilled reserve; completing
+  // a sell credits proceeds); reload re-syncs the value into the toolbar
+  const resolveAdj = (o: Order, action: "cancel" | "complete") => run(() => resolveOrder(o.order_id, action));
 
   // GE 8-slot grid
   const SLOTS = 8;

@@ -491,6 +491,18 @@ export interface GrowthResponse {
 }
 export const getGrowth = (f: Filters) => get<GrowthResponse>(`/api/growth?${qs(f)}`);
 
+// --- account: server-persisted free gp (auto-adjusts as orders fill) -------
+export interface Account {
+  free_gp: number | null;   // null until first set
+  committed: number;
+}
+export const getAccount = () => get<Account>("/api/account");
+export const setFreeGp = (value: number) =>
+  fetch("/api/account/free_gp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) }).then((r) => {
+    if (!r.ok) throw new Error(`free_gp -> ${r.status}`);
+    return r.json();
+  });
+
 export const getItemNames = () => get<ItemName[]>("/api/itemnames");
 export const getPortfolio = () => get<Portfolio>("/api/portfolio");
 export const addTrade = (t: { item_id: number; side: string; qty: number; price: number; note?: string }) =>

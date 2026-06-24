@@ -25,7 +25,7 @@ import pandas as pd
 
 from . import portfolio as pf
 from . import tax as taxmod
-from .db import connect, get_orders_df
+from .db import connect, get_free_gp, get_orders_df
 from .signals import Thresholds, market_signals
 
 CAPTURE = 0.125          # realistic share of an item's daily volume one flipper can transact
@@ -206,7 +206,8 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         })
 
     # ---- 2) capital picture + split holdings on/off slot + reconcile live orders ------------
-    free_gp = max(0.0, float(th.bankroll))                       # th.bankroll is now your FREE deployable gp
+    _fg = get_free_gp()                                          # server-persisted free gp (source of truth)
+    free_gp = max(0.0, float(_fg if _fg is not None else th.bankroll))  # fall back to the filter until set
     holdings_value = float(port.get("invested") or 0.0) + float(port.get("unrealized_total") or 0.0)
     net_worth = free_gp + committed + holdings_value             # cash + open buys + inventory at live value
     cap0 = free_gp                                               # capital available for NEW buys right now

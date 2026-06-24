@@ -17,7 +17,7 @@ import duckdb
 import pandas as pd
 
 from .config import DB_PATH, LOG_DB_PATH, TRADES_DB_PATH
-from .tax import is_exempt
+from .tax import is_exempt, net_sell
 
 log = logging.getLogger(__name__)
 
@@ -356,7 +356,12 @@ CREATE TABLE IF NOT EXISTS orders (   -- live GE offers streamed from the RuneLi
     opened_ts    TIMESTAMP,
     updated_ts   TIMESTAMP,
     completed_ts TIMESTAMP,
-    trade_id     BIGINT               -- linked trade once a fill is finalized (NULL until then)
+    trade_id     BIGINT,              -- linked trade once a fill is finalized (NULL until then)
+    cash_done    BIGINT DEFAULT 0     -- cash impact already applied to free_gp for this order (idempotent delta)
+);
+CREATE TABLE IF NOT EXISTS settings (   -- small key/value store (free_gp baseline, etc.)
+    key   VARCHAR PRIMARY KEY,
+    value DOUBLE
 );
 CREATE TABLE IF NOT EXISTS net_worth_log (  -- one row per day: snapshot of total worth for the growth curve
     day             DATE PRIMARY KEY,
@@ -385,11 +390,86 @@ def connect_trades(read_only: bool = False, retries: int = 12, retry_wait: float
     raise RuntimeError(f"could not open trades DB at {TRADES_DB_PATH}: {last_err}") from last_err
 
 
+def _ensure_schema(con) -> None:
+    """Create the trades schema + run lightweight migrations (idempotent)."""
+    con.execute(_TRADES_SCHEMA)
+    try:  # add cash_done to orders tables created before the free-gp tracker
+        con.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS cash_done BIGINT DEFAULT 0")
+    except duckdb.Error:
+        pass
+
+
 def ensure_trades_db() -> None:
     """Create the trades file + schema if missing (call once at API startup)."""
     con = connect_trades()
     try:
-        con.execute(_TRADES_SCHEMA)
+        _ensure_schema(con)
+    finally:
+        con.close()
+
+
+# --- free-gp tracking -------------------------------------------------------
+# free_gp = your spendable coin pouch. Placing a buy reserves gp (out of the pouch); a sell
+# returns proceeds as it fills; cancelling a buy returns the unfilled reserve. Each order stores
+# the cash impact already applied (cash_done) so any state change re-applies only the delta.
+def _get_setting(con, key, default=None):
+    r = con.execute("SELECT value FROM settings WHERE key=?", [key]).fetchone()
+    return r[0] if (r and r[0] is not None) else default
+
+
+def _set_setting(con, key, value) -> None:
+    con.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [key, float(value)])
+
+
+def _target_cash(side, price, total, filled, state) -> int:
+    """Net cash impact an order SHOULD have on free_gp given its current state."""
+    price, total, filled = int(price or 0), int(total or 0), int(filled or 0)
+    if side == "sell":
+        return net_sell(price, False) * filled               # proceeds for the filled qty (~net of 2% tax)
+    cancelled = str(state or "").upper().startswith("CANCELLED")
+    return -price * (filled if cancelled else total)         # reserve full while live/bought; only filled if cancelled
+
+
+def _reconcile_order_cash(con, oid: str) -> None:
+    """Apply the delta between an order's target cash impact and what's already been applied."""
+    r = con.execute("SELECT side, price, total_qty, filled_qty, state, cash_done FROM orders WHERE order_id=?", [oid]).fetchone()
+    if not r:
+        return
+    side, price, total, filled, state, cash_done = r
+    target = _target_cash(side, price, total, filled, state)
+    delta = target - int(cash_done or 0)
+    if delta:
+        cur = _get_setting(con, "free_gp", None)
+        if cur is not None:                                  # only move free_gp once a baseline is set
+            _set_setting(con, "free_gp", float(cur) + delta)
+        con.execute("UPDATE orders SET cash_done=? WHERE order_id=?", [int(target), oid])
+
+
+def get_free_gp():
+    """The persisted free-gp baseline, or None if never set (callers fall back to the filter)."""
+    try:
+        con = connect_trades(read_only=True)
+    except RuntimeError:
+        return None
+    try:
+        r = con.execute("SELECT value FROM settings WHERE key='free_gp'").fetchone()
+        return float(r[0]) if (r and r[0] is not None) else None
+    except duckdb.Error:
+        return None
+    finally:
+        con.close()
+
+
+def set_free_gp(value: float) -> None:
+    """Set the free-gp baseline and re-anchor every order as already accounted at its current state,
+    so the value is taken as-is (today's orders are baked in; only future changes adjust it)."""
+    con = connect_trades()
+    try:
+        _ensure_schema(con)
+        _set_setting(con, "free_gp", max(0.0, float(value)))
+        for o in con.execute("SELECT order_id, side, price, total_qty, filled_qty, state FROM orders").fetchall():
+            tgt = _target_cash(o[1], o[2], o[3], o[4], o[5])
+            con.execute("UPDATE orders SET cash_done=? WHERE order_id=?", [int(tgt), o[0]])
     finally:
         con.close()
 
@@ -473,7 +553,7 @@ def ingest_offers(events: list[dict]) -> dict:
         return {"orders": 0, "trades_created": 0}
     con = connect_trades()
     try:
-        con.execute(_TRADES_SCHEMA)
+        _ensure_schema(con)
         n = made = 0
         for e in events:
             oid = str(e.get("order_id") or "").strip()
@@ -537,6 +617,7 @@ def ingest_offers(events: list[dict]) -> dict:
                             ).fetchone()
                             con.execute("UPDATE orders SET trade_id=? WHERE order_id=?", [int(r2[0]) if r2 else None, s_oid])
                             made += 1
+                        _reconcile_order_cash(con, s_oid)   # displaced order finalized -> settle its cash
                 con.execute(
                     """INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty,
                            filled_qty, spent, state, opened_ts, updated_ts, completed_ts, trade_id)
@@ -562,6 +643,7 @@ def ingest_offers(events: list[dict]) -> dict:
                 ).fetchone()
                 con.execute("UPDATE orders SET trade_id=? WHERE order_id=?", [int(row[0]) if row else None, oid])
                 made += 1
+            _reconcile_order_cash(con, oid)   # apply this offer's cash delta to free_gp (reserve / proceeds / return)
         return {"orders": n, "trades_created": made}
     finally:
         con.close()
@@ -583,6 +665,12 @@ def get_orders_df() -> pd.DataFrame:
 def delete_order(order_id: str) -> None:
     con = connect_trades()
     try:
+        _ensure_schema(con)
+        r = con.execute("SELECT cash_done, state FROM orders WHERE order_id=?", [str(order_id)]).fetchone()
+        if r and r[0] and str(r[1] or "").upper() == "BUYING":  # removing a live buy returns its reserved gp
+            cur = _get_setting(con, "free_gp", None)
+            if cur is not None:
+                _set_setting(con, "free_gp", float(cur) - int(r[0]))
         con.execute("DELETE FROM orders WHERE order_id = ?", [str(order_id)])
     finally:
         con.close()
@@ -596,13 +684,14 @@ def add_order(item_id: int, side: str, price: int, total_qty: int, filled_qty: i
     state = "BUYING" if side == "buy" else "SELLING"
     con = connect_trades()
     try:
-        con.execute(_TRADES_SCHEMA)
+        _ensure_schema(con)
         con.execute(
             "INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty, filled_qty, spent, state, opened_ts, updated_ts) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [oid, login, (int(slot) if slot is not None else None), int(item_id), side, int(price),
              int(total_qty), int(filled_qty), int(filled_qty) * int(price), state, now, now],
         )
+        _reconcile_order_cash(con, oid)   # placing a buy reserves gp out of free_gp; a pre-filled sell credits proceeds
         return oid
     finally:
         con.close()
@@ -628,8 +717,10 @@ def update_order_fields(order_id: str, price=None, total_qty=None, filled_qty=No
     params.append(str(order_id))
     con = connect_trades()
     try:
+        _ensure_schema(con)
         con.execute(f"UPDATE orders SET {', '.join(sets)} WHERE order_id = ?", params)
         con.execute("UPDATE orders SET spent = filled_qty * price WHERE order_id = ?", [str(order_id)])
+        _reconcile_order_cash(con, str(order_id))   # reflect repriced/filled changes in free_gp
     finally:
         con.close()
 

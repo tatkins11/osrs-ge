@@ -50,14 +50,14 @@ function NumInput({
   );
 }
 
-export function Controls({ filters, setFilters }: { filters: Filters; setFilters: (f: Filters) => void }) {
+export function Controls({ filters, setFilters, onBankrollCommit }: { filters: Filters; setFilters: (f: Filters) => void; onBankrollCommit?: (n: number) => void }) {
   const set = (k: keyof Filters) => (n: number) => setFilters({ ...filters, [k]: n });
 
   return (
     <>
       <div className="ctrl">
-        <label title="Your FREE gp — cash available to deploy into new buys right now. The 8-Slot Plan + Growth add your open orders + holdings on top to get net worth.">Free gp</label>
-        <NumInput value={filters.bankroll} onCommit={set("bankroll")} />
+        <label title="Your FREE gp — cash available to deploy now (server-tracked: auto-adjusts as orders are placed/filled/cancelled). The 8-Slot Plan + Growth add open orders + holdings on top to get net worth.">Free gp</label>
+        <NumInput value={filters.bankroll} onCommit={onBankrollCommit ?? set("bankroll")} />
       </div>
       <div className="ctrl">
         <label>Min profit (gp)</label>

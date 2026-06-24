@@ -27,7 +27,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import add_order, delete_order, delete_trade, ensure_trades_db, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, stats, update_order_fields, update_trade
+from .db import add_order, delete_order, delete_trade, ensure_trades_db, get_free_gp, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_trade, set_free_gp, stats, update_order_fields, update_trade
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -470,6 +470,31 @@ def growth(th: Thresholds = Depends(get_thresholds)) -> dict:
     """Bankroll growth tracker: net worth (cash + holdings), realized growth rate from the trade
     log, the plan's modeled forward rate, an idle-capital flag, and the projected days to 1B/2B/5B."""
     return compute_growth(th)
+
+
+class FreeGpIn(BaseModel):
+    value: float
+
+
+@app.get("/api/account")
+def account() -> dict:
+    """Capital snapshot for syncing the Free gp field — the server-persisted free gp (source of
+    truth, auto-adjusted as orders are placed/filled/cancelled) + gp committed in open buy offers."""
+    fg = get_free_gp()
+    odf = get_orders_df()
+    committed = 0
+    if not odf.empty:
+        op = odf[(odf["state"] == "BUYING") & (odf["side"] == "buy")]
+        if not op.empty:
+            committed = int(((op["total_qty"].fillna(0) - op["filled_qty"].fillna(0)).clip(lower=0) * op["price"].fillna(0)).sum())
+    return {"free_gp": (round(fg) if fg is not None else None), "committed": committed}
+
+
+@app.post("/api/account/free_gp")
+def set_account_free_gp(b: FreeGpIn) -> dict:
+    """Set the free-gp baseline (re-anchors current orders as already accounted)."""
+    set_free_gp(max(0.0, b.value))
+    return {"ok": True, "free_gp": round(get_free_gp() or 0)}
 
 
 # --- serve the built frontend (if present) ----------------------------------
