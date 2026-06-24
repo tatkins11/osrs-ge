@@ -40,6 +40,7 @@ from .signals import (
     market_signals,
     overnight_table,
     reversion_table,
+    slot_allocator,
     volume_table,
 )
 from .tax import EXEMPT_ITEM_NAMES
@@ -390,6 +391,30 @@ def resolve_order(order_id: str, body: ResolveIn) -> dict:
 def remove_order(order_id: str) -> dict:
     delete_order(order_id)
     return {"ok": True}
+
+
+@app.get("/api/allocator")
+def allocator(th: Thresholds = Depends(get_thresholds)) -> dict:
+    """8-slot GE capital allocator. Reads your live open orders (used slots + gp committed in
+    open buy offers), then recommends the best flips to fill your FREE slots to maximize total
+    gp/day within remaining capital + per-item buy limits. Recommender only -- never auto-places."""
+    odf = get_orders_df()
+    used, committed, excl = 0, 0.0, []
+    if not odf.empty:
+        op = odf[odf["state"].isin(["BUYING", "SELLING"])]
+        used = len(op)
+        excl = [int(x) for x in op["item_id"].tolist()]
+        buys = op[op["side"] == "buy"]
+        if not buys.empty:
+            remain = (buys["total_qty"].fillna(0) - buys["filled_qty"].fillna(0)).clip(lower=0)
+            committed = float((remain * buys["price"].fillna(0)).sum())
+    free = max(0, 8 - used)
+    avail = max(0.0, float(th.bankroll) - committed)
+    res = slot_allocator(th, free_slots=free, capital=avail, exclude_items=excl)
+    res["used_slots"] = used
+    res["committed_capital"] = round(committed)
+    res["bankroll"] = round(float(th.bankroll))
+    return res
 
 
 # --- serve the built frontend (if present) ----------------------------------

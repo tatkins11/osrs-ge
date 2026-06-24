@@ -366,6 +366,32 @@ export const deleteOrder = (id: string) =>
     return r.json();
   });
 
+// --- 8-slot capital allocator ----------------------------------------------
+export interface AllocRec {
+  item_id: number;
+  name: string;
+  buy: number;
+  sell_target: number;
+  units: number;
+  capital: number;
+  slip_margin: number;
+  gp_day: number;
+  cycle_h: number;
+}
+export interface AllocatorPlan {
+  free_slots: number;
+  used_slots: number;
+  capital_in: number;        // gp available to deploy into the free slots
+  committed_capital: number; // gp locked in current open buy offers
+  bankroll: number;
+  recommendations: AllocRec[];
+  total_capital: number;
+  total_gp_day: number;
+  utilization: number;       // fraction of available capital the plan deploys
+  skipped_no_capital: number;
+}
+export const getAllocator = (f: Filters) => get<AllocatorPlan>(`/api/allocator?${qs(f)}`);
+
 export const getItemNames = () => get<ItemName[]>("/api/itemnames");
 export const getPortfolio = () => get<Portfolio>("/api/portfolio");
 export const addTrade = (t: { item_id: number; side: string; qty: number; price: number; note?: string }) =>

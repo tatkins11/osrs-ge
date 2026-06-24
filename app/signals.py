@@ -483,6 +483,62 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) ->
                                         "on_units", "on_exp_profit", "on_ev"])
 
 
+def slot_allocator(th: Thresholds | None = None, con=None, free_slots: int = 8,
+                   capital: float | None = None, exclude_items=None) -> dict:
+    """Pick the best set of flips to fill your FREE Grand Exchange slots right now to maximize
+    total gp/day, given available capital + per-item buy limits. Greedy by capital velocity
+    (gp/hour), one item per slot, only flips with a positive AFTER-SLIPPAGE margin, capital
+    deducted as each is allocated. Recommender only -- you place the offers yourself."""
+    th = th or Thresholds()
+    own = con is None
+    con = con or connect(read_only=True)
+    try:
+        d = market_signals(th, con)
+    finally:
+        if own:
+            con.close()
+    cap0 = float(capital if capital is not None else th.bankroll)
+    excl = {int(x) for x in (exclude_items or [])}
+    out = {"free_slots": int(free_slots), "capital_in": round(cap0), "recommendations": [],
+           "total_capital": 0, "total_gp_day": 0, "utilization": 0.0, "skipped_no_capital": 0}
+    if d.empty or free_slots <= 0 or cap0 <= 0:
+        return out
+    c = d[d["flip_ok"].fillna(False) & ~d["item_id"].astype(int).isin(excl)
+          & (d["slip_margin"].fillna(-1.0) > 0)].sort_values("gp_per_h", ascending=False)
+    remaining, recs, skipped = cap0, [], 0
+    for r in c.itertuples():
+        if len(recs) >= free_slots:
+            break
+        buy = float(r.buy_price or 0)
+        if buy <= 0:
+            continue
+        if remaining < buy:
+            skipped += 1
+            continue
+        cap_units = float(r.buy_limit) if pd.notna(r.buy_limit) else (float(r.vol_daily_7d or 0) / 12.0)
+        units = int(min(max(1.0, cap_units), remaining // buy))
+        if units < 1:
+            continue
+        cap_used = units * buy
+        hourly_vol = float(r.vol_daily_7d or 0) / 24.0
+        fill_h = units / hourly_vol if hourly_vol > 0 else 240.0
+        cycle_h = min(240.0, max(0.5, 2.0 * fill_h))
+        slip = float(r.slip_margin or 0)
+        recs.append({
+            "item_id": int(r.item_id), "name": r.name,
+            "buy": round(buy), "sell_target": round(float(r.sell_price or 0)),
+            "units": units, "capital": round(cap_used), "slip_margin": round(slip),
+            "gp_day": round(slip * units * (24.0 / cycle_h)), "cycle_h": round(cycle_h, 1),
+        })
+        remaining -= cap_used
+    out["recommendations"] = recs
+    out["total_capital"] = round(sum(x["capital"] for x in recs))
+    out["total_gp_day"] = round(sum(x["gp_day"] for x in recs))
+    out["utilization"] = round(out["total_capital"] / cap0, 3) if cap0 > 0 else 0.0
+    out["skipped_no_capital"] = skipped
+    return out
+
+
 def full_table(th: Thresholds | None = None, con=None) -> list[dict]:
     th = th or Thresholds()
     d = market_signals(th, con)
