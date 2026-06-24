@@ -418,17 +418,29 @@ export interface PlanSlot {
   live: boolean;               // a matching open order already exists on the GE
   sector?: string | null;
 }
+export interface ReconcileItem {
+  order_id: string | null;
+  item_id: number;
+  name: string;
+  side: string;                // 'buy' | 'sell'
+  price: number;
+  progress: string;            // "filled/total"
+  status: "keep" | "reprice" | "cancel";
+  note: string;
+}
 export interface PlanResponse {
   bankroll: number;
   capital_in: number;
   committed_capital: number;
-  used_slots: number;
   free_slots: number;
+  slots_used: number;
   n_positions: number;
-  n_sells: number;
+  n_active_sells: number;
+  n_holding: number;
   n_buys: number;
-  slots: PlanSlot[];
-  bench: PlanSlot[];
+  slots: PlanSlot[];           // the active 8-slot config: SELL/CUT holdings + BUYS
+  holding: PlanSlot[];         // held OFF-MARKET (no slot) — waiting for a better price
+  reconcile: ReconcileItem[];  // what to do with each current live order
   totals: { expected_realized: number; buy_capital: number; plan_gp_day: number; growth_day: number | null };
 }
 export const getPlan = (f: Filters) => get<PlanResponse>(`/api/plan?${qs(f)}`);

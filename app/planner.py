@@ -33,6 +33,13 @@ TARGET_RT_H = 24.0       # size orders to buy+sell within ~a day (the realistic-
 PRICE_EDGE = 0.10        # balanced nudge: give up ~10% of the spread per side to win the queue
 HOLD_MIN = 50.0          # recovery score >= this -> hold an underwater position
 CUT_MAX = 35.0           # recovery score < this -> cut it
+# Items the GE restricts to ONE per slot per offer (you can't stack the offer). Only bonds.
+ONE_PER_SLOT = {"old school bond"}
+
+
+def offer_cap(name) -> float:
+    """Max units a single GE offer can hold for this item (bonds are 1-per-slot)."""
+    return 1.0 if str(name or "").strip().lower() in ONE_PER_SLOT else float("inf")
 
 
 def _f(x):
@@ -55,7 +62,7 @@ def timeline(units: float, vol_day: float, limit: float):
     rate = CAPTURE * max(0.0, vol_day) / 24.0            # units/hour you can transact one side
     leg_h = units / rate if rate > 0 else 720.0
     gate_h = 4.0 if (limit and units >= limit) else 0.0  # full-limit batch can't re-buy for 4h
-    rt_h = min(720.0, max(0.5, max(2.0 * leg_h, gate_h + leg_h)))
+    rt_h = min(720.0, max(1.0, max(2.0 * leg_h, gate_h + leg_h)))  # floor 1h: no sub-hour round-trips
     daily_units = min(units * (24.0 / rt_h), CAPTURE * max(0.0, vol_day))
     return round(leg_h, 1), round(rt_h, 1), max(0.0, daily_units)
 
@@ -95,6 +102,20 @@ def recovery_score(sig: dict, avg_cost: float, cur_price: float | None) -> tuple
     if est and avg_cost and est < avg_cost * 0.95:
         score -= 18; why.append("fair value now below your cost")
     return max(0.0, min(100.0, score)), why
+
+
+def _buy_row(r, iid: int, units: float, buy_at: float, sell_at: float, exempt: bool,
+             vol_day: float, limit: float, live: bool) -> dict:
+    leg_h, rt_h, daily_units = timeline(units, vol_day, limit)
+    margin = taxmod.net_sell(int(round(sell_at)), exempt) - buy_at
+    return {
+        "action": "BUY", "item_id": int(iid), "name": getattr(r, "name", str(iid)),
+        "price": round(buy_at), "sell_target": round(sell_at), "units": int(units),
+        "capital": round(units * buy_at), "margin": round(margin),
+        "gp_day": round(margin * daily_units), "buy_h": leg_h, "roundtrip_h": rt_h,
+        "reason": f"competitive buy; ~{int(units):,} units round-trip in ~{rt_h:.0f}h",
+        "live": bool(live),
+    }
 
 
 def build_plan(th: Thresholds | None = None, con=None) -> dict:
@@ -184,73 +205,107 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             "reason": reason, "live": iid in live_sell_ids, "sector": p.get("sector"),
         })
 
-    # ---- 2) buys for the free slots --------------------------------------------------------
+    # ---- 2) split holdings on/off slot + reconcile live orders ------------------------------
     cap0 = max(0.0, float(th.bankroll) - committed)
     per_slot_cap = float(th.max_alloc_frac or 0) * float(th.bankroll or cap0)
-    # a holding we're listing occupies a slot; buys get whatever's left of the 8
-    sell_slots = min(len(sells), 8)
-    free_slots = max(0, 8 - sell_slots)
-    excl = held_ids | live_buy_ids
-    buys = []
-    if free_slots > 0 and not ms.empty:
-        cands = ms[ms["flip_ok"].fillna(False) & ~ms["item_id"].astype(int).isin(excl)
-                   & (ms["slip_margin"].fillna(-1.0) > 0)].copy()
-        # rank by competitive gp/day
-        rows = []
+    active_sells = [s for s in sells if s["action"] in ("SELL", "CUT")]  # need a slot now
+    holding = [s for s in sells if s["action"] == "HOLD"]                # held OFF-MARKET, no slot
+    active_sell_ids = {s["item_id"] for s in active_sells}
+    holding_ids = {s["item_id"] for s in holding}
+
+    # candidate buy universe (flip_ok + positive competitive margin): used to size buys AND to
+    # judge whether an existing live buy order is still worth keeping
+    cand_rows: dict[int, tuple] = {}
+    if not ms.empty:
+        cands = ms[ms["flip_ok"].fillna(False) & (ms["slip_margin"].fillna(-1.0) > 0)]
         for r in cands.itertuples(index=False):
-            bid, ask = _f(r.buy_price), _f(r.sell_price)
-            buy_at, sell_at = competitive(bid, ask)
+            buy_at, sell_at = competitive(_f(r.buy_price), _f(r.sell_price))
             if not buy_at or not sell_at:
                 continue
-            exempt = bool(getattr(r, "exempt", False))
-            margin = taxmod.net_sell(int(round(sell_at)), exempt) - buy_at
-            if margin <= 0:
+            ex = bool(getattr(r, "exempt", False))
+            mgn = taxmod.net_sell(int(round(sell_at)), ex) - buy_at
+            if mgn <= 0:
                 continue
             vol_day = _f(r.vol_daily_7d) or 0.0
             limit = _f(r.buy_limit) or (vol_day / 12.0)
-            liq = size_for_timeline(vol_day)
-            cap_units = (per_slot_cap // buy_at) if per_slot_cap > 0 else liq
-            rows.append((margin, buy_at, sell_at, exempt, vol_day, limit, liq, cap_units, r))
-        rows.sort(key=lambda x: x[0] * x[6], reverse=True)  # ~margin x liquidity-units = rough gp potential
-        remaining = cap0
-        for margin, buy_at, sell_at, exempt, vol_day, limit, liq, cap_units, r in rows:
-            if len(buys) >= free_slots:
+            cand_rows[int(r.item_id)] = (mgn, buy_at, sell_at, ex, vol_day, limit, r)
+    good_buy_ids = set(cand_rows)
+
+    # reconcile each live order against the plan: keep / reprice / cancel
+    reconcile = []
+    kept_buy_ids = set()
+    if not open_orders.empty:
+        for o in open_orders.itertuples():
+            iid, side = int(o.item_id), str(o.side)
+            nm = sig.get(iid, {}).get("name") or str(iid)
+            price = int(o.price or 0)
+            prog = f"{int(o.filled_qty or 0):,}/{int(o.total_qty or 0):,}"
+            if side == "sell":
+                if iid in active_sell_ids:
+                    tgt = next((s["price"] for s in active_sells if s["item_id"] == iid), None)
+                    if tgt and price and abs(price - tgt) / max(price, 1) > 0.02:
+                        status, note = "reprice", f"reprice to ~{tgt:,} to stay competitive"
+                    else:
+                        status, note = "keep", "matches plan — leave it"
+                elif iid in holding_ids:
+                    status, note = "cancel", "hold off-market for a better price"
+                else:
+                    status, note = "keep", "sell offer (no tracked holding)"
+            else:  # buy
+                if iid in good_buy_ids:
+                    status, note = "keep", f"still a good buy — keep filling ({prog})"
+                    kept_buy_ids.add(iid)
+                else:
+                    status, note = "cancel", "no longer a good buy — cancel & redeploy"
+            reconcile.append({"order_id": getattr(o, "order_id", None), "item_id": iid, "name": nm,
+                              "side": side, "price": price, "progress": prog, "status": status, "note": note})
+
+    # ---- 3) fill the free slots with new buys ----------------------------------------------
+    slots_used_existing = len(active_sells) + len(kept_buy_ids)
+    free_slots = max(0, 8 - slots_used_existing)
+    excl = held_ids | live_buy_ids   # don't re-recommend held items or items already on a live buy
+    new_buys = []
+    remaining = cap0
+    if free_slots > 0 and good_buy_ids:
+        ranked = sorted(cand_rows.items(), key=lambda kv: kv[1][0] * size_for_timeline(kv[1][4]), reverse=True)
+        for iid, (mgn, buy_at, sell_at, ex, vol_day, limit, r) in ranked:
+            if len(new_buys) >= free_slots:
                 break
-            if remaining < buy_at:
+            if iid in excl or remaining < buy_at:
                 continue
-            units = int(min(liq, limit, cap_units, remaining // buy_at))
+            cap_units = (per_slot_cap // buy_at) if per_slot_cap > 0 else size_for_timeline(vol_day)
+            units = int(min(size_for_timeline(vol_day), limit, cap_units, remaining // buy_at, offer_cap(r.name)))
             if units < 1:
                 continue
-            leg_h, rt_h, daily_units = timeline(units, vol_day, limit)
-            cap_used = units * buy_at
-            buys.append({
-                "action": "BUY", "item_id": int(r.item_id), "name": r.name,
-                "price": round(buy_at), "sell_target": round(sell_at), "units": units,
-                "capital": round(cap_used), "margin": round(margin),
-                "gp_day": round(margin * daily_units), "buy_h": leg_h, "roundtrip_h": rt_h,
-                "reason": f"competitive buy; ~{units:,} units round-trip in ~{rt_h:.0f}h",
-                "live": int(r.item_id) in live_buy_ids,
-            })
-            remaining -= cap_used
+            new_buys.append(_buy_row(r, iid, units, buy_at, sell_at, ex, vol_day, limit, live=False))
+            remaining -= units * buy_at
 
-    # ---- 3) assemble the 8-slot plan -------------------------------------------------------
-    order = {"CUT": 0, "SELL": 1, "HOLD": 2}
-    sells.sort(key=lambda s: (order.get(s["action"], 3), -(s.get("expected_net") or 0)))
-    slots = (sells + buys)[:8]
-    bench = sells[8:]  # more holdings than slots — these wait for a slot to free
+    # live buys we're keeping -> show them as slots too (already placed)
+    kept_buy_rows = []
+    for iid in kept_buy_ids:
+        mgn, buy_at, sell_at, ex, vol_day, limit, r = cand_rows[iid]
+        units = max(1, int(min(size_for_timeline(vol_day), limit, offer_cap(r.name))))
+        row = _buy_row(r, iid, units, buy_at, sell_at, ex, vol_day, limit, live=True)
+        row["reason"] = "live buy — keep filling"
+        kept_buy_rows.append(row)
 
-    expected_realized = sum(s["expected_net"] for s in sells if s["action"] in ("SELL", "CUT") and s["expected_net"])
-    plan_gp_day = sum(b["gp_day"] for b in buys)
-    buy_capital = sum(b["capital"] for b in buys)
+    # ---- 4) assemble ------------------------------------------------------------------------
+    active_sells.sort(key=lambda s: ({"CUT": 0, "SELL": 1}.get(s["action"], 2), -(s.get("expected_net") or 0)))
+    buys = kept_buy_rows + new_buys
+    slots = (active_sells + buys)[:8]
+
+    expected_realized = sum(s["expected_net"] for s in active_sells if s["expected_net"])
+    plan_gp_day = sum(b.get("gp_day") or 0 for b in buys)
     bankroll = float(th.bankroll)
     return {
         "bankroll": round(bankroll), "capital_in": round(cap0), "committed_capital": round(committed),
-        "used_slots": int(len(open_orders)), "free_slots": int(free_slots),
-        "n_positions": len(positions), "n_sells": len(sells), "n_buys": len(buys),
-        "slots": slots, "bench": bench,
+        "free_slots": int(free_slots), "slots_used": int(min(8, len(slots))),
+        "n_positions": len(positions), "n_active_sells": len(active_sells),
+        "n_holding": len(holding), "n_buys": len(buys),
+        "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
             "expected_realized": round(expected_realized),
-            "buy_capital": round(buy_capital),
+            "buy_capital": round(sum(b.get("capital") or 0 for b in buys)),
             "plan_gp_day": round(plan_gp_day),
             "growth_day": round(plan_gp_day / bankroll, 4) if bankroll > 0 else None,
         },
