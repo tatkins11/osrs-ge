@@ -293,7 +293,9 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     new_buys = []
     remaining = cap0
     if free_slots > 0 and good_buy_ids:
-        ranked = sorted(cand_rows.items(), key=lambda kv: kv[1][0] * size_for_timeline(kv[1][4]), reverse=True)
+        # rank by PER-UNIT margin (not margin x volume): favor high-value flips you buy in 1s/few —
+        # they fill as single transactions. Bulk multi-unit flips crawl, so they're deprioritised.
+        ranked = sorted(cand_rows.items(), key=lambda kv: kv[1][0], reverse=True)
         for iid, (mgn, buy_at, sell_at, ex, vol_day, limit, r) in ranked:
             if len(new_buys) >= free_slots:
                 break
