@@ -411,7 +411,7 @@ export const getAllocator = (f: Filters) => get<AllocatorPlan>(`/api/allocator?$
 
 // --- unified 8-slot decision engine (SELL/HOLD/CUT + BUY) -------------------
 export interface PlanSlot {
-  action: "SELL" | "HOLD" | "CUT" | "BUY";
+  action: "SELL" | "HOLD" | "CUT" | "BUY" | "LIST";
   item_id: number;
   name: string;
   price: number | null;        // list price (sells) or buy price (buys)
@@ -457,6 +457,7 @@ export interface PlanResponse {
   n_active_sells: number;
   n_holding: number;
   n_buys: number;
+  n_listed: number;            // holds opportunistically listed at target in otherwise-empty slots
   mirage_skipped: number;      // flips dropped as stale/illiquid ghost spreads (not recommended)
   slots: PlanSlot[];           // the active 8-slot config: SELL/CUT holdings + BUYS
   holding: PlanSlot[];         // held OFF-MARKET (no slot) — waiting for a better price

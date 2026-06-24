@@ -11,8 +11,8 @@ function Tile({ k, v, cls = "", title }: { k: string; v: ReactNode; cls?: string
   );
 }
 
-const ACT_BADGE: Record<string, string> = { CUT: "badge-STRONG_SELL", SELL: "badge-SELL", HOLD: "badge-HOLD", BUY: "badge-BUY" };
-const ACT_SLOT: Record<string, string> = { CUT: "sell", SELL: "sell", HOLD: "hold", BUY: "buy" };
+const ACT_BADGE: Record<string, string> = { CUT: "badge-STRONG_SELL", SELL: "badge-SELL", HOLD: "badge-HOLD", BUY: "badge-BUY", LIST: "badge-ILLIQUID" };
+const ACT_SLOT: Record<string, string> = { CUT: "sell", SELL: "sell", HOLD: "hold", BUY: "buy", LIST: "hold" };
 const REC_BADGE: Record<string, string> = { keep: "badge-BUY", reprice: "badge-ILLIQUID", cancel: "badge-STRONG_SELL" };
 const sign = (v?: number | null) => (v == null ? "" : v > 0 ? "pos" : v < 0 ? "neg" : "");
 const recCls = (v?: number | null) => (v == null ? "dim" : v >= 50 ? "pos" : v < 35 ? "neg" : "");
@@ -105,9 +105,10 @@ export function Planner({
     <div className="tbl-scroll">
       <div className="exp-banner">
         <b>8-slot plan.</b> Your live positions, open orders, and capital → one recommendation per slot:{" "}
-        <b>SELL</b>/<b>CUT</b> holdings worth listing now, competitive <b>BUYS</b> for the free slots, and the rest of
-        your stock <b>held off-market</b> (no slot wasted) until its price comes in. Prices nudge into the spread to win
-        the queue; quantities + profits are throttled to what the market actually fills in the shown time.{" "}
+        <b>SELL</b>/<b>CUT</b> holdings worth listing now, competitive <b>BUYS</b> for the free slots, and — rather than
+        leave slots empty — <b>LIST</b> the best holds at fair value to catch a lucky spike (free to wait). The rest of
+        your stock is <b>held off-market</b>. Prices nudge into the spread to win the queue; quantities + profits are
+        throttled to what the market actually fills in the shown time.{" "}
         <b>Recommender only.</b> <span className="pos">●</span> = already live on the GE.
         {plan.mirage_skipped > 0 && (
           <> · <span className="dim">filtered <b>{plan.mirage_skipped}</b> stale/illiquid outliers (ghost spreads — wide bid-ask or a margin that doesn't hold)</span></>
@@ -115,7 +116,7 @@ export function Planner({
       </div>
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
-        <Tile k="Slots in use" v={`${plan.slots_used} / 8`} title={`${plan.n_active_sells} sells/cuts + ${plan.n_buys} buys · ${plan.free_slots} free · ${plan.n_holding} held off-market`} />
+        <Tile k="Slots in use" v={`${plan.slots_used} / 8`} title={`${plan.n_active_sells} sells/cuts + ${plan.n_buys} buys + ${plan.n_listed} listed-at-target · ${plan.free_slots} free · ${plan.n_holding} held off-market`} />
         <Tile k="Free gp" v={gpShort(plan.free_gp)} cls="pos" title="Deployable cash right now (your Free gp filter). New buys draw from this — auto-decrements when you ＋add a buy." />
         <Tile k="Net worth" v={gpShort(plan.net_worth)} title={`Free ${gp(plan.free_gp)} + open buys ${gp(plan.committed_capital)} + holdings ${gp(plan.holdings_value)}`} />
         <Tile k="Realize from sells" v={gp(t.expected_realized)} cls={sign(t.expected_realized)} title="Net P&L you'd lock in by filling the SELL + CUT offers in this plan" />
@@ -123,11 +124,11 @@ export function Planner({
       </div>
 
       <div className="slot-head" style={{ marginTop: 14 }}>
-        Your 8 slots — <b>{plan.n_active_sells}</b> to sell/cut, <b>{plan.n_buys}</b> to buy, <b>{plan.free_slots}</b> free
+        Your 8 slots — <b>{plan.n_active_sells}</b> to sell/cut, <b>{plan.n_buys}</b> to buy, <b>{plan.n_listed}</b> listed at target, <b>{plan.free_slots}</b> free
       </div>
       <div className="slot-grid">{tiles}</div>
 
-      <div className="slot-head" style={{ marginTop: 16 }}>Sell / cut now (active slots)</div>
+      <div className="slot-head" style={{ marginTop: 16 }}>Sell / cut / list (active slots)</div>
       <table className="tbl">
         <thead>
           <tr>

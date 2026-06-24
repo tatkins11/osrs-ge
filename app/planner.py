@@ -315,7 +315,26 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     # ---- 4) assemble ------------------------------------------------------------------------
     active_sells.sort(key=lambda s: ({"CUT": 0, "SELL": 1}.get(s["action"], 2), -(s.get("expected_net") or 0)))
     buys = kept_buy_rows + new_buys
-    slots = (active_sells + buys)[:8]
+
+    # opportunistic: rather than leave slots empty, LIST the best holds at their target — costs
+    # nothing to let the offer sit, and a lucky spike to fair value gets captured for free.
+    open_slots = max(0, 8 - len(active_sells) - len(buys))
+    listed = []
+    if open_slots > 0 and holding:
+        for h in sorted(holding, key=lambda x: (x.get("expected_net") or 0), reverse=True):
+            if len(listed) >= open_slots:
+                break
+            if (h.get("expected_net") or 0) <= 0:   # only list where a target fill is a win
+                continue
+            row = dict(h)
+            row["action"] = "LIST"
+            row["price"] = h.get("target") or h.get("price")
+            row["reason"] = "free slot — listed at fair value to catch a lucky spike (no cost to wait)"
+            listed.append(row)
+        promoted = {h["item_id"] for h in listed}
+        holding = [h for h in holding if h["item_id"] not in promoted]
+
+    slots = (active_sells + buys + listed)[:8]
 
     expected_realized = sum(s["expected_net"] for s in active_sells if s["expected_net"])
     plan_gp_day = sum(b.get("gp_day") or 0 for b in buys)
@@ -323,9 +342,9 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         "free_gp": round(free_gp), "committed_capital": round(committed),
         "holdings_value": round(holdings_value), "net_worth": round(net_worth),
         "capital_in": round(cap0),
-        "free_slots": int(free_slots), "slots_used": int(min(8, len(slots))),
+        "free_slots": int(max(0, 8 - len(slots))), "slots_used": int(min(8, len(slots))),
         "n_positions": len(positions), "n_active_sells": len(active_sells),
-        "n_holding": len(holding), "n_buys": len(buys), "mirage_skipped": int(mirage),
+        "n_holding": len(holding), "n_buys": len(buys), "n_listed": len(listed), "mirage_skipped": int(mirage),
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
             "expected_realized": round(expected_realized),
