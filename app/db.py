@@ -482,13 +482,16 @@ def _log_fill_delta(con, oid: str, ts=None, note: str = "GE fill") -> int:
     # price and the tax engine takes the 2% on the sell side.
     avg = int(round(dspent / dq)) if (side == "buy" and dspent > 0) else int(price or 0)
     ts = ts or utcnow()
-    row = con.execute(
-        "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?,?,?,?,?,?) RETURNING id",
-        [ts, int(item_id), side, dq, avg, note],
-    ).fetchone()
     con.execute(
-        "UPDATE orders SET logged_qty=?, logged_spent=?, trade_id=COALESCE(trade_id, ?) WHERE order_id=?",
-        [int(filled or 0), int(spent or 0), int(row[0]) if row else None, oid],
+        "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?,?,?,?,?,?)",
+        [ts, int(item_id), side, dq, avg, note],
+    )
+    # NOTE: do NOT set trade_id here. logged_qty is the idempotency marker; leaving trade_id NULL keeps
+    # the order matchable by the re-mint dedup so a re-reported offer updates THIS row instead of
+    # spawning a duplicate that re-logs the same fills.
+    con.execute(
+        "UPDATE orders SET logged_qty=?, logged_spent=? WHERE order_id=?",
+        [int(filled or 0), int(spent or 0), oid],
     )
     return 1
 
@@ -626,7 +629,7 @@ def ingest_offers(events: list[dict]) -> dict:
                     # manual order instead of duplicating it (which would double-reserve the cash).
                     m = con.execute(
                         """SELECT order_id, trade_id FROM orders
-                           WHERE state IN ('BUYING','SELLING') AND trade_id IS NULL
+                           WHERE state IN ('BUYING','SELLING')
                              AND item_id=? AND price=? AND total_qty=? AND side=?
                              AND (slot=? OR slot IS NULL OR slot < 0)
                            ORDER BY (slot=?) DESC, updated_ts DESC LIMIT 1""",
