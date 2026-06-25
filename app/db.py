@@ -8,7 +8,9 @@ All timestamps are stored as naive UTC.
 """
 from __future__ import annotations
 
+import functools
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -18,6 +20,21 @@ import pandas as pd
 
 from .config import DB_PATH, LOG_DB_PATH, TRADES_DB_PATH
 from .tax import is_exempt, net_sell
+
+# Serialize all trades-DB writes (orders/trades/free-gp/fill-logging). The API runs sync endpoints
+# in a threadpool, so rapid plugin events can ingest concurrently and race on read-then-write of
+# logged_qty/free_gp -> double-logged fills. One process-wide lock makes those sections atomic.
+_WRITE_LOCK = threading.RLock()
+
+
+def _locked_write(fn):
+    """Serialize a trades-DB write entry point under _WRITE_LOCK (prevents concurrent read-then-write
+    races, e.g. rapid plugin ingests double-logging a fill)."""
+    @functools.wraps(fn)
+    def _wrap(*a, **k):
+        with _WRITE_LOCK:
+            return fn(*a, **k)
+    return _wrap
 
 log = logging.getLogger(__name__)
 
@@ -511,6 +528,7 @@ def get_free_gp():
         con.close()
 
 
+@_locked_write
 def set_free_gp(value: float) -> None:
     """Set the free-gp baseline and re-anchor every order as already accounted at its current state,
     so the value is taken as-is (today's orders are baked in; only future changes adjust it)."""
@@ -525,6 +543,7 @@ def set_free_gp(value: float) -> None:
         con.close()
 
 
+@_locked_write
 def insert_trade(item_id: int, side: str, qty: int, price: int, note: str = "", ts=None) -> int | None:
     con = connect_trades()
     try:
@@ -551,6 +570,7 @@ def get_trades_df() -> pd.DataFrame:
         con.close()
 
 
+@_locked_write
 def delete_trade(trade_id: int) -> None:
     con = connect_trades()
     try:
@@ -559,6 +579,7 @@ def delete_trade(trade_id: int) -> None:
         con.close()
 
 
+@_locked_write
 def update_trade(trade_id: int, qty=None, price=None, note=None, side=None) -> None:
     """Patch a logged trade in place (e.g. bump qty as a buy order fills). Only the
     provided fields change."""
@@ -595,6 +616,7 @@ def _to_naive_utc(v):
         return utcnow()
 
 
+@_locked_write
 def ingest_offers(events: list[dict]) -> dict:
     """Upsert live GE offers from the RuneLite plugin. When an offer reaches a terminal
     state with a real fill, finalize it into a trade exactly once (so the portfolio /
@@ -708,6 +730,7 @@ def get_orders_df() -> pd.DataFrame:
         con.close()
 
 
+@_locked_write
 def delete_order(order_id: str) -> None:
     con = connect_trades()
     try:
@@ -722,6 +745,7 @@ def delete_order(order_id: str) -> None:
         con.close()
 
 
+@_locked_write
 def add_order(item_id: int, side: str, price: int, total_qty: int, filled_qty: int = 0,
               slot: int | None = None, login: str = "manual") -> str:
     """Create an order manually (for phone play without the RuneLite plugin). Returns the order_id."""
@@ -744,6 +768,7 @@ def add_order(item_id: int, side: str, price: int, total_qty: int, filled_qty: i
         con.close()
 
 
+@_locked_write
 def update_order_fields(order_id: str, price=None, total_qty=None, filled_qty=None,
                         slot=None, state=None) -> None:
     """Manually edit an order (e.g. bump filled qty as it fills, or reprice) from the UI."""
@@ -773,6 +798,7 @@ def update_order_fields(order_id: str, price=None, total_qty=None, filled_qty=No
         con.close()
 
 
+@_locked_write
 def purge_terminal_orders() -> int:
     """Remove finished orders (bought/sold/cancelled) from the tracker. Trades + P&L live in a
     separate table and are untouched; terminal orders' cash is already baked into free_gp, so
@@ -787,6 +813,7 @@ def purge_terminal_orders() -> int:
         con.close()
 
 
+@_locked_write
 def record_net_worth(net_worth, bankroll, holdings_value, realized_total, unrealized_total, invested, ts=None) -> bool:
     """Snapshot today's net worth for the growth curve (at most one row per day). Best-effort:
     returns True if a new row was written, False if today's already exists or the write failed."""
