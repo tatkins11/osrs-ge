@@ -51,6 +51,13 @@ CUT_MAX = 35.0           # recovery score < this -> cut it
 MAX_SPREAD_FRAC = 0.12     # raw bid-ask spread above ~12% of price = stale/illiquid, not capturable
 MIN_MARGIN_UPTIME = 0.45   # the margin must hold at least this fraction of the last 7 days to be real
 MARGIN_SANITY_MULT = 3.0   # skip a margin more than this x the item's own 7d-typical (transient blowout)
+# ...BUT fill-frequency is DIRECT proof of liquidity. Where an item clearly trades on BOTH sides, that
+# evidence overrides the indirect spread / margin-persistence proxies above (which false-positived on
+# genuine high-ROI flips like Hydra bones @94% fill or Raw dashing kebbit @53%). A wide, persistent
+# spread on a heavily-traded item is a real edge, not a ghost. Only a loosened glitch backstop remains.
+LIQ_PROOF_BUY = 0.30       # buy-side uptime that "proves" the item trades (then waive spread + m-uptime)
+LIQ_PROOF_SELL = 0.15      # and it must trade on the sell side too, or you could never exit
+LIQ_SANITY_MULT = 6.0      # even a proven item can't show a margin > this x its 7d median (price glitch)
 # Items the GE restricts to ONE per slot per offer (you can't stack the offer). Only bonds.
 ONE_PER_SLOT = {"old school bond"}
 
@@ -236,42 +243,50 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     active_sell_ids = {s["item_id"] for s in active_sells}
     holding_ids = {s["item_id"] for s in holding}
 
-    # candidate buy universe (flip_ok + positive competitive margin): used to size buys AND to
-    # judge whether an existing live buy order is still worth keeping
-    cand_rows: dict[int, tuple] = {}
-    mirage = 0
-    if not ms.empty:
-        cands = ms[ms["flip_ok"].fillna(False) & (ms["slip_margin"].fillna(-1.0) > 0)]
-        for r in cands.itertuples(index=False):
-            buy_at, sell_at = competitive(_f(r.buy_price), _f(r.sell_price))
-            if not buy_at or not sell_at:
-                continue
-            ex = bool(getattr(r, "exempt", False))
-            mgn = taxmod.net_sell(int(round(sell_at)), ex) - buy_at
-            if mgn <= 0:
-                continue
-            # mirage guard: drop stale/illiquid ghost spreads so they never reach the plan
-            mid = _f(getattr(r, "mid", None)) or 0.0
-            raw_spread = (_f(r.sell_price) or 0.0) - (_f(r.buy_price) or 0.0)
-            up = _f(getattr(r, "margin_uptime", None))
-            med = _f(getattr(r, "margin_median_7d", None))
-            if (mid > 0 and raw_spread / mid > MAX_SPREAD_FRAC) \
-               or (up is not None and up < MIN_MARGIN_UPTIME) \
-               or (med and med > 0 and mgn > MARGIN_SANITY_MULT * med):
-                mirage += 1
-                continue
-            vol_day = _f(r.vol_daily_7d) or 0.0
-            limit = _f(r.buy_limit) or (vol_day / 12.0)
-            cand_rows[int(r.item_id)] = (mgn, buy_at, sell_at, ex, vol_day, limit, r)
-    good_buy_ids = set(cand_rows)
+    # candidate buy universe (flip_ok + positive competitive margin): used to size buys AND to judge
+    # whether an existing live buy order is still worth keeping.
+    cands = ms[ms["flip_ok"].fillna(False) & (ms["slip_margin"].fillna(-1.0) > 0)] if not ms.empty else ms.iloc[0:0]
 
-    # fill-frequency (trade uptime) for everything we'll judge: candidates + held + live orders.
-    # buy uptime = how often a seller is present (your buy fills); sell uptime = how often a buyer is
-    # present (your sell fills). This is the "will it actually fill" signal avg daily volume can't give.
-    prof_ids = set(cand_rows) | held_ids | live_buy_ids | live_sell_ids
+    # fill-frequency (trade uptime) for EVERY candidate + held + live order, computed BEFORE the mirage
+    # guard so it can override the proxies. buy uptime = how often a seller is present (your buy fills);
+    # sell uptime = how often a buyer is present (your sell fills). This is the direct "does it actually
+    # trade" signal that avg daily volume can't give.
+    cand_ids = [int(x) for x in cands["item_id"].tolist()] if not cands.empty else []
+    prof_ids = set(cand_ids) | held_ids | live_buy_ids | live_sell_ids
     prof = fill_uptime(list(prof_ids)) if prof_ids else {}
     for s in sells:  # annotate every holding verdict with how often it can actually SELL (buyer present)
         s["fill_freq"] = round(prof.get(s["item_id"], {}).get("sell", 0.0), 3)
+
+    cand_rows: dict[int, tuple] = {}
+    mirage = 0
+    for r in cands.itertuples(index=False):
+        iid = int(r.item_id)
+        buy_at, sell_at = competitive(_f(r.buy_price), _f(r.sell_price))
+        if not buy_at or not sell_at:
+            continue
+        ex = bool(getattr(r, "exempt", False))
+        mgn = taxmod.net_sell(int(round(sell_at)), ex) - buy_at
+        if mgn <= 0:
+            continue
+        # mirage guard: drop stale/illiquid ghost spreads (one side hasn't traded). But if fill-freq
+        # PROVES the item trades on both sides, trust that over the spread/margin-persistence proxies
+        # (a wide spread on a 90%-fill item is a real edge); keep only a loosened glitch backstop.
+        pr = prof.get(iid, {})
+        proven = pr.get("buy", 0.0) >= LIQ_PROOF_BUY and pr.get("sell", 0.0) >= LIQ_PROOF_SELL
+        mid = _f(getattr(r, "mid", None)) or 0.0
+        raw_spread = (_f(r.sell_price) or 0.0) - (_f(r.buy_price) or 0.0)
+        up = _f(getattr(r, "margin_uptime", None))
+        med = _f(getattr(r, "margin_median_7d", None))
+        spread_bad = (not proven) and mid > 0 and raw_spread / mid > MAX_SPREAD_FRAC
+        uptime_bad = (not proven) and up is not None and up < MIN_MARGIN_UPTIME
+        sanity_bad = med and med > 0 and mgn > (LIQ_SANITY_MULT if proven else MARGIN_SANITY_MULT) * med
+        if spread_bad or uptime_bad or sanity_bad:
+            mirage += 1
+            continue
+        vol_day = _f(r.vol_daily_7d) or 0.0
+        limit = _f(r.buy_limit) or (vol_day / 12.0)
+        cand_rows[iid] = (mgn, buy_at, sell_at, ex, vol_day, limit, r)
+    good_buy_ids = set(cand_rows)
 
     # reconcile each live order against the plan: keep / reprice / cancel
     reconcile = []
