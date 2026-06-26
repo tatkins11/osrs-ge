@@ -60,6 +60,11 @@ LIQ_PROOF_SELL = 0.15      # and it must trade on the sell side too, or you coul
 LIQ_SANITY_MULT = 6.0      # even a proven item can't show a margin > this x its 7d median (price glitch)
 # Items the GE restricts to ONE per slot per offer (you can't stack the offer). Only bonds.
 ONE_PER_SLOT = {"old school bond"}
+# Items that are NEVER worth flipping regardless of margin/liquidity — keep them out of BUY recs.
+# Old School Bond: confirmed in live play (2026-06-26) that re-trading a bought bond costs ~10% to
+# make it tradeable again, which dwarfs any GE margin. (Earlier wiki read said the 10% only applied to
+# untradeable->tradeable conversion; real gameplay says otherwise.) Bonds are for membership, not flips.
+EXCLUDE_FLIP = {"old school bond"}
 
 
 def offer_cap(name) -> float:
@@ -197,7 +202,10 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         limit = _f(s.get("buy_limit")) or 0.0
 
         rec_score, why = (None, [])
-        if profitable and (at_fair or to_target < 0.03):
+        if str(p.get("name", "")).strip().lower() in EXCLUDE_FLIP:
+            # bonds: never sell on the GE (re-trading one costs ~10%) — keep it to spend on membership
+            action, list_at, reason = "HOLD", None, "use for membership — re-selling a bond costs ~10%, don't flip it"
+        elif profitable and (at_fair or to_target < 0.03):
             action, list_at, reason = "SELL", sell_at, "at/above fair value — take profit"
         elif profitable:
             list_at = target or sell_at
@@ -261,6 +269,8 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     mirage = 0
     for r in cands.itertuples(index=False):
         iid = int(r.item_id)
+        if str(getattr(r, "name", "")).strip().lower() in EXCLUDE_FLIP:  # bonds etc. — never a real flip
+            continue
         buy_at, sell_at = competitive(_f(r.buy_price), _f(r.sell_price))
         if not buy_at or not sell_at:
             continue
@@ -393,6 +403,8 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         for h in sorted(holding, key=lambda x: (x.get("expected_net") or 0), reverse=True):
             if len(listed) >= open_slots:
                 break
+            if str(h.get("name", "")).strip().lower() in EXCLUDE_FLIP:  # never list a bond for sale (10% re-trade)
+                continue
             cur = _f(h.get("cur_price")) or 0.0
             profit = (h.get("expected_net") or 0) > 0
             price = (_f(h.get("target")) or 0.0) if profit else (_f(h.get("breakeven")) or 0.0)
