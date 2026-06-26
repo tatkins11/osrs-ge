@@ -32,6 +32,11 @@ CAPTURE = 0.04           # realistic share of an item's daily volume you transac
                          # a competitively-priced offer waits in a queue, so real fills are slow. Lowered
                          # from 0.125 on live feedback that buys+sells take much longer; tune w/ order data.
 TARGET_RT_H = 24.0       # aim to size orders to buy+sell within ~a day at that (slow) rate
+MAX_FILL_H = 14.0        # skip a buy whose modeled BUY-fill time exceeds this — too illiquid, it'll just
+                         # sit unfilled (live data: 71% of orders were cancelled with zero fill). The
+                         # sweet spot = high value + nice margin + enough volume to actually fill.
+MIN_ROI_FLOOR = 0.03     # the plan always requires >= this competitive ROI (the 2% sell tax destroys
+                         # thin-margin high-value flips, e.g. a 0.5% Kodai net). MIN ROI filter raises it.
 PRICE_EDGE = 0.10        # balanced nudge: give up ~10% of the spread per side to win the queue
 HOLD_MIN = 50.0          # recovery score >= this -> hold an underwater position
 CUT_MAX = 35.0           # recovery score < this -> cut it
@@ -292,20 +297,31 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     excl = held_ids | live_buy_ids   # don't re-recommend held items or items already on a live buy
     new_buys = []
     remaining = cap0
+    slow_skip = 0
     if free_slots > 0 and good_buy_ids:
-        # rank by PER-UNIT margin (not margin x volume): favor high-value flips you buy in 1s/few —
-        # they fill as single transactions. Bulk multi-unit flips crawl, so they're deprioritised.
-        ranked = sorted(cand_rows.items(), key=lambda kv: kv[1][0], reverse=True)
+        # Rank by per-unit margin (favor HIGH-VALUE flips you buy in 1s/few), but tilt down items that
+        # fill slowly — a great margin on an illiquid item that never fills is worth nothing. Value
+        # still dominates; among similar-value items the faster-filling one wins.
+        def _score(kv):
+            mgn, buy_at, sell_at, ex, vol_day, limit, r = kv[1]
+            fill1 = timeline(1, vol_day, limit)[0]                          # hours to fill ONE unit
+            return mgn * min(1.0, MAX_FILL_H / (2.0 * max(fill1, 0.5)))     # gentle slowness penalty
+        ranked = sorted(cand_rows.items(), key=_score, reverse=True)
         for iid, (mgn, buy_at, sell_at, ex, vol_day, limit, r) in ranked:
             if len(new_buys) >= free_slots:
                 break
             if iid in excl or remaining < buy_at:
                 continue
+            if buy_at > 0 and (mgn / buy_at) < max(float(th.min_roi or 0), MIN_ROI_FLOOR):  # clear the (post-nudge) ROI floor — beats the 2% tax
+                continue
             cap_units = (per_slot_cap // buy_at) if per_slot_cap > 0 else size_for_timeline(vol_day)
             units = int(min(size_for_timeline(vol_day), limit, cap_units, remaining // buy_at, offer_cap(r.name)))
             if units < 1:
                 continue
-            if mgn * units < float(th.min_rt_profit or 0):  # round-trip profit bar — skip thin flips
+            if timeline(units, vol_day, limit)[0] > MAX_FILL_H:             # too illiquid -> would sit unfilled
+                slow_skip += 1
+                continue
+            if mgn * units < float(th.min_rt_profit or 0):                  # round-trip profit bar
                 continue
             new_buys.append(_buy_row(r, iid, units, buy_at, sell_at, ex, vol_day, limit, live=False))
             remaining -= units * buy_at
@@ -363,7 +379,8 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         "capital_in": round(cap0),
         "free_slots": int(max(0, 8 - len(slots))), "slots_used": int(min(8, len(slots))),
         "n_positions": len(positions), "n_active_sells": len(active_sells),
-        "n_holding": len(holding), "n_buys": len(buys), "n_listed": len(listed), "mirage_skipped": int(mirage),
+        "n_holding": len(holding), "n_buys": len(buys), "n_listed": len(listed),
+        "mirage_skipped": int(mirage), "slow_skipped": int(slow_skip),
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
             "expected_realized": round(expected_realized),

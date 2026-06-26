@@ -113,6 +113,9 @@ export function Planner({
         {plan.mirage_skipped > 0 && (
           <> · <span className="dim">filtered <b>{plan.mirage_skipped}</b> stale/illiquid outliers (ghost spreads — wide bid-ask or a margin that doesn't hold)</span></>
         )}
+        {plan.slow_skipped > 0 && (
+          <> · <span className="dim">skipped <b>{plan.slow_skipped}</b> too-slow-to-fill (high margin but volume too low — they'd sit unfilled)</span></>
+        )}
       </div>
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>

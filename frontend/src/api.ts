@@ -459,6 +459,7 @@ export interface PlanResponse {
   n_buys: number;
   n_listed: number;            // holds opportunistically listed at target in otherwise-empty slots
   mirage_skipped: number;      // flips dropped as stale/illiquid ghost spreads (not recommended)
+  slow_skipped: number;        // flips dropped because the BUY would take too long to fill (too illiquid)
   slots: PlanSlot[];           // the active 8-slot config: SELL/CUT holdings + BUYS
   holding: PlanSlot[];         // held OFF-MARKET (no slot) — waiting for a better price
   reconcile: ReconcileItem[];  // what to do with each current live order
