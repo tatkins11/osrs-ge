@@ -431,10 +431,13 @@ export interface PlanSlot {
   buy_h?: number;
   sell_h?: number;
   roundtrip_h?: number;
+  fill_freq?: number;          // 0-1: fraction of 5-min windows the item actually trades on this side
+  best_hours?: number[];       // UTC hours when this item's side of the book is busiest (best to place)
   reason: string;
   live: boolean;               // a matching open order already exists on the GE
   sector?: string | null;
 }
+export interface ClockHour { hour: number; vol: number; rel: number }  // market liquidity by UTC hour
 export interface ReconcileItem {
   order_id: string | null;
   item_id: number;
@@ -460,6 +463,8 @@ export interface PlanResponse {
   n_listed: number;            // holds opportunistically listed at target in otherwise-empty slots
   mirage_skipped: number;      // flips dropped as stale/illiquid ghost spreads (not recommended)
   slow_skipped: number;        // flips dropped because the BUY would take too long to fill (too illiquid)
+  thin_skipped: number;        // flips dropped because the item rarely trades (low fill-frequency)
+  liquidity_clock: ClockHour[];// market-wide trade volume by UTC hour — when orders fill best
   slots: PlanSlot[];           // the active 8-slot config: SELL/CUT holdings + BUYS
   holding: PlanSlot[];         // held OFF-MARKET (no slot) — waiting for a better price
   reconcile: ReconcileItem[];  // what to do with each current live order

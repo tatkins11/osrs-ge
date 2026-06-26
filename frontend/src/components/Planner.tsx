@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { getPlan, type Filters, type PlanResponse, type PlanSlot } from "../api";
+import { getPlan, type ClockHour, type Filters, type PlanResponse, type PlanSlot } from "../api";
 import { gp, gpShort } from "../format";
 
 function Tile({ k, v, cls = "", title }: { k: string; v: ReactNode; cls?: string; title?: string }) {
@@ -17,6 +17,60 @@ const REC_BADGE: Record<string, string> = { keep: "badge-BUY", reprice: "badge-I
 const sign = (v?: number | null) => (v == null ? "" : v > 0 ? "pos" : v < 0 ? "neg" : "");
 const recCls = (v?: number | null) => (v == null ? "dim" : v >= 50 ? "pos" : v < 35 ? "neg" : "");
 const hrs = (h?: number) => (h == null ? "–" : h < 1 ? `${Math.round(h * 60)}m` : h < 48 ? `${h.toFixed(0)}h` : `${(h / 24).toFixed(1)}d`);
+// fill-frequency = fraction of 5-min windows the item actually trades on the relevant side. Green
+// >=30% (fills readily), red <15% (the gate floor — it'll just sit), amber between.
+const fillCls = (f?: number) => (f == null ? "dim" : f >= 0.3 ? "pos" : f < 0.15 ? "neg" : "");
+const utcHrs = (h: number[]) => h.map((x) => String(x).padStart(2, "0")).join(", ") + " UTC";
+const fillTitle = (s: PlanSlot) =>
+  s.fill_freq == null
+    ? ""
+    : `Trades in ~${(s.fill_freq * 100).toFixed(0)}% of 5-min windows on this side` +
+      (s.best_hours?.length ? ` · busiest ${utcHrs(s.best_hours)}` : "");
+const fillCell = (s: PlanSlot) => (
+  <td className={fillCls(s.fill_freq)} title={fillTitle(s)}>
+    {s.fill_freq == null ? "–" : `${(s.fill_freq * 100).toFixed(0)}%`}
+  </td>
+);
+
+/** Market-wide trade volume by UTC hour — a "when do orders fill" clock. Now-hour highlighted. */
+function LiquidityClock({ clock }: { clock: ClockHour[] }) {
+  if (!clock?.length) return null;
+  const nowH = new Date().getUTCHours();
+  const peak = new Set([...clock].sort((a, b) => b.rel - a.rel).slice(0, 6).map((c) => c.hour));
+  const localNow = new Date().getHours();
+  return (
+    <>
+      <div className="slot-head" style={{ marginTop: 16 }}>
+        When orders fill — market liquidity by hour{" "}
+        <span className="dim">
+          · now {String(nowH).padStart(2, "0")}:00 UTC ({String(localNow).padStart(2, "0")}:00 local) · taller = more trading · green = peak
+        </span>
+      </div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 52, marginTop: 4 }}>
+        {clock.map((c) => {
+          const isNow = c.hour === nowH;
+          const col = isNow ? "var(--accent)" : peak.has(c.hour) ? "var(--green)" : "var(--grid)";
+          return (
+            <div
+              key={c.hour}
+              title={`${String(c.hour).padStart(2, "0")}:00 UTC — ${(c.rel * 100).toFixed(0)}% of peak liquidity${isNow ? " · NOW" : ""}`}
+              style={{ flex: 1, height: "100%", display: "flex", alignItems: "flex-end" }}
+            >
+              <div style={{ width: "100%", height: `${Math.max(6, c.rel * 100)}%`, background: col, opacity: isNow || peak.has(c.hour) ? 1 : 0.6, borderRadius: 1 }} />
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 2 }}>
+        {clock.map((c) => (
+          <div key={c.hour} className="dim" style={{ flex: 1, textAlign: "center", fontSize: 9, fontFamily: "var(--mono)" }}>
+            {c.hour % 6 === 0 ? String(c.hour).padStart(2, "0") : ""}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
 
 /**
  * The unified 8-slot decision engine. Reads your open positions + live orders + capital and gives
@@ -116,6 +170,9 @@ export function Planner({
         {plan.slow_skipped > 0 && (
           <> · <span className="dim">skipped <b>{plan.slow_skipped}</b> too-slow-to-fill (high margin but volume too low — they'd sit unfilled)</span></>
         )}
+        {plan.thin_skipped > 0 && (
+          <> · <span className="dim">skipped <b>{plan.thin_skipped}</b> too rarely traded (a seller shows up &lt;{Math.round(0.15 * 100)}% of the time — they just sit, like the 3rd age range top)</span></>
+        )}
       </div>
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
@@ -131,6 +188,8 @@ export function Planner({
       </div>
       <div className="slot-grid">{tiles}</div>
 
+      <LiquidityClock clock={plan.liquidity_clock} />
+
       <div className="slot-head" style={{ marginTop: 16 }}>Sell / cut / list (active slots)</div>
       <table className="tbl">
         <thead>
@@ -138,6 +197,7 @@ export function Planner({
             <th className="left">Action</th><th className="left">Item</th><th>Qty</th><th>List at</th>
             <th>Avg cost</th><th>Now</th><th>Exp. P&L</th>
             <th title="Recovery score 0–100 (underwater positions): higher = more likely to revert up">Recover</th>
+            <th title="How often a BUYER is present so this can actually sell — % of 5-min windows traded (last 7d)">Fill</th>
             <th title="Rough time to sell this quantity at the item's real volume">~Sell</th><th className="left">Why</th>
             <th className="left">Add</th>
           </tr>
@@ -153,12 +213,13 @@ export function Planner({
               <td className="dim">{gp(s.cur_price)}</td>
               <td className={sign(s.expected_net)}>{s.expected_net == null ? "–" : gpShort(s.expected_net)}</td>
               <td className={recCls(s.recovery_score)}>{s.recovery_score ?? "–"}</td>
+              {fillCell(s)}
               <td className="dim">{hrs(s.sell_h)}</td>
               <td className="left dim" title={s.reason}>{s.reason}</td>
               <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: s.item_id, side: "sell", price: s.price, qty: s.qty, live: s.live })}</td>
             </tr>
           ))}
-          {activeSells.length === 0 && <tr><td colSpan={11} className="left muted">Nothing to sell or cut right now — your holdings are all worth holding (see below).</td></tr>}
+          {activeSells.length === 0 && <tr><td colSpan={12} className="left muted">Nothing to sell or cut right now — your holdings are all worth holding (see below).</td></tr>}
         </tbody>
       </table>
 
@@ -168,6 +229,7 @@ export function Planner({
           <tr>
             <th className="left">Action</th><th className="left">Item</th><th>Units</th><th>Buy at</th><th>Sell target</th>
             <th>Capital</th><th>Margin/ea</th><th>gp/day</th>
+            <th title="How often a SELLER is present so your buy can fill — % of 5-min windows traded (last 7d). Below 15% it just sits.">Fill</th>
             <th title="Realistic time to buy AND sell this quantity at the item's real volume">~Round-trip</th><th className="left">Why</th>
             <th className="left">Add</th>
           </tr>
@@ -183,12 +245,13 @@ export function Planner({
               <td className="dim">{gpShort(b.capital)}</td>
               <td className="pos">{gp(b.margin)}</td>
               <td className="pos">{gpShort(b.gp_day)}</td>
+              {fillCell(b)}
               <td className="dim">{hrs(b.roundtrip_h)}</td>
               <td className="left dim" title={b.reason}>{b.reason}</td>
               <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: b.item_id, side: "buy", price: b.price, qty: b.units, live: b.live })}</td>
             </tr>
           ))}
-          {buys.length === 0 && <tr><td colSpan={11} className="left muted">{plan.free_slots === 0 ? "All 8 slots are taken." : "No buys clear the bar (your Min profit/round-trip + filters). Lower it on the toolbar to surface smaller flips."}</td></tr>}
+          {buys.length === 0 && <tr><td colSpan={12} className="left muted">{plan.free_slots === 0 ? "All 8 slots are taken." : "No buys clear the bar (your Min profit/round-trip + filters). Lower it on the toolbar to surface smaller flips."}</td></tr>}
         </tbody>
       </table>
 
@@ -202,7 +265,8 @@ export function Planner({
               <tr>
                 <th className="left">Item</th><th>Qty</th><th>Avg cost</th><th>Now</th>
                 <th title="Place a sell here (fair value) when you're ready, or wait for the price to come to it">Sell when ≥</th>
-                <th>Unrealized</th><th title="Recovery score 0–100: higher = more likely to revert up">Recover</th><th className="left">Why hold</th>
+                <th>Unrealized</th><th title="Recovery score 0–100: higher = more likely to revert up">Recover</th>
+                <th title="How often a BUYER is present so this can sell — % of 5-min windows traded (last 7d)">Fill</th><th className="left">Why hold</th>
               </tr>
             </thead>
             <tbody>
@@ -215,6 +279,7 @@ export function Planner({
                   <td>{gp(h.target ?? h.price)}</td>
                   <td className={sign(h.unrealized)}>{h.unrealized == null ? "–" : gpShort(h.unrealized)}</td>
                   <td className={recCls(h.recovery_score)}>{h.recovery_score ?? "–"}</td>
+                  {fillCell(h)}
                   <td className="left dim" title={h.reason}>{h.reason}</td>
                 </tr>
               ))}

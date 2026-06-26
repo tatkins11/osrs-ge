@@ -26,6 +26,7 @@ import pandas as pd
 from . import portfolio as pf
 from . import tax as taxmod
 from .db import connect, get_free_gp, get_orders_df
+from .liquidity import fill_uptime, market_clock, peak_hours
 from .signals import Thresholds, market_signals
 
 CAPTURE = 0.04           # realistic share of an item's daily volume you transact per leg. Conservative:
@@ -37,6 +38,10 @@ MAX_FILL_H = 14.0        # skip a buy whose modeled BUY-fill time exceeds this �
                          # sweet spot = high value + nice margin + enough volume to actually fill.
 MIN_ROI_FLOOR = 0.03     # the plan always requires >= this competitive ROI (the 2% sell tax destroys
                          # thin-margin high-value flips, e.g. a 0.5% Kodai net). MIN ROI filter raises it.
+MIN_BUY_UPTIME = 0.15    # a buy candidate must actually TRADE: >= this fraction of 5-min windows must
+                         # have a seller present (last 7d). Average daily volume can't tell a 0.1%-uptime
+                         # ghost (3rd age range top) from a 44%-uptime winner (Uncharged trident) -- this
+                         # can. The real reason orders "never go through" was thin uptime, not bad timing.
 PRICE_EDGE = 0.10        # balanced nudge: give up ~10% of the spread per side to win the queue
 HOLD_MIN = 50.0          # recovery score >= this -> hold an underwater position
 CUT_MAX = 35.0           # recovery score < this -> cut it
@@ -260,6 +265,14 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             cand_rows[int(r.item_id)] = (mgn, buy_at, sell_at, ex, vol_day, limit, r)
     good_buy_ids = set(cand_rows)
 
+    # fill-frequency (trade uptime) for everything we'll judge: candidates + held + live orders.
+    # buy uptime = how often a seller is present (your buy fills); sell uptime = how often a buyer is
+    # present (your sell fills). This is the "will it actually fill" signal avg daily volume can't give.
+    prof_ids = set(cand_rows) | held_ids | live_buy_ids | live_sell_ids
+    prof = fill_uptime(list(prof_ids)) if prof_ids else {}
+    for s in sells:  # annotate every holding verdict with how often it can actually SELL (buyer present)
+        s["fill_freq"] = round(prof.get(s["item_id"], {}).get("sell", 0.0), 3)
+
     # reconcile each live order against the plan: keep / reprice / cancel
     reconcile = []
     kept_buy_ids = set()
@@ -282,10 +295,13 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
                 else:
                     status, note = "keep", "sell offer (no tracked holding)"
             else:  # buy
-                if iid in good_buy_ids:
+                bu = prof.get(iid, {}).get("buy", 0.0)
+                if iid in good_buy_ids and bu >= MIN_BUY_UPTIME:
                     status, note = "keep", f"still a good buy — keep filling ({prog})"
                     kept_buy_ids.add(iid)
                     kept_buy_info[iid] = (int(o.price or 0), int(o.total_qty or 0), int(o.filled_qty or 0))
+                elif iid in good_buy_ids:  # still has a margin, but it barely trades — it'll just sit
+                    status, note = "cancel", f"rarely trades — a seller appears only ~{bu * 100:.0f}% of the time; cancel & redeploy"
                 else:
                     status, note = "cancel", "no longer a good buy — cancel & redeploy"
             reconcile.append({"order_id": getattr(o, "order_id", None), "item_id": iid, "name": nm,
@@ -298,19 +314,25 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     new_buys = []
     remaining = cap0
     slow_skip = 0
+    thin_skip = 0
     if free_slots > 0 and good_buy_ids:
-        # Rank by per-unit margin (favor HIGH-VALUE flips you buy in 1s/few), but tilt down items that
-        # fill slowly — a great margin on an illiquid item that never fills is worth nothing. Value
-        # still dominates; among similar-value items the faster-filling one wins.
+        # Rank by per-unit margin (favor HIGH-VALUE flips you buy in 1s/few), tilted by how readily the
+        # item TRADES — a great margin on something that fills 1% of the time is worth nothing. Value
+        # still dominates; among comparable-value flips the one that actually fills wins.
         def _score(kv):
-            mgn, buy_at, sell_at, ex, vol_day, limit, r = kv[1]
+            iid_, (mgn, buy_at, sell_at, ex, vol_day, limit, r) = kv
             fill1 = timeline(1, vol_day, limit)[0]                          # hours to fill ONE unit
-            return mgn * min(1.0, MAX_FILL_H / (2.0 * max(fill1, 0.5)))     # gentle slowness penalty
+            up = prof.get(iid_, {}).get("buy", 0.0)                         # buy-side trade frequency
+            liq = 0.25 + 0.75 * min(1.0, up / 0.5)                          # full liquidity credit at >=50% uptime
+            return mgn * min(1.0, MAX_FILL_H / (2.0 * max(fill1, 0.5))) * liq
         ranked = sorted(cand_rows.items(), key=_score, reverse=True)
         for iid, (mgn, buy_at, sell_at, ex, vol_day, limit, r) in ranked:
             if len(new_buys) >= free_slots:
                 break
             if iid in excl or remaining < buy_at:
+                continue
+            if prof.get(iid, {}).get("buy", 0.0) < MIN_BUY_UPTIME:          # too rarely traded -> it'll just sit
+                thin_skip += 1
                 continue
             if buy_at > 0 and (mgn / buy_at) < max(float(th.min_roi or 0), MIN_ROI_FLOOR):  # clear the (post-nudge) ROI floor — beats the 2% tax
                 continue
@@ -323,7 +345,9 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
                 continue
             if mgn * units < float(th.min_rt_profit or 0):                  # round-trip profit bar
                 continue
-            new_buys.append(_buy_row(r, iid, units, buy_at, sell_at, ex, vol_day, limit, live=False))
+            row = _buy_row(r, iid, units, buy_at, sell_at, ex, vol_day, limit, live=False)
+            row["fill_freq"] = round(prof.get(iid, {}).get("buy", 0.0), 3)
+            new_buys.append(row)
             remaining -= units * buy_at
 
     # live buys we're keeping -> show them at their ACTUAL order size (the remaining qty already
@@ -336,6 +360,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         order_buy = float(o_price) if o_price > 0 else buy_at
         row = _buy_row(r, iid, rem_units, order_buy, sell_at, ex, vol_day, limit, live=True)
         row["reason"] = f"live buy — keep filling ({o_filled:,}/{o_total:,})"
+        row["fill_freq"] = round(prof.get(iid, {}).get("buy", 0.0), 3)
         kept_buy_rows.append(row)
 
     # ---- 4) assemble ------------------------------------------------------------------------
@@ -371,6 +396,13 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
 
     slots = (active_sells + buys + listed)[:8]
 
+    # attach each slotted item's best UTC hours to place (when its side of the book is busiest)
+    ph = peak_hours([s["item_id"] for s in slots]) if slots else {}
+    for s in slots:
+        hrs = ph.get(s["item_id"])
+        if hrs:
+            s["best_hours"] = hrs
+
     expected_realized = sum(s["expected_net"] for s in active_sells if s["expected_net"])
     plan_gp_day = sum(b.get("gp_day") or 0 for b in buys)
     return {
@@ -380,7 +412,8 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         "free_slots": int(max(0, 8 - len(slots))), "slots_used": int(min(8, len(slots))),
         "n_positions": len(positions), "n_active_sells": len(active_sells),
         "n_holding": len(holding), "n_buys": len(buys), "n_listed": len(listed),
-        "mirage_skipped": int(mirage), "slow_skipped": int(slow_skip),
+        "mirage_skipped": int(mirage), "slow_skipped": int(slow_skip), "thin_skipped": int(thin_skip),
+        "liquidity_clock": market_clock(),
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
             "expected_realized": round(expected_realized),
