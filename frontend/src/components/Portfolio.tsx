@@ -3,7 +3,7 @@ import {
   addTrade, deleteTrade, getItemNames, getPortfolio, updateTrade,
   type ItemName, type Portfolio as Pf, type TradePrefill,
 } from "../api";
-import { gp, gpShort, pct } from "../format";
+import { fmtTsCentral, gp, gpShort, pct } from "../format";
 import { SortTh, useSortable } from "./sortable";
 
 function Tile({ k, v, cls = "" }: { k: string; v: ReactNode; cls?: string }) {
@@ -312,7 +312,7 @@ export function Portfolio({
             <table className="tbl">
               <thead>
                 <tr>
-                  <th className="left">When (UTC)</th>
+                  <th className="left">When (Central)</th>
                   <th className="left">Item</th>
                   <th className="left">Side</th>
                   <th>Qty</th>
@@ -323,7 +323,7 @@ export function Portfolio({
               <tbody>
                 {pf.trades.map((t) => (
                   <tr key={t.id}>
-                    <td className="left dim">{t.ts.slice(0, 16).replace("T", " ")}</td>
+                    <td className="left dim">{fmtTsCentral(t.ts)}</td>
                     <td className="name left">{t.name}</td>
                     <td className={`left ${t.side === "buy" ? "pos" : "neg"}`}>{t.side}</td>
                     {editId === t.id ? (

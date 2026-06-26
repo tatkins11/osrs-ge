@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { getItem, getItemSeries, getPortfolio, getUpdates, HORIZON_KEYS, type Filters, type GameUpdate, type ItemDetail, type Portfolio as Pf, type Row, type SeriesPoint } from "../api";
-import { fixed, gp, gpShort, num, pct, spct } from "../format";
+import { fixed, gp, gpShort, hour12, num, pct, spct, utcHourToCentral } from "../format";
 import { ChartModal } from "./ChartModal";
 import { PriceChart } from "./PriceChart";
 import { ProfileBars } from "./ProfileBars";
@@ -287,8 +287,11 @@ export function ItemPanel({
       </div>
 
       <div className="panel-section">
-        <h4>Hour-of-day seasonality (UTC) · green = cheap, red = expensive</h4>
-        <ProfileBars rows={data.hour_profile.map((p) => ({ label: `${String(p.hour).padStart(2, "0")}:00`, dev: p.avg_dev }))} />
+        <h4>Hour-of-day seasonality (Central) · green = cheap, red = expensive</h4>
+        <ProfileBars rows={[...data.hour_profile]
+          .map((p) => ({ ch: utcHourToCentral(p.hour), dev: p.avg_dev }))
+          .sort((a, b) => a.ch - b.ch)
+          .map((x) => ({ label: hour12(x.ch), dev: x.dev }))} />
       </div>
 
       <div className="panel-section">

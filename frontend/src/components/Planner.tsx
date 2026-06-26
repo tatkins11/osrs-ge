@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { getPlan, type ClockHour, type Filters, type PlanResponse, type PlanSlot } from "../api";
-import { gp, gpShort } from "../format";
+import { centralHourNow, centralTimeNow, gp, gpShort, hour12, utcHourToCentral, utcOffsetFromCentral } from "../format";
 
 function Tile({ k, v, cls = "", title }: { k: string; v: ReactNode; cls?: string; title?: string }) {
   return (
@@ -20,51 +20,57 @@ const hrs = (h?: number) => (h == null ? "–" : h < 1 ? `${Math.round(h * 60)}m
 // fill-frequency = fraction of 5-min windows the item actually trades on the relevant side. Green
 // >=30% (fills readily), red <15% (the gate floor — it'll just sit), amber between.
 const fillCls = (f?: number) => (f == null ? "dim" : f >= 0.3 ? "pos" : f < 0.15 ? "neg" : "");
-const utcHrs = (h: number[]) => h.map((x) => String(x).padStart(2, "0")).join(", ") + " UTC";
+// item's busiest UTC hours -> Central, 12-hour: e.g. [1,4,23] -> "6 PM, 7 PM, 11 PM CT"
+const centralHrs = (utcHours: number[]) =>
+  utcHours.map(utcHourToCentral).sort((a, b) => a - b).map(hour12).join(", ") + " CT";
 const fillTitle = (s: PlanSlot) =>
   s.fill_freq == null
     ? ""
     : `Trades in ~${(s.fill_freq * 100).toFixed(0)}% of 5-min windows on this side` +
-      (s.best_hours?.length ? ` · busiest ${utcHrs(s.best_hours)}` : "");
+      (s.best_hours?.length ? ` · busiest ${centralHrs(s.best_hours)}` : "");
 const fillCell = (s: PlanSlot) => (
   <td className={fillCls(s.fill_freq)} title={fillTitle(s)}>
     {s.fill_freq == null ? "–" : `${(s.fill_freq * 100).toFixed(0)}%`}
   </td>
 );
 
-/** Market-wide trade volume by UTC hour — a "when do orders fill" clock. Now-hour highlighted. */
+/** Market-wide trade volume by hour, shown in Central time — a "when do orders fill" clock. */
 function LiquidityClock({ clock }: { clock: ClockHour[] }) {
   if (!clock?.length) return null;
-  const nowH = new Date().getUTCHours();
-  const peak = new Set([...clock].sort((a, b) => b.rel - a.rel).slice(0, 6).map((c) => c.hour));
-  const localNow = new Date().getHours();
+  const byUtc = new Map(clock.map((c) => [c.hour, c]));
+  const peakUtc = new Set([...clock].sort((a, b) => b.rel - a.rel).slice(0, 6).map((c) => c.hour));
+  const nowCt = centralHourNow();
+  const off = utcOffsetFromCentral();
+  // lay the bars out in CENTRAL order (left→right = midnight→11 PM CT), reading each from its UTC bucket
+  const bars = Array.from({ length: 24 }, (_, ch) => {
+    const utc = (ch + off) % 24;
+    return { ch, rel: byUtc.get(utc)?.rel ?? 0, isPeak: peakUtc.has(utc) };
+  });
   return (
     <>
       <div className="slot-head" style={{ marginTop: 16 }}>
-        When orders fill — market liquidity by hour{" "}
-        <span className="dim">
-          · now {String(nowH).padStart(2, "0")}:00 UTC ({String(localNow).padStart(2, "0")}:00 local) · taller = more trading · green = peak
-        </span>
+        When orders fill — market liquidity by hour (Central){" "}
+        <span className="dim">· now {centralTimeNow()} · taller = more trading · green = peak</span>
       </div>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 52, marginTop: 4 }}>
-        {clock.map((c) => {
-          const isNow = c.hour === nowH;
-          const col = isNow ? "var(--accent)" : peak.has(c.hour) ? "var(--green)" : "var(--grid)";
+        {bars.map((b) => {
+          const isNow = b.ch === nowCt;
+          const col = isNow ? "var(--accent)" : b.isPeak ? "var(--green)" : "var(--grid)";
           return (
             <div
-              key={c.hour}
-              title={`${String(c.hour).padStart(2, "0")}:00 UTC — ${(c.rel * 100).toFixed(0)}% of peak liquidity${isNow ? " · NOW" : ""}`}
+              key={b.ch}
+              title={`${hour12(b.ch)} CT — ${(b.rel * 100).toFixed(0)}% of peak liquidity${isNow ? " · NOW" : ""}`}
               style={{ flex: 1, height: "100%", display: "flex", alignItems: "flex-end" }}
             >
-              <div style={{ width: "100%", height: `${Math.max(6, c.rel * 100)}%`, background: col, opacity: isNow || peak.has(c.hour) ? 1 : 0.6, borderRadius: 1 }} />
+              <div style={{ width: "100%", height: `${Math.max(6, b.rel * 100)}%`, background: col, opacity: isNow || b.isPeak ? 1 : 0.6, borderRadius: 1 }} />
             </div>
           );
         })}
       </div>
       <div style={{ display: "flex", gap: 2 }}>
-        {clock.map((c) => (
-          <div key={c.hour} className="dim" style={{ flex: 1, textAlign: "center", fontSize: 9, fontFamily: "var(--mono)" }}>
-            {c.hour % 6 === 0 ? String(c.hour).padStart(2, "0") : ""}
+        {bars.map((b) => (
+          <div key={b.ch} className="dim" style={{ flex: 1, textAlign: "center", fontSize: 9, fontFamily: "var(--mono)" }}>
+            {b.ch % 6 === 0 ? hour12(b.ch).replace(" ", "") : ""}
           </div>
         ))}
       </div>
