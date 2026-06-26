@@ -84,7 +84,7 @@ def get_thresholds(
     z_buy: float = Query(-1.5),
     z_sell: float = Query(1.5),
     max_alloc_frac: float = Query(0.15, gt=0, le=1),
-    min_rt_profit: int = Query(500_000, ge=0),
+    min_rt_profit: int = Query(350_000, ge=0),
 ) -> Thresholds:
     return Thresholds(
         min_volume=min_volume,

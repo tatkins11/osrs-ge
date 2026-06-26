@@ -29,7 +29,7 @@ const DEFAULT_FILTERS: Filters = {
   minDiscount: 0.08,
   zBuy: -1.5,
   zSell: 1.5,
-  minRtProfit: 500_000,
+  minRtProfit: 350_000,
 };
 
 const TABS: { id: Tab; label: string }[] = [
@@ -54,8 +54,17 @@ export default function App() {
     try { return (localStorage.getItem("ge.tab") as Tab) || "flips"; } catch { return "flips"; }
   });
   const [filters, setFilters] = useState<Filters>(() => {
-    try { const s = localStorage.getItem("ge.filters"); return s ? { ...DEFAULT_FILTERS, ...JSON.parse(s) } : DEFAULT_FILTERS; }
-    catch { return DEFAULT_FILTERS; }
+    try {
+      const s = localStorage.getItem("ge.filters");
+      const f: Filters = s ? { ...DEFAULT_FILTERS, ...JSON.parse(s) } : { ...DEFAULT_FILTERS };
+      // one-time migration: the min round-trip profit floor was lowered 500K -> 350K (fillable flips
+      // mostly profit 150-450K, so 500K left the plan empty). Bump anyone still on the old default once.
+      if (localStorage.getItem("ge.filters.rtmig") !== "1") {
+        if (f.minRtProfit === 500_000) f.minRtProfit = 350_000;
+        localStorage.setItem("ge.filters.rtmig", "1");
+      }
+      return f;
+    } catch { return DEFAULT_FILTERS; }
   });
   const [prefill, setPrefill] = useState<(TradePrefill & { nonce: number }) | null>(null);
   const prefillN = useRef(0);
