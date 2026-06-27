@@ -17,6 +17,7 @@ const REC_BADGE: Record<string, string> = { keep: "badge-BUY", reprice: "badge-I
 const sign = (v?: number | null) => (v == null ? "" : v > 0 ? "pos" : v < 0 ? "neg" : "");
 const recCls = (v?: number | null) => (v == null ? "dim" : v >= 50 ? "pos" : v < 35 ? "neg" : "");
 const hrs = (h?: number) => (h == null ? "–" : h < 1 ? `${Math.round(h * 60)}m` : h < 48 ? `${h.toFixed(0)}h` : `${(h / 24).toFixed(1)}d`);
+const days = (d?: number | null) => (d == null ? "–" : d < 1 ? `${Math.round(d * 24)}h` : `${d.toFixed(d < 10 ? 1 : 0)}d`);
 // fill-frequency = fraction of 5-min windows the item actually trades on the relevant side. Green
 // >=30% (fills readily), red <15% (the gate floor — it'll just sit), amber between.
 const fillCls = (f?: number) => (f == null ? "dim" : f >= 0.3 ? "pos" : f < 0.15 ? "neg" : "");
@@ -179,6 +180,9 @@ export function Planner({
         {plan.thin_skipped > 0 && (
           <> · <span className="dim">skipped <b>{plan.thin_skipped}</b> too rarely traded (a seller shows up &lt;{Math.round(0.15 * 100)}% of the time — they just sit, like the 3rd age range top)</span></>
         )}
+        {plan.n_stale > 0 && (
+          <> · <span className="neg">♻ recycling <b>{plan.n_stale}</b> stale hold{plan.n_stale > 1 ? "s" : ""} ({gpShort(plan.stale_capital)}) — parked too long with no progress, cut to redeploy</span></>
+        )}
       </div>
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
@@ -272,6 +276,7 @@ export function Planner({
                 <th className="left">Item</th><th>Qty</th><th>Avg cost</th><th>Now</th>
                 <th title="Place a sell here (fair value) when you're ready, or wait for the price to come to it">Sell when ≥</th>
                 <th>Unrealized</th><th title="Recovery score 0–100: higher = more likely to revert up">Recover</th>
+                <th title="How long this capital has been parked — long + flat holds get recycled into faster flips">Held</th>
                 <th title="How often a BUYER is present so this can sell — % of 5-min windows traded (last 7d)">Fill</th><th className="left">Why hold</th>
               </tr>
             </thead>
@@ -285,6 +290,7 @@ export function Planner({
                   <td>{gp(h.target ?? h.price)}</td>
                   <td className={sign(h.unrealized)}>{h.unrealized == null ? "–" : gpShort(h.unrealized)}</td>
                   <td className={recCls(h.recovery_score)}>{h.recovery_score ?? "–"}</td>
+                  <td className="dim">{days(h.held_days)}</td>
                   {fillCell(h)}
                   <td className="left dim" title={h.reason}>{h.reason}</td>
                 </tr>

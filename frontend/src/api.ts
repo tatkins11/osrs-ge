@@ -428,6 +428,8 @@ export interface PlanSlot {
   unrealized?: number | null;
   unrealized_pct?: number | null;
   recovery_score?: number | null; // underwater holdings: 0-100, higher = more likely to recover
+  held_days?: number | null;   // how long this position's capital has been parked
+  stale?: boolean;             // held too long with no progress — flagged to cut & redeploy
   buy_h?: number;
   sell_h?: number;
   roundtrip_h?: number;
@@ -464,6 +466,8 @@ export interface PlanResponse {
   mirage_skipped: number;      // flips dropped as stale/illiquid ghost spreads (not recommended)
   slow_skipped: number;        // flips dropped because the BUY would take too long to fill (too illiquid)
   thin_skipped: number;        // flips dropped because the item rarely trades (low fill-frequency)
+  n_stale: number;             // holds flagged stale (parked too long, no progress — cut & redeploy)
+  stale_capital: number;       // gp tied up in those stale holds
   liquidity_clock: ClockHour[];// market-wide trade volume by UTC hour — when orders fill best
   slots: PlanSlot[];           // the active 8-slot config: SELL/CUT holdings + BUYS
   holding: PlanSlot[];         // held OFF-MARKET (no slot) — waiting for a better price

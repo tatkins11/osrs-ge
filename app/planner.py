@@ -45,6 +45,12 @@ MIN_BUY_UPTIME = 0.15    # a buy candidate must actually TRADE: >= this fraction
 PRICE_EDGE = 0.10        # balanced nudge: give up ~10% of the spread per side to win the queue
 HOLD_MIN = 50.0          # recovery score >= this -> hold an underwater position
 CUT_MAX = 35.0           # recovery score < this -> cut it
+# Stale-capital recycler: a HOLD that's been parked a long time making no real progress is dead money —
+# the gp would compound faster in a liquid flip. Escalate it to CUT (cut & redeploy). Live analysis
+# (2026-06-27): ~78% of net worth sat in holds, several flat for days, dragging the growth rate.
+STALE_DAYS = 3.0         # held longer than this with no progress -> recycle the capital
+STALE_FLAT_MAX = 0.02    # "no progress" = unrealized under +2% (flat or underwater, not actually winning)
+STALE_RECOVERY_OK = 70.0 # a STRONGLY-recovering position (rec >= this) earns more patience — not recycled
 # Margin-mirage guards for the plan's BUYS: a real, capturable flip has a modest spread, a margin
 # that actually persists, and one that isn't a wild multiple of the item's own norm. Anything else
 # is a stale/illiquid ghost quote (one side of the spread hasn't traded) -> don't recommend it.
@@ -225,6 +231,19 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
                 else:
                     action, list_at, reason = "CUT", sell_at, "loss deepening with a weak recovery read"
 
+        # stale-capital recycler: a HOLD parked past STALE_DAYS that isn't actually winning, and isn't
+        # strongly recovering, is dead money -> escalate to CUT so the gp redeploys into a liquid flip.
+        held_days = _f(p.get("held_days"))
+        stale = bool(
+            action == "HOLD" and held_days is not None and held_days >= STALE_DAYS
+            and (_f(p.get("unrealized_pct")) or 0.0) < STALE_FLAT_MAX
+            and (rec_score is None or rec_score < STALE_RECOVERY_OK)
+            and str(p.get("name", "")).strip().lower() not in EXCLUDE_FLIP   # bonds are kept for membership
+        )
+        if stale:
+            action, list_at = "CUT", sell_at
+            reason = f"stale capital — held {held_days:.0f}d with no progress; cut & redeploy into a faster flip"
+
         net_list = taxmod.net_sell(int(round(list_at)), exempt) if list_at else None
         expected_net = round((net_list - avg_cost) * qty) if net_list is not None else None
         leg_h, rt_h, _ = timeline(qty, vol_day, limit)
@@ -236,6 +255,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             "expected_net": expected_net, "unrealized": p.get("unrealized"),
             "unrealized_pct": p.get("unrealized_pct"), "sell_h": leg_h,
             "recovery_score": round(rec_score) if rec_score is not None else None,
+            "held_days": held_days, "stale": stale,
             "reason": reason, "live": iid in live_sell_ids, "sector": p.get("sector"),
         })
 
@@ -432,14 +452,21 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
 
     expected_realized = sum(s["expected_net"] for s in active_sells if s["expected_net"])
     plan_gp_day = sum(b.get("gp_day") or 0 for b in buys)
+    n_stale = sum(1 for s in sells if s.get("stale"))
+    stale_capital = sum((s.get("avg_cost") or 0) * (s.get("qty") or 0) for s in sells if s.get("stale"))
     return {
         "free_gp": round(free_gp), "committed_capital": round(committed),
         "holdings_value": round(holdings_value), "net_worth": round(net_worth),
         "capital_in": round(cap0),
+        # portfolio totals (so the API can auto-snapshot the growth curve on every plan view)
+        "realized_total": round(float(port.get("realized_total") or 0.0)),
+        "unrealized_total": round(float(port.get("unrealized_total") or 0.0)),
+        "invested": round(float(port.get("invested") or 0.0)),
         "free_slots": int(max(0, 8 - len(slots))), "slots_used": int(min(8, len(slots))),
         "n_positions": len(positions), "n_active_sells": len(active_sells),
         "n_holding": len(holding), "n_buys": len(buys), "n_listed": len(listed),
         "mirage_skipped": int(mirage), "slow_skipped": int(slow_skip), "thin_skipped": int(thin_skip),
+        "n_stale": int(n_stale), "stale_capital": round(stale_capital),
         "liquidity_clock": market_clock(),
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {

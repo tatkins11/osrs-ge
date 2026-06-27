@@ -12,7 +12,7 @@ from collections import defaultdict, deque
 import pandas as pd
 
 from . import tax as taxmod
-from .db import connect, get_items_df, get_trades_df, latest_snapshot_df
+from .db import connect, get_items_df, get_trades_df, latest_snapshot_df, utcnow
 from .sectors import SECTOR_META, classify_one
 from .signals import Thresholds, market_signals
 
@@ -100,6 +100,7 @@ def compute(con=None) -> dict:
         })
 
     # open positions = unconsumed lots, valued net of tax at the current insta-buy price
+    now_ts = pd.Timestamp(utcnow())
     open_positions = []
     unrealized_total = 0.0
     for iid, dq in lots.items():
@@ -107,6 +108,9 @@ def compute(con=None) -> dict:
         if rem_qty <= 0.5:
             continue
         avg_cost = sum(l[0] * l[1] for l in dq) / rem_qty
+        # qty-weighted entry time of the REMAINING lots -> how long this capital has been parked
+        entry_ns = sum(l[0] * l[2].value for l in dq) / rem_qty
+        held_days = round(max(0.0, (now_ts - pd.Timestamp(int(entry_ns))).total_seconds() / 86400.0), 1)
         ch = cur_high(iid)
         cur_net = taxmod.net_sell(int(ch), exempt_of(iid)) if ch else None
         unreal = rem_qty * (cur_net - avg_cost) if cur_net is not None else None
@@ -139,6 +143,7 @@ def compute(con=None) -> dict:
             "alch_floor": round(fnum(nfo.get("alch_floor"))) if fnum(nfo.get("alch_floor")) else None,
             "sector": classify_one(name_of(iid)),
             "status": status,
+            "held_days": held_days,                                              # capital age — for stale-capital recycling
         })
 
     open_positions.sort(key=lambda x: (x["unrealized"] if x["unrealized"] is not None else 0), reverse=True)
