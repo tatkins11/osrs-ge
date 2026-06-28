@@ -338,6 +338,53 @@ def misses(fwd_days: int = 3, min_gain: float = 0.06):
     return per
 
 
+# --- O) order-flow imbalance (OFI) — memory-safe re-test ---------------------
+def ofi(fwd_bars: int = 6):
+    """OOS test of order-flow imbalance as a short-horizon factor. MEMORY-SAFE: all windowing happens in
+    DuckDB (the prior pandas full-panel EMA+shift OOM'd the VPS); only the reduced (item_id, ofi6, fwd)
+    is pulled. SINGLE pre-registered variant: ofi_6h -> forward {fwd}h return, on LIQUID bars (low_vol>0,
+    avg low_vol>=50), winsorized +/-40%. Reports Spearman rank-IC with an item-block bootstrap CI."""
+    con = connect(read_only=True)
+    try:
+        con.execute("PRAGMA memory_limit='1200MB'")
+        d = con.execute(f"""
+            WITH base AS (
+                SELECT item_id, ts, (avg_high+avg_low)/2.0 AS mid, COALESCE(low_vol,0) AS lv,
+                       CASE WHEN COALESCE(high_vol,0)+COALESCE(low_vol,0) > 0
+                            THEN (COALESCE(high_vol,0)-COALESCE(low_vol,0))::DOUBLE
+                                 / (COALESCE(high_vol,0)+COALESCE(low_vol,0)) END AS ofi
+                FROM history WHERE timestep='1h' AND avg_high IS NOT NULL AND avg_low IS NOT NULL
+            ),
+            liq AS (SELECT item_id FROM base GROUP BY item_id HAVING avg(lv) >= 50 AND count(*) >= 100),
+            w AS (
+                SELECT b.item_id, b.mid, b.lv,
+                       avg(b.ofi) OVER (PARTITION BY b.item_id ORDER BY b.ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS ofi6,
+                       lead(b.mid, {int(fwd_bars)}) OVER (PARTITION BY b.item_id ORDER BY b.ts) AS midf
+                FROM base b JOIN liq USING (item_id)
+            )
+            SELECT item_id, ofi6, greatest(-0.4, least(0.4, midf/mid - 1.0)) AS fwd
+            FROM w WHERE lv > 0 AND ofi6 IS NOT NULL AND midf IS NOT NULL AND mid > 0
+        """).df()
+    finally:
+        con.close()
+    print(f"\n=== [O] ORDER-FLOW IMBALANCE — ofi_6h -> forward {fwd_bars}h return (liquid, winsorized) ===")
+    if len(d) < 1000:
+        print(f"  too few liquid observations ({len(d)})")
+        return d
+    ic = d["ofi6"].corr(d["fwd"], method="spearman")
+    rng = np.random.default_rng(7)
+    by = {i: g for i, g in d.groupby("item_id")}
+    items = np.array(list(by))
+    ics = [pd.concat([by[i] for i in rng.choice(items, size=len(items), replace=True)])
+             .pipe(lambda s: s["ofi6"].corr(s["fwd"], method="spearman")) for _ in range(100)]
+    clo, chi = float(np.percentile(ics, 5)), float(np.percentile(ics, 95))
+    verdict = "EDGE" if (clo > 0.03 or chi < -0.03) else ("weak" if abs(ic) >= 0.02 else "no usable signal")
+    print(f"  obs {len(d):,} | items {len(items)} | Spearman rank-IC = {ic:+.3f} "
+          f"(90% item-block CI {clo:+.3f}..{chi:+.3f}) -> {verdict}")
+    print(f"  (one pre-registered variant; gate = |IC|>=0.03 with the CI excluding 0)")
+    return d
+
+
 # --- 4) Sector rotation -----------------------------------------------------
 def rotation():
     from .signals import Thresholds, market_signals
@@ -482,6 +529,7 @@ def main():
     if "decay" in which: decay()
     if "grade" in which: grade_signal_log()
     if "misses" in which: misses()
+    if "ofi" in which: ofi()
     if "rotation" in which: rotation()
     if "slippage" in which: slippage()
     if "velocity" in which: velocity()

@@ -38,7 +38,8 @@ def _load(con, timestep: str) -> pd.DataFrame:
         """
         SELECT item_id, ts, avg_high, avg_low,
                (avg_high + avg_low) / 2.0 AS mid,
-               (COALESCE(high_vol, 0) + COALESCE(low_vol, 0)) AS vol
+               (COALESCE(high_vol, 0) + COALESCE(low_vol, 0)) AS vol,
+               COALESCE(low_vol, 0) AS low_vol   -- separate insta-sell volume: the liquidity floor for SELL exits
         FROM history
         WHERE timestep = ? AND avg_high IS NOT NULL AND avg_low IS NOT NULL
         ORDER BY item_id, ts

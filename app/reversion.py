@@ -37,13 +37,14 @@ MIN_GP_VOL = 25_000_000.0
 
 def _load(con, timestep: str = "6h") -> pd.DataFrame:
     return con.execute(
-        f"""SELECT item_id, ts, avg_high, avg_low, (COALESCE(high_vol,0)+COALESCE(low_vol,0)) AS vol
+        f"""SELECT item_id, ts, avg_high, avg_low, (COALESCE(high_vol,0)+COALESCE(low_vol,0)) AS vol,
+                   COALESCE(low_vol,0) AS low_vol   -- liquidity floor for the SELL exit
             FROM history WHERE timestep='{timestep}' AND avg_high IS NOT NULL AND avg_low IS NOT NULL
             ORDER BY item_id, ts"""
     ).df()
 
 
-def _events(mid, lo, hi, exempt: bool, measure_return: bool):
+def _events(mid, lo, hi, lov, exempt: bool, measure_return: bool):
     """Dip events on one item's arrays. Each -> (half_life_bars|None, reverted bool, ret|None)."""
     n = len(mid)
     if n < W + 5:
@@ -72,7 +73,12 @@ def _events(mid, lo, hi, exempt: bool, measure_return: bool):
             if measure_return:
                 buy = hi[i]                              # pay the ask at the dip (conservative)
                 jend = (i + hl) if reverted else (jmax - 1)
-                sell = lo[jend]                          # sell into the bid on recovery / timeout
+                # LIQUIDITY-FLOORED exit: sell on the first bar from jend with a real insta-sell (low_vol>0),
+                # within a short window -- drops fantasy avg_low prints that biased returns upward.
+                k, kmax = jend, min(n, jend + 8)
+                while k < kmax and (np.isnan(lov[k]) or lov[k] <= 0):
+                    k += 1
+                sell = lo[k] if k < kmax else np.nan
                 if buy and buy > 0 and not np.isnan(buy) and not np.isnan(sell):
                     ret = (taxmod.net_sell(int(round(sell)), exempt) - buy) / buy
             out.append((hl, reverted, ret))
@@ -91,8 +97,24 @@ def _agg(events, measure_return: bool) -> dict:
            "half_life_bars": float(np.median(hls)) if hls else None}
     if measure_return:
         rets = [e[2] for e in events if e[2] is not None]
-        out["mean_ret"] = float(np.mean(np.clip(rets, -0.5, 0.5))) if rets else None
+        rc = list(np.clip(rets, -0.4, 0.4)) if rets else []   # canonical +/-40% winsor
+        out["rets"] = rc                                      # raw per-event (for an honest pooled median + item-block CI)
+        out["med_ret"] = float(np.median(rc)) if rc else None
+        out["win"] = float(np.mean([r > 0 for r in rets])) if rets else None
     return out
+
+
+def _block_ci(df, col, n_boot=1000, lo=5, hi=95, seed=12345):
+    """Item-block bootstrap CI for the MEDIAN of df[col] (resample whole items -> respects same-item
+    autocorrelation). Returns (ci_lo, ci_hi) or (None, None)."""
+    if df is None or df.empty:
+        return None, None
+    rng = np.random.default_rng(seed)
+    by = {i: g[col].to_numpy() for i, g in df.groupby("item_id")}
+    items = np.array(list(by))
+    meds = [np.median(np.concatenate([by[i] for i in rng.choice(items, size=len(items), replace=True)]))
+            for _ in range(n_boot)]
+    return float(np.percentile(meds, lo)), float(np.percentile(meds, hi))
 
 
 def run(timestep: str = "6h", con=None) -> pd.DataFrame:
@@ -110,7 +132,8 @@ def run(timestep: str = "6h", con=None) -> pd.DataFrame:
             continue
         mid = ((g["avg_high"] + g["avg_low"]) / 2.0).to_numpy("float64")
         ex = bool(items.loc[iid, "exempt"]) if iid in items.index else False
-        a = _agg(_events(mid, g["avg_low"].to_numpy("float64"), g["avg_high"].to_numpy("float64"), ex, False), False)
+        a = _agg(_events(mid, g["avg_low"].to_numpy("float64"), g["avg_high"].to_numpy("float64"),
+                         g["low_vol"].to_numpy("float64"), ex, False), False)
         if a.get("n_events", 0) >= 3:
             rows.append({"item_id": int(iid), **a})
     return pd.DataFrame(rows)
@@ -125,26 +148,29 @@ def oos(timestep: str = "6h", con=None) -> pd.DataFrame:
     finally:
         if own:
             con.close()
-    rows = []
+    rows, flat = [], []
     for iid, g in hist.groupby("item_id"):
         if g["avg_high"].mean() * g["vol"].mean() * BARS_PER_DAY < MIN_GP_VOL:
             continue
         mid = ((g["avg_high"] + g["avg_low"]) / 2.0).to_numpy("float64")
         lo = g["avg_low"].to_numpy("float64")
         hi = g["avg_high"].to_numpy("float64")
+        lov = g["low_vol"].to_numpy("float64")
         ex = bool(items.loc[iid, "exempt"]) if iid in items.index else False
         h = len(mid) // 2
         if h < W + 10:
             continue
-        is_a = _agg(_events(mid[:h], lo[:h], hi[:h], ex, False), False)
-        oos_a = _agg(_events(mid[h:], lo[h:], hi[h:], ex, True), True)
+        is_a = _agg(_events(mid[:h], lo[:h], hi[:h], lov[:h], ex, False), False)
+        oos_a = _agg(_events(mid[h:], lo[h:], hi[h:], lov[h:], ex, True), True)
         if is_a.get("n_events", 0) >= 3 and oos_a.get("n_events", 0) >= 3:
             rows.append({
                 "item_id": int(iid),
                 "is_reliability": is_a["reliability"], "is_half_life": is_a.get("half_life_bars"),
-                "oos_reliability": oos_a["reliability"], "oos_ret": oos_a.get("mean_ret"),
+                "oos_reliability": oos_a["reliability"], "oos_ret": oos_a.get("med_ret"),  # per-item MEDIAN now
             })
-    return pd.DataFrame(rows)
+            for r in (oos_a.get("rets") or []):
+                flat.append({"item_id": int(iid), "ret": r})   # raw per-event for the honest pooled median + item-block CI
+    return pd.DataFrame(rows), pd.DataFrame(flat)
 
 
 def main() -> None:
@@ -164,23 +190,25 @@ def main() -> None:
                   f"share of items >=70% reliable: {(df['reliability']>=0.7).mean()*100:.0f}%")
         return
 
-    df = oos()
-    print(f"\nOUT-OF-SAMPLE reversion predictiveness (fit on 1st half, test on 2nd):")
-    print(f"  items with >=3 dislocations each half: {len(df)}")
-    if len(df) < 20:
-        print("  too few items to judge."); return
+    df, flat = oos()
+    print(f"\nOUT-OF-SAMPLE reversion (fit 1st half, test 2nd; LIQUIDITY-FLOORED exits, net of 2% tax):")
+    print(f"  items with >=3 dislocations each half: {len(df)} | OOS dip-buy events: {len(flat)}")
+    if len(df) < 20 or flat.empty:
+        print("  too few to judge."); return
+    clo, chi = _block_ci(flat, "ret")   # HONEST headline: pooled per-event MEDIAN + item-block CI
+    print(f"  dip-buy MEDIAN net return {flat['ret'].median()*100:+.1f}% (90% item-block CI {clo*100:+.1f}..{chi*100:+.1f}%)"
+          f" | win {(flat['ret']>0).mean()*100:.0f}% | mean {flat['ret'].mean()*100:+.1f}% (diag)")
     c1 = np.corrcoef(df["is_reliability"], df["oos_reliability"])[0, 1]
     sub = df.dropna(subset=["oos_ret"])
     c2 = np.corrcoef(sub["is_reliability"], sub["oos_ret"])[0, 1] if len(sub) > 10 else float("nan")
-    print(f"  corr(IS reliability, OOS reliability) = {c1:+.2f}")
-    print(f"  corr(IS reliability, OOS return)      = {c2:+.2f}")
+    print(f"  corr(IS reliability, OOS reliability) = {c1:+.2f} | corr(IS reliability, OOS median ret) = {c2:+.2f}")
     df["bucket"] = pd.qcut(df["is_reliability"].rank(method="first"), 3, labels=["low", "mid", "high"])
-    print(f"\n  {'IS-reliability bucket':<22}{'items':>7}{'IS rel':>8}{'OOS rel':>9}{'OOS ret':>9}")
+    print(f"\n  {'IS-reliability bucket':<22}{'items':>7}{'IS rel':>8}{'OOS rel':>9}{'OOS medRet':>11}")
     for b in ["low", "mid", "high"]:
         d = df[df["bucket"] == b]
         rr = d["oos_ret"].dropna()
         print(f"  {b:<22}{len(d):>7}{d['is_reliability'].mean()*100:>7.0f}%{d['oos_reliability'].mean()*100:>8.0f}%"
-              f"{(rr.mean()*100 if len(rr) else float('nan')):>8.1f}%")
+              f"{(rr.median()*100 if len(rr) else float('nan')):>10.1f}%")
     print()
 
 

@@ -25,11 +25,11 @@ from . import tax as taxmod
 from .crash import _load
 from .db import connect, get_items_df
 
-WINSOR = 0.50
+WINSOR = 0.40  # canonical winsor (was 0.50) -- matches research._exit_from hygiene
 NAT_COST = 120.0  # approx nature rune cost for the alch floor (highalch dominates the floor)
 
 
-def backtest_item(mid, hi, lo, vol, ref_window, crash_pct, recover_to, stop_pct, max_hold, exempt, alch_floor):
+def backtest_item(mid, hi, lo, lov, vol, ref_window, crash_pct, recover_to, stop_pct, max_hold, exempt, alch_floor):
     n = len(mid)
     if n < ref_window + 5:
         return []
@@ -53,9 +53,15 @@ def backtest_item(mid, hi, lo, vol, ref_window, crash_pct, recover_to, stop_pct,
                       else "stop" if mid[i] <= entry_mid * (1 - stop_pct)
                       else "timeout" if hold >= max_hold else "")
             if reason and buy_p > 0:
-                sell_p = lo[i] if not np.isnan(lo[i]) else mid[i]
-                net = taxmod.net_sell(int(round(sell_p)), exempt) - buy_p
-                trades.append({"net": net, "ret": net / buy_p, "support": e_support, "volspike": e_volspike})
+                # LIQUIDITY-FLOORED exit: sell on the first bar from i with a real insta-sell (low_vol>0),
+                # within a short window; if none appears, DROP the trade (no fantasy avg_low print).
+                j, jend = i, min(n, i + 8)
+                while j < jend and (np.isnan(lov[j]) or lov[j] <= 0):
+                    j += 1
+                if j < jend:
+                    sell_p = lo[j] if not np.isnan(lo[j]) else mid[j]
+                    net = taxmod.net_sell(int(round(sell_p)), exempt) - buy_p
+                    trades.append({"net": net, "ret": net / buy_p, "support": e_support, "volspike": e_volspike})
                 in_pos = False
     return trades
 
@@ -77,7 +83,8 @@ def run(timestep="6h", crash_pct=0.18, ref_window=28, recover_to=0.95, stop_pct=
         ha = float(items.loc[iid, "highalch"]) if (iid in items.index and pd.notna(items.loc[iid, "highalch"])) else 0.0
         alch_floor = (ha - NAT_COST) if ha > 0 else 0.0
         rows += backtest_item(g["mid"].to_numpy(float), g["avg_high"].to_numpy(float), g["avg_low"].to_numpy(float),
-                              g["vol"].to_numpy(float), ref_window, crash_pct, recover_to, stop_pct, max_hold, exempt, alch_floor)
+                              g["low_vol"].to_numpy(float), g["vol"].to_numpy(float),
+                              ref_window, crash_pct, recover_to, stop_pct, max_hold, exempt, alch_floor)
     return pd.DataFrame(rows)
 
 
@@ -87,12 +94,12 @@ def _line(label, d):
         return
     r = d["ret"].clip(-WINSOR, WINSOR)
     w, l = r[r > 0].sum(), r[r < 0].sum()
-    pf = "inf" if l >= 0 else f"{w / abs(l):.2f}"
-    print(f"  {label:<16}{len(d):>8}{(d['net'] > 0).mean() * 100:>7.0f}%{r.mean() * 100:>8.1f}%{pf:>7}")
+    pf = "inf" if l >= 0 else f"{w / abs(l):.2f}"   # MEDIAN is the headline; mean kept as a diagnostic
+    print(f"  {label:<16}{len(d):>8}{(d['net'] > 0).mean() * 100:>7.0f}%{r.median() * 100:>8.1f}%{r.mean() * 100:>9.1f}%{pf:>7}")
 
 
 def _buckets(df, col, edges, labels):
-    print(f"  {'bucket':<16}{'trades':>8}{'win':>8}{'avg ret':>9}{'PF':>7}")
+    print(f"  {'bucket':<16}{'trades':>8}{'win':>8}{'medRet':>9}{'meanRet':>9}{'PF':>7}")
     for lab, lo, hi in zip(labels, edges[:-1], edges[1:]):
         _line(lab, df[(df[col] >= lo) & (df[col] < hi)])
 
