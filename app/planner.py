@@ -381,15 +381,17 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     thin_skip = 0
     exit_skip = 0
     if free_slots > 0 and good_buy_ids:
-        # Rank by per-unit margin (favor HIGH-VALUE flips you buy in 1s/few), tilted by how readily the
-        # item TRADES — a great margin on something that fills 1% of the time is worth nothing. Value
-        # still dominates; among comparable-value flips the one that actually fills wins.
-        def _score(kv):  # LIVE ranking (heuristic): per-unit margin x fill-speed tilt x liquidity credit
+        # Rank by TOTAL deployable round-trip profit (margin x the units this slot can realistically size),
+        # tilted by liquidity — so idle bankroll flows into the bigger liquid flips instead of small
+        # high-per-unit-margin singles that leave capital idle. The quality bars (uptime/sell/ROI/profit/
+        # exit gates) are unchanged; this only reorders WHICH qualifying buys fill the slots.
+        def _score(kv):  # LIVE ranking: total deployable profit x liquidity credit
             iid_, (mgn, buy_at, sell_at, ex, vol_day, limit, r) = kv
-            fill1 = timeline(1, vol_day, limit)[0]                          # hours to fill ONE unit
             up = prof.get(iid_, {}).get("buy", 0.0)                         # buy-side trade frequency
             liq = 0.25 + 0.75 * min(1.0, up / 0.5)                          # full liquidity credit at >=50% uptime
-            return mgn * min(1.0, MAX_FILL_H / (2.0 * max(fill1, 0.5))) * liq
+            pcap = (per_slot_cap // buy_at) if (per_slot_cap > 0 and buy_at > 0) else float("inf")
+            units = max(1.0, min(size_for_timeline(vol_day), limit, pcap, offer_cap(r.name)))
+            return mgn * units * liq                                        # margin x sized units = gp/round-trip
 
         def _ev(iid_, mgn, buy_at, vol_day, limit, r):
             # capital-normalized, TWO-SIDED expected value (gp per gp-of-capital per day): two-sided fill
