@@ -47,24 +47,29 @@ def _hist(item_ids, timestep, con):
     ).df()
 
 
+def _exit_from(fw, entry, target, exempt_flag):
+    """LIQUIDITY-FLOORED forward exit given an item's forward bars (already item+window filtered): the
+    realized exit is the avg_low of the LAST bar on which a real insta-sell happened (low_vol>0) — so a
+    thin item that only ever printed a fantasy avg_low is DROPPED, not booked as a 100%+ winner. Returns
+    (ret_net, win, reached_target) net of the 2% sell tax, or None if there was no liquid exit."""
+    liq = fw[fw.low_vol.fillna(0) > 0]
+    if liq.empty:
+        return None
+    end_bid = float(liq.sort_values("ts").avg_low.iloc[-1])
+    net_end = taxmod.net_sell(int(round(end_bid)), exempt_flag) - entry
+    reached = bool(pd.notna(target) and liq.mid.max() >= target)    # reached target on a LIQUID bar
+    return net_end / entry, net_end > 0, reached
+
+
 def _forward_net(row, h, exempt, fwd_days):
-    """LIQUIDITY-FLOORED forward exit for one signal. The realized exit price is the avg_low of the LAST
-    forward bar within (ts, ts+fwd_days] on which a real insta-sell actually happened (low_vol>0) — so a
-    thin item that only ever printed a fantasy avg_low gets DROPPED, not counted as a 100%+ winner.
-    Returns (ret_net, win, reached_target) net of the 2% sell tax, or None if there was no liquid exit."""
+    """Liquidity-floored forward net return for one signal against the full history frame ``h``.
+    Returns (ret_net, win, reached_target) or None when there was no liquid forward exit."""
     if pd.isna(row.entry) or row.entry <= 0:
         return None
     fw = h[(h.item_id == row.item_id) & (h.ts > row.ts) & (h.ts <= row.ts + pd.Timedelta(days=fwd_days))]
     if fw.empty:
         return None
-    liq = fw[fw.low_vol.fillna(0) > 0]            # only bars where someone actually sold = a real exit
-    if liq.empty:
-        return None
-    entry = float(row.entry)
-    end_bid = float(liq.sort_values("ts").avg_low.iloc[-1])
-    net_end = taxmod.net_sell(int(round(end_bid)), exempt.get(int(row.item_id), False)) - entry
-    reached = bool(pd.notna(row.target) and liq.mid.max() >= row.target)   # reached on a LIQUID bar
-    return net_end / entry, net_end > 0, reached
+    return _exit_from(fw, float(row.entry), row.target, exempt.get(int(row.item_id), False))
 
 
 def _block_ci(df, col, n_boot=1000, lo=5, hi=95, seed=12345):
@@ -226,6 +231,72 @@ def decay(fwd_days: int = 3):
     return d
 
 
+# --- G) per-kind signal_log forward grading (the standing OOS audit) ---------
+# signal_log records `horizon` as either a kind-name (flip/crash/overnight) or a duration literal
+# (value). Map each to the forward window, in days, used to grade the prediction.
+_HORIZON_DAYS = {"flip": 1.0, "overnight": 1.0, "crash": 7.0,
+                 "1-3 days": 3.0, "~1 week": 7.0, "2-4 weeks": 21.0}
+
+
+def grade_signal_log():
+    """Grade EVERY matured logged signal (all kinds) against its realized liquidity-floored forward
+    price and PERSIST to signal_outcomes — the standing out-of-sample audit the system never had.
+    De-dupes to one event per (kind, item, day) to kill hourly autocorrelation. Idempotent: already-
+    graded signals are skipped, so a nightly run only adds newly-matured ones. Reports per-kind median
+    net return + win-rate with an item-block CI (the edge-vs-noise verdict)."""
+    from .db import record_signal_outcomes
+    sl = get_signal_log_df()
+    print("\n=== [G] SIGNAL-LOG GRADING — per-kind out-of-sample forward outcomes (liquidity-floored, net of cost) ===")
+    if sl.empty:
+        print("  (no signals logged yet)")
+        return pd.DataFrame()
+    sl = sl.copy()
+    sl["hd"] = sl.horizon.map(_HORIZON_DAYS).fillna(3.0)
+    last_ts = sl.ts.max()
+    sl = sl[sl.ts <= last_ts - pd.to_timedelta(sl.hd, unit="D")]          # only matured signals
+    if sl.empty:
+        print("  (no signals have matured past their horizon yet)")
+        return pd.DataFrame()
+    sl["day"] = sl.ts.dt.floor("D")
+    first = sl.sort_values("ts").groupby(["kind", "item_id", "day"], as_index=False).first()
+    _, exempt = _items()
+    con = connect(read_only=True)
+    h = _hist(first.item_id.unique().tolist(), "1h", con)
+    con.close()
+    h_by = {iid: g for iid, g in h.groupby("item_id")} if not h.empty else {}
+    out_rows, graded = [], []
+    for r in first.itertuples():
+        if pd.isna(r.entry) or r.entry <= 0:
+            continue
+        hi = h_by.get(int(r.item_id))
+        if hi is None:
+            continue
+        fw = hi[(hi.ts > r.ts) & (hi.ts <= r.ts + pd.Timedelta(days=float(r.hd)))]
+        if fw.empty:
+            continue
+        got = _exit_from(fw, float(r.entry), r.target, exempt.get(int(r.item_id), False))
+        if got is None:
+            continue
+        ret, win, reached = got
+        out_rows.append({"kind": r.kind, "item_id": int(r.item_id), "sig_ts": r.ts, "name": r.name,
+                         "score": float(r.score) if pd.notna(r.score) else None, "horizon_d": float(r.hd),
+                         "reached": reached, "win": win, "ret_net": ret})
+        graded.append({"kind": r.kind, "item_id": int(r.item_id), "score": r.score,
+                       "ret": ret, "win": win, "reached": reached})
+    wrote = record_signal_outcomes(out_rows)
+    d = pd.DataFrame(graded)
+    print(f"  graded {len(d)} matured signals; {wrote} NEW persisted to signal_outcomes")
+    if d.empty:
+        return d
+    print("  per KIND — does each family actually pay? (MEDIAN net return + 90% item-block CI):")
+    for k, s in d.groupby("kind"):
+        clo, chi = _block_ci(s, "ret")
+        verdict = " EDGE" if (clo is not None and clo > 0) else (" LOSER" if (chi is not None and chi < 0) else " ~noise")
+        print(f"    {str(k):10} n={len(s):4}  win {s.win.mean()*100:3.0f}%  reached {s.reached.mean()*100:3.0f}%  "
+              f"median {s.ret.median()*100:+5.1f}% (CI {clo*100:+.1f}..{chi*100:+.1f}%){verdict}")
+    return d
+
+
 # --- 4) Sector rotation -----------------------------------------------------
 def rotation():
     from .signals import Thresholds, market_signals
@@ -364,10 +435,11 @@ def velocity():
 
 
 def main():
-    which = sys.argv[1:] or ["calib", "trades", "decay", "rotation"]
+    which = sys.argv[1:] or ["calib", "trades", "decay", "grade", "rotation"]
     if "calib" in which: calib()
     if "trades" in which: trades()
     if "decay" in which: decay()
+    if "grade" in which: grade_signal_log()
     if "rotation" in which: rotation()
     if "slippage" in which: slippage()
     if "velocity" in which: velocity()

@@ -79,7 +79,7 @@ def get_thresholds(
     crash_pct: float = Query(0.18, gt=0, lt=1),
     vol_spike: float = Query(2.0, gt=1),
     value_min_discount: float = Query(0.08, ge=0, lt=1),
-    value_min_confidence: int = Query(40, ge=0, le=100),
+    value_min_confidence: int = Query(80, ge=0, le=100),  # raised 40->80: only 80+ has CI-positive edge
     overnight_disc: float = Query(0.10, gt=0, lt=1),
     z_buy: float = Query(-1.5),
     z_sell: float = Query(1.5),

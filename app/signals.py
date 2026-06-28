@@ -42,7 +42,10 @@ class Thresholds:
     crash_pct: float = 0.18                   # crash = this far below the established (7d median) level
     crash_recover_to: float = 0.95            # recovery target as a fraction of the established level
     value_min_discount: float = 0.08          # value buy: at least this far below the established level
-    value_min_confidence: int = 40            # value buy: minimum 0-100 confidence to surface
+    value_min_confidence: int = 80            # value buy: min 0-100 confidence to surface. Raised 40->80
+                                              # on liquidity-floored calibration (2026-06): only the 80+
+                                              # bucket has a CI-positive median net return; 65-80 (the old
+                                              # bulk) was a statistically-real loser (median -1.1%, CI<0).
     update_drop_penalty: float = 15.0         # value-confidence penalty if the drop landed ~2d after a game update
     update_drop_factor: float = 0.5           # crash-rank down-weight for the same update-driven drop
     update_drop_days: int = 2                 # window (days) after an update for a drop to count as update-driven

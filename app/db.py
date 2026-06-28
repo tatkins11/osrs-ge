@@ -406,7 +406,8 @@ CREATE TABLE IF NOT EXISTS plan_log (   -- ~hourly snapshot of what the 8-Slot P
     exp_net   BIGINT,      -- realizable P&L (sells/cuts)
     recovery  INTEGER,     -- recovery score 0-100 (holds/cuts)
     target    BIGINT,      -- sell target (buys) / fair value (holds)
-    cur_price BIGINT       -- market price at snapshot (baseline for outcome eval)
+    cur_price BIGINT,      -- market price at snapshot (baseline for outcome eval)
+    ev_score  DOUBLE       -- candidate's two-sided EV-ranker score (buys) — logged for A/B vs the live ranker
 );
 CREATE SEQUENCE IF NOT EXISTS study_results_id_seq;
 CREATE TABLE IF NOT EXISTS study_results (  -- research.py diagnostics persisted per run so calibration drift is queryable (not stdout-only)
@@ -426,7 +427,7 @@ CREATE TABLE IF NOT EXISTS study_results (  -- research.py diagnostics persisted
 """
 _TRADE_COLS = ["id", "ts", "item_id", "side", "qty", "price", "note"]
 _NW_COLS = ["day", "ts", "net_worth", "bankroll", "holdings_value", "realized_total", "unrealized_total", "invested"]
-_PLAN_LOG_COLS = ["id", "ts", "action", "item_id", "name", "price", "qty", "margin", "gp_day", "exp_net", "recovery", "target", "cur_price"]
+_PLAN_LOG_COLS = ["id", "ts", "action", "item_id", "name", "price", "qty", "margin", "gp_day", "exp_net", "recovery", "target", "cur_price", "ev_score"]
 _STUDY_COLS = ["id", "ts", "study", "kind", "bucket", "n", "win_rate", "mean_ret", "median_ret", "ret_ci_lo", "ret_ci_hi", "reached_target"]
 
 
@@ -941,6 +942,7 @@ def insert_plan_log(plan: dict, ts=None) -> int:
         return 0
     try:
         _ensure_schema(con)
+        con.execute("ALTER TABLE plan_log ADD COLUMN IF NOT EXISTS ev_score DOUBLE")  # migrate pre-existing tables
         last = con.execute("SELECT max(ts) FROM plan_log").fetchone()
         if last and last[0] is not None and (ts - last[0]).total_seconds() < 3300:  # ~55 min dedup
             return 0
@@ -949,11 +951,11 @@ def insert_plan_log(plan: dict, ts=None) -> int:
             int(s.get("price") or 0), int(s.get("units") or s.get("qty") or 0),
             int(s.get("margin") or 0), int(s.get("gp_day") or 0), int(s.get("expected_net") or 0),
             int(s.get("recovery_score") or 0), int(s.get("target") or s.get("sell_target") or 0),
-            int(s.get("cur_price") or s.get("price") or 0),
+            int(s.get("cur_price") or s.get("price") or 0), _num_or_none(s.get("ev_score")),
         ] for s in recs]
         con.executemany(
-            "INSERT INTO plan_log (ts, action, item_id, name, price, qty, margin, gp_day, exp_net, recovery, target, cur_price) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "INSERT INTO plan_log (ts, action, item_id, name, price, qty, margin, gp_day, exp_net, recovery, target, cur_price, ev_score) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         return len(rows)
     except duckdb.Error:
         return 0
@@ -993,9 +995,23 @@ CREATE TABLE IF NOT EXISTS signal_log (
     mid         DOUBLE,      -- market mid at snapshot, for later evaluation
     established DOUBLE
 );
+CREATE TABLE IF NOT EXISTS signal_outcomes (  -- per-signal forward grade: did the logged prediction pay? (the standing OOS audit)
+    kind      VARCHAR,
+    item_id   INTEGER,
+    sig_ts    TIMESTAMP,    -- the signal's emission time (first per item/kind/day, to cut autocorrelation)
+    name      VARCHAR,
+    score     DOUBLE,       -- the logged headline score (for confidence-bucket calibration)
+    horizon_d DOUBLE,       -- forward window graded, in days
+    reached   BOOLEAN,      -- reached the target on a LIQUID bar within the horizon
+    win       BOOLEAN,      -- liquidity-floored forward net return > 0
+    ret_net   DOUBLE,       -- liquidity-floored forward net return, fraction (net of 2% tax)
+    graded_ts TIMESTAMP,    -- when this grading run wrote the row
+    PRIMARY KEY (kind, item_id, sig_ts)
+);
 """
 _LOG_COLS = ["id", "ts", "kind", "item_id", "name", "rank", "score", "entry", "target",
              "exp_roi", "exp_margin", "horizon", "mid", "established"]
+_OUTCOME_COLS = ["kind", "item_id", "sig_ts", "name", "score", "horizon_d", "reached", "win", "ret_net", "graded_ts"]
 
 
 def connect_log(read_only: bool = False, retries: int = 12, retry_wait: float = 0.5):
@@ -1044,5 +1060,52 @@ def get_signal_log_df() -> pd.DataFrame:
         return con.execute("SELECT * FROM signal_log ORDER BY ts, id").df()
     except duckdb.Error:
         return pd.DataFrame(columns=_LOG_COLS)
+    finally:
+        con.close()
+
+
+def record_signal_outcomes(rows, ts=None) -> int:
+    """Persist per-signal forward grades (the standing OOS audit) into signal_outcomes. Idempotent:
+    re-grading an already-graded (kind,item_id,sig_ts) is a no-op (ON CONFLICT DO NOTHING), so the
+    nightly job only adds newly-matured signals. Returns the number of NEW rows written."""
+    rows = [r for r in (rows or []) if r]
+    if not rows:
+        return 0
+    ts = ts or utcnow()
+    try:
+        con = connect_log()
+    except RuntimeError:
+        return 0
+    try:
+        con.execute(_LOG_SCHEMA)
+        before = con.execute("SELECT count(*) FROM signal_outcomes").fetchone()[0]
+        for r in rows:
+            try:
+                con.execute(
+                    "INSERT INTO signal_outcomes (kind, item_id, sig_ts, name, score, horizon_d, reached, win, ret_net, graded_ts) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                    [str(r.get("kind")), int(r.get("item_id")), r.get("sig_ts"), str(r.get("name") or ""),
+                     _num_or_none(r.get("score")), _num_or_none(r.get("horizon_d")),
+                     bool(r.get("reached")), bool(r.get("win")), _num_or_none(r.get("ret_net")), ts],
+                )
+            except duckdb.Error:
+                pass
+        after = con.execute("SELECT count(*) FROM signal_outcomes").fetchone()[0]
+        return int(after - before)
+    except duckdb.Error:
+        return 0
+    finally:
+        con.close()
+
+
+def get_signal_outcomes_df() -> pd.DataFrame:
+    try:
+        con = connect_log(read_only=True)
+    except RuntimeError:
+        return pd.DataFrame(columns=_OUTCOME_COLS)
+    try:
+        return con.execute("SELECT * FROM signal_outcomes ORDER BY sig_ts").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=_OUTCOME_COLS)
     finally:
         con.close()

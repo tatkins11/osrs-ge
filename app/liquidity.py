@@ -38,7 +38,9 @@ def fill_uptime(item_ids, days: float = 7.0, con=None) -> dict[int, dict]:
         rows = con.execute(
             f"""SELECT item_id, count(*) n,
                        sum(CASE WHEN low_vol  > 0 THEN 1 ELSE 0 END) buy_active,
-                       sum(CASE WHEN high_vol > 0 THEN 1 ELSE 0 END) sell_active
+                       sum(CASE WHEN high_vol > 0 THEN 1 ELSE 0 END) sell_active,
+                       sum(COALESCE(low_vol, 0))  tot_low,
+                       sum(COALESCE(high_vol, 0)) tot_high
                 FROM snapshots
                 WHERE item_id IN ({ph}) AND ts >= ?
                 GROUP BY item_id""",
@@ -48,12 +50,15 @@ def fill_uptime(item_ids, days: float = 7.0, con=None) -> dict[int, dict]:
         if own:
             con.close()
     out: dict[int, dict] = {}
-    for iid, n, ba, sa in rows:
+    d = max(float(days), 0.01)
+    for iid, n, ba, sa, tl, th in rows:
         n = int(n or 0)
         out[int(iid)] = {
-            "buy": (ba / n) if n else 0.0,    # buy-side uptime  (your BUY fills)
-            "sell": (sa / n) if n else 0.0,   # sell-side uptime (your SELL fills)
+            "buy": (ba / n) if n else 0.0,    # buy-side uptime  (your BUY fills: sellers present)
+            "sell": (sa / n) if n else 0.0,   # sell-side uptime (your SELL fills: buyers present)
             "n": n,
+            "buy_units_day": float(tl or 0.0) / d,    # daily insta-sell volume -> how fast you can BUY
+            "sell_units_day": float(th or 0.0) / d,   # daily insta-buy volume  -> how fast you can EXIT
         }
     return out
 

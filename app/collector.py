@@ -142,6 +142,14 @@ def _log_signals() -> int:
     return insert_signal_log(df)
 
 
+def _grade_signals() -> int:
+    """Nightly: grade matured logged signals against realized forward prices into signal_outcomes (the
+    standing OOS audit). Reads prices read-only; writes only the outcomes table. Caller guards."""
+    from .research import grade_signal_log
+    d = grade_signal_log()
+    return 0 if d is None else len(d)
+
+
 def _refresh_updates() -> int:
     """Pull the latest OSRS game-update list from the wiki into the prices DB (chart markers)."""
     from .updates import fetch_updates
@@ -221,6 +229,10 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
                         log.info("sector map refreshed: %d", _refresh_sectors())
                     except Exception:
                         log.exception("sector-map refresh failed")
+                    try:  # grade matured signals into signal_outcomes (the standing OOS audit)
+                        log.info("signal grading: %d matured graded", _grade_signals())
+                    except Exception:
+                        log.exception("signal grading failed")
                     current_day = day
             except Exception:
                 log.exception("catalog refresh failed")
