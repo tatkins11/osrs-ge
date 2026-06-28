@@ -316,11 +316,11 @@ def misses(fwd_days: int = 3, min_gain: float = 0.06):
     if h.empty:
         print("  (no history)")
         return
-    h["fwd"] = h.groupby("item_id")["mid"].shift(-fwd_days * 24) / h["mid"] - 1.0
+    h["fwd"] = (h.groupby("item_id")["mid"].shift(-fwd_days * 24) / h["mid"] - 1.0).clip(-0.4, 0.4)  # winsorize: kill 1-bar price-glitch prints
     liq = h[(h.low_vol.fillna(0) > 0) & h.fwd.notna()]          # a real insta-sell to buy into + a known forward
     per = liq.groupby("item_id").agg(bars=("fwd", "size"), opp_rate=("fwd", lambda s: (s >= min_gain).mean()),
-                                     best=("fwd", "max"), med=("fwd", "median"), vol=("low_vol", "mean")).reset_index()
-    per = per[per.bars >= 48]                                   # enough liquid bars for the rate to mean something
+                                     med=("fwd", "median"), vol=("low_vol", "mean")).reset_index()
+    per = per[(per.bars >= 48) & (per.vol >= 50)]               # genuinely LIQUID (real volume) + enough bars -- no fantasy prints
     if per.empty:
         print("  (not enough liquid history yet)")
         return
@@ -331,10 +331,10 @@ def misses(fwd_days: int = 3, min_gain: float = 0.06):
     catch = hot.signaled.mean() if len(hot) else float("nan")
     print(f"  high-opportunity items (>=10% of liquid bars paid): {len(hot)} | we surfaced {catch*100:.0f}% of them")
     miss = hot[~hot.signaled].sort_values("opp_rate", ascending=False)
-    print(f"  TOP MISSES (never signalled, by how often they paid):")
-    print(f"    {'opp%':>5}{'best':>7}{'medFwd':>8}{'liqVol':>9}  name")
+    print(f"  TOP MISSES (liquid, never signalled, by how often they paid):")
+    print(f"    {'opp%':>5}{'medFwd':>8}{'liqVol':>9}  name")
     for r in miss.head(15).itertuples():
-        print(f"    {r.opp_rate*100:4.0f}%{r.best*100:+6.0f}%{r.med*100:+7.1f}%{r.vol:9.0f}  {r.name}")
+        print(f"    {r.opp_rate*100:4.0f}%{r.med*100:+7.1f}%{r.vol:9.0f}  {r.name}")
     return per
 
 
