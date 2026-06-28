@@ -455,7 +455,11 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         order_buy = float(o_price) if o_price > 0 else buy_at
         row = _buy_row(r, iid, rem_units, order_buy, sell_at, ex, vol_day, limit, live=True)
         row["reason"] = f"live buy — keep filling ({o_filled:,}/{o_total:,})"
-        row["fill_freq"] = round(prof.get(iid, {}).get("buy", 0.0), 3)
+        pr = prof.get(iid, {})
+        row["fill_freq"] = round(pr.get("buy", 0.0), 3)
+        row["sell_freq"] = round(pr.get("sell", 0.0), 3)
+        sud = pr.get("sell_units_day", 0.0)
+        row["days_to_liquidate"] = round(rem_units / (CAPTURE * sud), 1) if sud > 0 else None
         kept_buy_rows.append(row)
 
     # ---- 4) assemble ------------------------------------------------------------------------
