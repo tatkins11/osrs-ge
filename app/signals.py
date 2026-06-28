@@ -424,17 +424,18 @@ def _value_reasons(r: dict) -> list[str]:
     return [x for x in out if x]
 
 
-def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100) -> list[dict]:
+def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100, d=None) -> list[dict]:
     """Lowball overnight buy offers: place a buy ~overnight_disc below the bid on a
     liquid, stable item; it fills only if the price dumps overnight (caught while you
     sleep), then sell next day toward fair value. Backtest-validated as a modest,
-    infrequent reversion edge (deep offers recover; shallow ones bleed the spread)."""
+    infrequent reversion edge (deep offers recover; shallow ones bleed the spread).
+    Pass ``d`` (a precomputed market_signals frame) to avoid recomputing it (the planner does)."""
     from . import overnight as on
     th = th or Thresholds()
     own = con is None
     con = con or connect(read_only=True)
     try:
-        d = market_signals(th, con)
+        d = market_signals(th, con) if d is None else d.copy()
         if d.empty:
             return []
         disc = th.overnight_disc

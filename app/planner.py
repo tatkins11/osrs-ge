@@ -27,7 +27,7 @@ from . import portfolio as pf
 from . import tax as taxmod
 from .db import connect, get_free_gp, get_orders_df
 from .liquidity import fill_uptime, market_clock, peak_hours
-from .signals import KNIFE_SLOPE_PER_DAY, Thresholds, market_signals
+from .signals import KNIFE_SLOPE_PER_DAY, Thresholds, market_signals, overnight_table
 
 CAPTURE = 0.04           # realistic share of an item's daily volume you transact per leg. Conservative:
                          # a competitively-priced offer waits in a queue, so real fills are slow. Lowered
@@ -486,6 +486,27 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         if hrs:
             s["best_hours"] = hrs
 
+    # OVERNIGHT PICKS — the only OOS-PROVEN signal family (+7.5% median/night, 78% win). Surfaced in the
+    # main plan but kept SEPARATE from the 8 flip/sell slots: different timing (place in the evening, sell
+    # next morning), so they don't compete for "right now" slots. Affordable, not already held/on order.
+    overnight = []
+    try:
+        for o in overnight_table(th, d=ms, limit=12):
+            iid = int(o.get("item_id"))
+            if iid in held_ids or iid in live_buy_ids or (o.get("on_buy") or 0) > free_gp:
+                continue
+            overnight.append({
+                "item_id": iid, "name": o.get("name"),
+                "buy": round(o.get("on_buy") or 0), "target": round(o.get("on_target") or 0),
+                "margin": round(o.get("on_margin") or 0), "roi": o.get("on_roi"),
+                "fill_prob": o.get("on_fill_prob"), "win_rate": o.get("on_win_rate"),
+                "units": int(o.get("on_units") or 0), "ev": round(o.get("on_ev") or 0),
+            })
+            if len(overnight) >= 5:
+                break
+    except Exception:  # noqa: BLE001 — never let the overnight add-on break the core plan
+        overnight = []
+
     expected_realized = sum(s["expected_net"] for s in active_sells if s["expected_net"])
     plan_gp_day = sum(b.get("gp_day") or 0 for b in buys)
     n_stale = sum(1 for s in sells if s.get("stale"))
@@ -503,7 +524,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         "n_holding": len(holding), "n_buys": len(buys), "n_listed": len(listed),
         "mirage_skipped": int(mirage), "slow_skipped": int(slow_skip), "thin_skipped": int(thin_skip),
         "exit_skipped": int(exit_skip), "n_stale": int(n_stale), "stale_capital": round(stale_capital),
-        "liquidity_clock": market_clock(),
+        "liquidity_clock": market_clock(), "overnight": overnight,
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
             "expected_realized": round(expected_realized),

@@ -488,6 +488,29 @@ def growth(th: Thresholds = Depends(get_thresholds)) -> dict:
     return compute_growth(th)
 
 
+@app.get("/api/proven-items")
+def proven_items(min_n: int = Query(3), kind: str | None = Query(None)) -> list[dict]:
+    """Per-item OUT-OF-SAMPLE leaderboard from signal_outcomes: which item+kind combos have actually
+    paid (liquidity-floored, net of tax) — the 'proven winners' watchlist, fed by the nightly grading
+    job. Ranked by median forward net return; min_n filters thin samples."""
+    from .db import get_signal_outcomes_df
+    o = get_signal_outcomes_df()
+    if o.empty:
+        return []
+    if kind:
+        o = o[o["kind"] == kind]
+    g = (o.groupby(["item_id", "name", "kind"])
+           .agg(n=("win", "size"), win_rate=("win", "mean"),
+                median_ret=("ret_net", "median"), reached=("reached", "mean"))
+           .reset_index())
+    g = g[g["n"] >= int(min_n)].sort_values("median_ret", ascending=False)
+    return [
+        {"item_id": int(r.item_id), "name": str(r.name), "kind": str(r.kind), "n": int(r.n),
+         "win_rate": float(r.win_rate), "median_ret": float(r.median_ret), "reached": float(r.reached)}
+        for r in g.head(60).itertuples()
+    ]
+
+
 class FreeGpIn(BaseModel):
     value: float
 

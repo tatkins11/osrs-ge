@@ -3,6 +3,7 @@ import { addOrder, getAccount, getCrashes, getFlips, getInvest, getItems, getMet
 import { gpShort } from "./format";
 import { Planner } from "./components/Planner";
 import { GrowthTracker } from "./components/GrowthTracker";
+import { ProvenItems } from "./components/ProvenItems";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
 import { InvestTable } from "./components/InvestTable";
@@ -15,7 +16,7 @@ import { SectorGrid } from "./components/SectorGrid";
 import { SectorPanel } from "./components/SectorPanel";
 import { VolumeTable } from "./components/VolumeTable";
 
-type Tab = "flips" | "allocate" | "growth" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "orders" | "portfolio";
+type Tab = "flips" | "allocate" | "growth" | "proven" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "orders" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -36,6 +37,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "flips", label: "Flips" },
   { id: "allocate", label: "8-Slot Plan" },
   { id: "growth", label: "Growth" },
+  { id: "proven", label: "Proven" },
   { id: "invest", label: "Invest" },
   { id: "crashes", label: "Crashes" },
   { id: "movers", label: "Movers" },
@@ -290,6 +292,15 @@ export default function App() {
               <GrowthTracker filters={filters} refreshNonce={nonce} />
             </div>
             <div className="panel-wrap" />
+          </>
+        ) : tab === "proven" ? (
+          <>
+            <div className="table-wrap">
+              <ProvenItems selectedId={selected} onSelect={setSelected} refreshNonce={nonce} />
+            </div>
+            <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
+              <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
+            </div>
           </>
         ) : tab === "sectors" ? (
           <>

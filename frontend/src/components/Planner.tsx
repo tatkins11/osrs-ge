@@ -265,6 +265,40 @@ export function Planner({
         </tbody>
       </table>
 
+      {plan.overnight.length > 0 && (
+        <>
+          <div className="slot-head" style={{ marginTop: 16 }}>
+            🌙 Overnight picks — place in the evening, sell next morning{" "}
+            <span className="dim">· the only OOS-proven signal (+7.5% median/night, 78% win) · separate from your 8 slots</span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="left">Item</th><th>Buy ≤</th><th>Sell target</th><th>Margin/ea</th>
+                <th title="Historical odds this lowball fills overnight">Fill odds</th>
+                <th title="Historical win rate on the nights it fills">Win</th>
+                <th title="Expected gp/night = margin × fill odds × win rate">EV/night</th>
+                <th className="left">Add</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plan.overnight.map((o) => (
+                <tr key={o.item_id} className={o.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(o.item_id)}>
+                  <td className="name left">{o.name}</td>
+                  <td>{gp(o.buy)}</td>
+                  <td>{gp(o.target)}</td>
+                  <td className="pos">{gp(o.margin)}</td>
+                  <td className="dim">{o.fill_prob == null ? "–" : `${Math.round(o.fill_prob * 100)}%`}</td>
+                  <td className={(o.win_rate ?? 0) >= 0.6 ? "pos" : "dim"}>{o.win_rate == null ? "–" : `${Math.round(o.win_rate * 100)}%`}</td>
+                  <td className="pos">{gpShort(o.ev)}</td>
+                  <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: o.item_id, side: "buy", price: o.buy, qty: o.units })}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
       {plan.holding.length > 0 && (
         <>
           <div className="slot-head" style={{ marginTop: 16 }}>

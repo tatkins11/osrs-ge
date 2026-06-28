@@ -297,6 +297,47 @@ def grade_signal_log():
     return d
 
 
+# --- M) miss analysis: profitable moves our signals never flagged ------------
+def misses(fwd_days: int = 3, min_gain: float = 0.06):
+    """Find the FALSE NEGATIVES: liquid items that repeatedly offered a profitable forward move but that
+    our signals NEVER surfaced (not in signal_log). For each liquid bar (low_vol>0 = you could have
+    bought) compute the fwd_days forward mid return; an 'opportunity' = forward gain >= min_gain (covers
+    ~2% tax + spread + profit). Items with a high opportunity rate that we never flagged are blind spots
+    worth a new signal. Reports our catch rate + the biggest misses."""
+    name, _ = _items()
+    con = connect(read_only=True)
+    h = con.execute(
+        "SELECT item_id, ts, (CAST(avg_high AS DOUBLE)+CAST(avg_low AS DOUBLE))/2.0 AS mid, "
+        "CAST(low_vol AS DOUBLE) AS low_vol FROM history "
+        "WHERE timestep='1h' AND avg_high IS NOT NULL AND avg_low IS NOT NULL ORDER BY item_id, ts"
+    ).df()
+    con.close()
+    print(f"\n=== [M] MISS ANALYSIS — liquid items that offered frequent +{min_gain*100:.0f}% {fwd_days}d gains ===")
+    if h.empty:
+        print("  (no history)")
+        return
+    h["fwd"] = h.groupby("item_id")["mid"].shift(-fwd_days * 24) / h["mid"] - 1.0
+    liq = h[(h.low_vol.fillna(0) > 0) & h.fwd.notna()]          # a real insta-sell to buy into + a known forward
+    per = liq.groupby("item_id").agg(bars=("fwd", "size"), opp_rate=("fwd", lambda s: (s >= min_gain).mean()),
+                                     best=("fwd", "max"), med=("fwd", "median"), vol=("low_vol", "mean")).reset_index()
+    per = per[per.bars >= 48]                                   # enough liquid bars for the rate to mean something
+    if per.empty:
+        print("  (not enough liquid history yet)")
+        return
+    signaled = set(int(x) for x in get_signal_log_df().item_id.unique())
+    per["name"] = per.item_id.map(name)
+    per["signaled"] = per.item_id.isin(signaled)
+    hot = per[per.opp_rate >= 0.10]                             # >=10% of liquid bars offered the move
+    catch = hot.signaled.mean() if len(hot) else float("nan")
+    print(f"  high-opportunity items (>=10% of liquid bars paid): {len(hot)} | we surfaced {catch*100:.0f}% of them")
+    miss = hot[~hot.signaled].sort_values("opp_rate", ascending=False)
+    print(f"  TOP MISSES (never signalled, by how often they paid):")
+    print(f"    {'opp%':>5}{'best':>7}{'medFwd':>8}{'liqVol':>9}  name")
+    for r in miss.head(15).itertuples():
+        print(f"    {r.opp_rate*100:4.0f}%{r.best*100:+6.0f}%{r.med*100:+7.1f}%{r.vol:9.0f}  {r.name}")
+    return per
+
+
 # --- 4) Sector rotation -----------------------------------------------------
 def rotation():
     from .signals import Thresholds, market_signals
@@ -440,6 +481,7 @@ def main():
     if "trades" in which: trades()
     if "decay" in which: decay()
     if "grade" in which: grade_signal_log()
+    if "misses" in which: misses()
     if "rotation" in which: rotation()
     if "slippage" in which: slippage()
     if "velocity" in which: velocity()

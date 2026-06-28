@@ -440,6 +440,18 @@ export interface PlanSlot {
   sector?: string | null;
 }
 export interface ClockHour { hour: number; vol: number; rel: number }  // market liquidity by UTC hour
+export interface OvernightPick {  // OOS-proven overnight edge: place a lowball in the evening, sell next morning
+  item_id: number;
+  name: string;
+  buy: number;          // lowball buy-offer price
+  target: number;       // sell-back target next day
+  margin: number;       // after-tax gp/unit if it reverts
+  roi: number | null;
+  fill_prob: number | null;   // historical odds it fills overnight
+  win_rate: number | null;    // historical win rate when it fills
+  units: number;
+  ev: number;           // expected gp/night = margin × fill_prob × win_rate
+}
 export interface ReconcileItem {
   order_id: string | null;
   item_id: number;
@@ -469,6 +481,7 @@ export interface PlanResponse {
   n_stale: number;             // holds flagged stale (parked too long, no progress — cut & redeploy)
   stale_capital: number;       // gp tied up in those stale holds
   liquidity_clock: ClockHour[];// market-wide trade volume by UTC hour — when orders fill best
+  overnight: OvernightPick[];  // OOS-proven overnight picks (place evening, sell next AM) — separate from the 8 slots
   slots: PlanSlot[];           // the active 8-slot config: SELL/CUT holdings + BUYS
   holding: PlanSlot[];         // held OFF-MARKET (no slot) — waiting for a better price
   reconcile: ReconcileItem[];  // what to do with each current live order
@@ -507,6 +520,19 @@ export interface GrowthResponse {
   targets: GrowthTarget[];
 }
 export const getGrowth = (f: Filters) => get<GrowthResponse>(`/api/growth?${qs(f)}`);
+
+// --- proven items: per-item out-of-sample leaderboard from signal_outcomes -------
+export interface ProvenItem {
+  item_id: number;
+  name: string;
+  kind: string;          // flip | value | crash | overnight
+  n: number;             // graded samples
+  win_rate: number;
+  median_ret: number;    // liquidity-floored median forward net return (fraction)
+  reached: number;       // fraction that reached target
+}
+export const getProvenItems = (kind?: string) =>
+  get<ProvenItem[]>(`/api/proven-items${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`);
 
 // --- account: server-persisted free gp (auto-adjusts as orders fill) -------
 export interface Account {
