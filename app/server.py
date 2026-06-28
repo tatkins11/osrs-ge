@@ -83,7 +83,7 @@ def get_thresholds(
     overnight_disc: float = Query(0.10, gt=0, lt=1),
     z_buy: float = Query(-1.5),
     z_sell: float = Query(1.5),
-    max_alloc_frac: float = Query(0.15, gt=0, le=1),
+    max_alloc_frac: float = Query(0.20, gt=0, le=1),  # raised 0.15->0.20: deploy more idle bankroll per slot
     min_rt_profit: int = Query(350_000, ge=0),
 ) -> Thresholds:
     return Thresholds(
