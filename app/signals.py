@@ -57,8 +57,10 @@ class Thresholds:
     z_sell: float = 1.5
     z_strong_sell: float = 2.5
     bankroll: int = DEFAULT_BANKROLL          # 8-Slot Plan treats this as FREE gp (deployable cash now)
-    max_alloc_frac: float = 0.20              # cap any single position at 20% of net worth (raised 0.15->0.20
-                                              # to deploy more idle bankroll into the bigger liquid flips)
+    max_alloc_frac: float = 0.40              # cap any single position at 40% of net worth. Raised 0.20->0.40:
+                                              # Tristan wants concentrated big bets, not diversification — let
+                                              # one great liquid opportunity take a big slice (still exitable
+                                              # via MIN_SELL_UPTIME + the exit cap). Dial down if too punchy.
     min_rt_profit: int = 350_000             # 8-Slot Plan: skip buys whose per-round-trip profit is below this
 
 

@@ -29,10 +29,10 @@ from .db import connect, get_free_gp, get_orders_df
 from .liquidity import fill_uptime, market_clock, peak_hours
 from .signals import KNIFE_SLOPE_PER_DAY, Thresholds, market_signals, overnight_table
 
-CAPTURE = 0.06           # realistic share of an item's daily volume you transact per leg. Raised 0.04->0.06
-                         # (2026-06) to deploy more idle bankroll: it sizes each buy ~50% bigger while the
-                         # modeled fill window stays ~12h (size_for_timeline targets TARGET_RT_H regardless of
-                         # CAPTURE). Bigger positions on the SAME quality-gated liquid items, not looser bars.
+CAPTURE = 0.08           # share of an item's daily volume you transact per leg. Raised 0.04->0.06->0.08 to
+                         # size bigger, more concentrated positions (Tristan wants fewer/bigger high-profit
+                         # bets). Tradeoff: a bigger market fraction fills somewhat slower in reality, but the
+                         # MIN_SELL_UPTIME gate + exit cap keep every position on a genuinely EXITABLE item.
 TARGET_RT_H = 24.0       # aim to size orders to buy+sell within ~a day at that (slow) rate
 MAX_FILL_H = 14.0        # skip a buy whose modeled BUY-fill time exceeds this — too illiquid, it'll just
                          # sit unfilled (live data: 71% of orders were cancelled with zero fill). The
@@ -46,9 +46,10 @@ MIN_BUY_UPTIME = 0.15    # a buy candidate must actually TRADE: >= this fraction
 MIN_SELL_UPTIME = 0.12   # a buy must also be EXITABLE: the SELL side (buyers present) must trade >= this
                          # often, else you get stuck holding it. The -4.8M loss was un-exitable (sell-uptime
                          # ~0.07), not merely large -- this gate refuses buys you couldn't get back out of.
-MAX_UNWIND_DAYS = 3.0    # size a buy so the WHOLE position could realistically sell within ~this many days
-                         # at the item's true sell-side volume (capture share). Raised 2->3 to deploy more
-                         # bankroll while still bounding exit risk (you can always sell out in ~3 days).
+MAX_UNWIND_DAYS = 5.0    # size a buy so the WHOLE position could realistically sell within ~this many days
+                         # at the item's true sell-side volume. Raised 3->5 for bigger, more concentrated
+                         # positions — still bounded (you can always sell out in ~5 days), the guardrail that
+                         # separates an aggressive big LIQUID bet from an un-exitable one (the -4.8M Amulet).
 PRICE_EDGE = 0.10        # balanced nudge: give up ~10% of the spread per side to win the queue
 HOLD_MIN = 50.0          # recovery score >= this -> hold an underwater position
 CUT_MAX = 35.0           # recovery score < this -> cut it
