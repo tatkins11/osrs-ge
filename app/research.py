@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from . import tax as taxmod
-from .db import connect, get_items_df, get_signal_log_df, get_trades_df
+from .db import connect, get_items_df, get_signal_log_df, get_trades_df, record_study_results
 from .sectors import classify_one
 
 
@@ -23,6 +23,16 @@ def _items():
     it = get_items_df()
     return (dict(zip(it.item_id, it.name)),
             {int(i): bool(e) for i, e in zip(it.item_id, it.exempt)})
+
+
+def _persist(study: str, rows: list[dict]) -> None:
+    """Write a study's per-bucket diagnostics to study_results so calibration drift is trackable
+    over time (not stdout-only). Best-effort — never let persistence break the printed diagnostic."""
+    try:
+        wrote = record_study_results(study, rows)
+        print(f"  [persisted {wrote} {study} row(s) -> study_results]")
+    except Exception as e:  # noqa: BLE001
+        print(f"  [persist {study} failed: {e}]")
 
 
 def _hist(item_ids, timestep, con):
@@ -76,6 +86,13 @@ def calib(fwd_days: int = 3):
     print("  by HORIZON:")
     for hz, x in d.groupby("horizon").agg(n=("conf", "size"), reached=("reached_target", "mean"), ret=("ret_end", "mean")).iterrows():
         print(f"    {str(hz):10} n={int(x.n):4}  reached {x.reached*100:3.0f}%  mean{fwd_days}d {x.ret*100:+5.1f}%")
+    srows = [{"kind": "value", "bucket": "all", "n": len(d),
+              "win_rate": d.win_end.mean(), "mean_ret": d.ret_end.mean(),
+              "reached_target": d.reached_target.mean()}]
+    srows += [{"kind": "value", "bucket": str(b), "n": int(x.n),
+               "win_rate": x.win, "mean_ret": x.ret, "reached_target": x.reached}
+              for b, x in g.iterrows()]
+    _persist("calib", srows)
     return d
 
 
@@ -159,10 +176,15 @@ def decay(fwd_days: int = 3):
     print(f"\n=== [3] SIGNAL DECAY — value signals' {fwd_days}d forward return by how long they'd been showing ===")
     if d.empty:
         return d
+    srows = [{"kind": "value", "bucket": "all", "n": len(d),
+              "win_rate": d.win.mean(), "mean_ret": d.ret.mean(), "reached_target": None}]
     for a in ["fresh (<1d)", "mid (1-3d)", "stale (>=3d)"]:
         s = d[d.age == a]
         if len(s):
             print(f"    {a:12} n={len(s):4}  profitable {s.win.mean()*100:3.0f}%  mean ret {s.ret.mean()*100:+5.1f}%")
+            srows.append({"kind": "value", "bucket": a, "n": int(len(s)),
+                          "win_rate": s.win.mean(), "mean_ret": s.ret.mean(), "reached_target": None})
+    _persist("decay", srows)
     return d
 
 
@@ -249,6 +271,13 @@ def slippage():
               f"(median {b.below_mid.median()*100:+.1f}%; positive = below mid = good)")
         print(f"    filled at/under your offer price: {b.at_or_under_offer.mean()*100:.0f}%")
         print("    -> predicted flip margins assume you buy at the bid; gap from mid here is the realistic buy-leg capture")
+    srows = [{"kind": "flip", "bucket": "fill_completeness", "n": int(len(o)),
+              "win_rate": None, "mean_ret": o.fill_pct.median(), "reached_target": full}]
+    if len(b):
+        srows.append({"kind": "flip", "bucket": "buy_capture_vs_mid", "n": int(len(b)),
+                      "win_rate": b.at_or_under_offer.mean(), "mean_ret": b.below_mid.mean(),
+                      "reached_target": None})
+    _persist("slippage", srows)
 
 
 # --- B) capital velocity (gp/hour) ------------------------------------------

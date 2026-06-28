@@ -408,10 +408,23 @@ CREATE TABLE IF NOT EXISTS plan_log (   -- ~hourly snapshot of what the 8-Slot P
     target    BIGINT,      -- sell target (buys) / fair value (holds)
     cur_price BIGINT       -- market price at snapshot (baseline for outcome eval)
 );
+CREATE SEQUENCE IF NOT EXISTS study_results_id_seq;
+CREATE TABLE IF NOT EXISTS study_results (  -- research.py diagnostics persisted per run so calibration drift is queryable (not stdout-only)
+    id             BIGINT PRIMARY KEY DEFAULT nextval('study_results_id_seq'),
+    ts             TIMESTAMP,
+    study          VARCHAR,   -- 'calib' | 'decay' | 'slippage'
+    kind           VARCHAR,   -- signal kind scored, e.g. 'value' | 'flip'
+    bucket         VARCHAR,   -- sub-group within the run: confidence band, age band, 'all', ...
+    n              INTEGER,   -- sample size in this bucket
+    win_rate       DOUBLE,    -- fraction profitable, net of cost
+    mean_ret       DOUBLE,    -- mean forward return (fraction)
+    reached_target DOUBLE     -- fraction that reached the fair-value target (NULL where N/A)
+);
 """
 _TRADE_COLS = ["id", "ts", "item_id", "side", "qty", "price", "note"]
 _NW_COLS = ["day", "ts", "net_worth", "bankroll", "holdings_value", "realized_total", "unrealized_total", "invested"]
 _PLAN_LOG_COLS = ["id", "ts", "action", "item_id", "name", "price", "qty", "margin", "gp_day", "exp_net", "recovery", "target", "cur_price"]
+_STUDY_COLS = ["id", "ts", "study", "kind", "bucket", "n", "win_rate", "mean_ret", "reached_target"]
 
 
 def connect_trades(read_only: bool = False, retries: int = 12, retry_wait: float = 0.5):
@@ -848,6 +861,62 @@ def get_net_worth_log_df() -> pd.DataFrame:
         return con.execute("SELECT * FROM net_worth_log ORDER BY day").df()
     except duckdb.Error:
         return pd.DataFrame(columns=_NW_COLS)
+    finally:
+        con.close()
+
+
+def _num_or_none(x):
+    """Coerce to float, mapping None/NaN -> None so they store as SQL NULL (not a NaN double)."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return None
+    return None if x != x else x   # NaN -> None
+
+
+@_locked_write
+def record_study_results(study: str, rows, ts=None) -> int:
+    """Persist a research.py study's per-bucket diagnostics so calibration drift is queryable over
+    time (instead of stdout-only). ``rows`` is a list of dicts with keys: kind, bucket, n, win_rate,
+    mean_ret, reached_target (any may be missing/NaN -> stored NULL). Best-effort; returns rows written.
+    READS stay on the prices DB read-only — this only writes the study_results table in the trades DB."""
+    rows = [r for r in (rows or []) if r]
+    if not rows:
+        return 0
+    ts = ts or utcnow()
+    try:
+        con = connect_trades()
+    except RuntimeError:
+        return 0
+    try:
+        con.execute(_TRADES_SCHEMA)
+        for r in rows:
+            n = r.get("n")
+            con.execute(
+                "INSERT INTO study_results (ts, study, kind, bucket, n, win_rate, mean_ret, reached_target) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [ts, str(study), (str(r["kind"]) if r.get("kind") is not None else None),
+                 (str(r["bucket"]) if r.get("bucket") is not None else None),
+                 (None if n is None else int(n)),
+                 _num_or_none(r.get("win_rate")), _num_or_none(r.get("mean_ret")),
+                 _num_or_none(r.get("reached_target"))],
+            )
+        return len(rows)
+    except duckdb.Error:
+        return 0
+    finally:
+        con.close()
+
+
+def get_study_results_df() -> pd.DataFrame:
+    try:
+        con = connect_trades(read_only=True)
+    except RuntimeError:
+        return pd.DataFrame(columns=_STUDY_COLS)
+    try:
+        return con.execute("SELECT * FROM study_results ORDER BY ts").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=_STUDY_COLS)
     finally:
         con.close()
 
