@@ -27,7 +27,7 @@ from . import portfolio as pf
 from . import tax as taxmod
 from .db import connect, get_free_gp, get_orders_df
 from .liquidity import fill_uptime, market_clock, peak_hours
-from .signals import Thresholds, market_signals
+from .signals import KNIFE_SLOPE_PER_DAY, Thresholds, market_signals
 
 CAPTURE = 0.04           # realistic share of an item's daily volume you transact per leg. Conservative:
                          # a competitively-priced offer waits in a queue, so real fills are slow. Lowered
@@ -118,12 +118,16 @@ def recovery_score(sig: dict, avg_cost: float, cur_price: float | None) -> tuple
     """0-100 read on whether an UNDERWATER holding is likely to recover (high -> hold) or is a
     sinking ship (low -> cut). Built from the same variables the rest of the tool tracks."""
     score, why = 50.0, []
+    slope = _f(sig.get("slope_7d"))
+    knife = slope is not None and slope <= -KNIFE_SLOPE_PER_DAY    # steep 7d downtrend, not a dip
     z = _f(sig.get("z_7d"))
-    if z is not None:
+    if z is not None and not knife:                     # a falling knife's low z isn't "oversold", it's trend
         adj = max(-2.0, min(2.0, -z)) * 12.0            # oversold (z<0) -> +, stretched high -> -
         score += adj
         if z <= -1.0:
             why.append(f"oversold (z {z:.1f})")
+    if knife:
+        score -= 15; why.append(f"still falling ({slope * 100:.0f}%/day) — not yet oversold")
     if sig.get("is_value_buy"):
         score += 12; why.append("flagged undervalued")
     vc = _f(sig.get("value_confidence"))
@@ -173,7 +177,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     sig: dict[int, dict] = {}
     if not ms.empty:
         cols = ["item_id", "name", "buy_price", "sell_price", "mid", "vol_daily_7d", "buy_limit",
-                "established", "z_7d", "pct_30d", "alch_floor", "value_confidence", "is_value_buy",
+                "established", "z_7d", "slope_7d", "pct_30d", "alch_floor", "value_confidence", "is_value_buy",
                 "is_crash", "post_update_drop", "net_margin", "slip_margin", "exempt", "flip_ok"]
         have = [c for c in cols if c in ms.columns]
         for r in ms[have].itertuples(index=False):

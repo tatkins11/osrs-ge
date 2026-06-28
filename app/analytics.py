@@ -57,7 +57,8 @@ agg7 AS (
         -- margin persistence: fraction of the past week the flip was profitable, and its typical size
         avg(CASE WHEN b.flip_margin > 0 THEN 1.0 ELSE 0.0 END) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_uptime,
         median(b.flip_margin) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS margin_median_7d,
-        count(*)           FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS n_7d
+        count(*)           FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY)  AS n_7d,
+        regr_slope(b.mid, epoch(b.ts)) FILTER (WHERE b.ts >= mx.t - INTERVAL 7 DAY) AS slope_7d_raw  -- gp/sec 7d trend
     FROM base b CROSS JOIN mx
     GROUP BY b.item_id
 ),
@@ -83,7 +84,7 @@ dropagg AS (   -- biggest 1-day drop in the last 30d + the bar it happened on (t
 )
 SELECT a.item_id, a.mean_7d, a.median_7d, a.sd_7d,
        a30.min_30d, a30.max_30d, a30.mean_30d,
-       a.vol_hourly_7d, a.vol_24h, a.mid_1d_ago, a.margin_uptime, a.margin_median_7d, a.n_7d,
+       a.vol_hourly_7d, a.vol_24h, a.mid_1d_ago, a.margin_uptime, a.margin_median_7d, a.n_7d, a.slope_7d_raw,
        dd.worst_1d_drop, dd.worst_drop_ts
 FROM agg7 a
 LEFT JOIN agg30 a30 USING (item_id)
@@ -129,7 +130,14 @@ def market_table(con=None, bankroll: int = DEFAULT_BANKROLL) -> pd.DataFrame:
 
     # Statistical position relative to recent history.
     sd = df["sd_7d"].astype("float64")
-    df["z_7d"] = np.where(sd > 0, (df["mid"] - df["mean_7d"]) / sd, np.nan)
+    mean7 = df["mean_7d"].astype("float64")
+    n7 = df["n_7d"].astype("float64")
+    # floor z: need enough history (>=48 hourly bars) AND non-degenerate variance (sd >= 0.5% of the
+    # level), else a 1-tick move on a thin/flat item prints a huge spurious z that trips STRONG_BUY.
+    z_ok = (n7 >= 48) & (sd >= 0.005 * mean7) & (sd > 0)
+    df["z_7d"] = np.where(z_ok, (df["mid"] - mean7) / sd, np.nan)
+    # 7d price trend, fractional change per day — a falling-knife regime gate for the raw-z consumers.
+    df["slope_7d"] = np.where(mean7 > 0, df["slope_7d_raw"].astype("float64") * 86400.0 / mean7, np.nan)
     rng = (df["max_30d"] - df["min_30d"]).astype("float64")
     df["pct_30d"] = np.where(rng > 0, (df["mid"] - df["min_30d"]) / rng, np.nan)
     df["volatility_7d"] = np.where(df["mean_7d"] > 0, sd / df["mean_7d"], np.nan)

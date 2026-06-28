@@ -99,6 +99,12 @@ def _nearest_update(drop_secs: np.ndarray, up_secs: np.ndarray, up_titles: np.nd
     return near, titles
 
 
+# A raw oversold z reads "cheap vs the 7d mean" even on a steadily-falling knife. Suppress mean-reversion
+# BUY labels (and, in planner.recovery_score, the oversold bump) when the 7d trend is steeply down.
+KNIFE_SLOPE_PER_DAY = 0.015   # 7d slope <= -1.5%/day (~-10%/wk) = a sustained downtrend, not a dip to buy.
+                              # Calibrated to the falling tail: the -4.8M held loser (item 19707) fell ~-1.7%/day.
+
+
 def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None) -> pd.DataFrame:
     """Add liquidity/quality flags, position sizing, the signal label, a
     mean-reversion trade plan, and confidence. ``updates`` (ts/title) drives the
@@ -163,10 +169,12 @@ def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None
     # Mean-reversion signals only on liquid, non-junk items.
     eligible = d["tradeable"] & (d["mid"].fillna(0) >= th.min_price) & (d["mid"].fillna(0) <= th.max_price)
     z = d["z_7d"]
+    slope = d["slope_7d"].astype("float64") if "slope_7d" in d.columns else pd.Series(0.0, index=d.index)
+    not_knife = slope.fillna(0.0) > -KNIFE_SLOPE_PER_DAY     # not in a steep 7d downtrend -> a real dip, not a knife
     conditions = [
         ~eligible,
-        z <= th.z_strong_buy,
-        z <= th.z_buy,
+        (z <= th.z_strong_buy) & not_knife,
+        (z <= th.z_buy) & not_knife,
         z >= th.z_strong_sell,
         z >= th.z_sell,
         d["flip_ok"],
@@ -196,7 +204,7 @@ def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None
         is_buy, np.where(high > 0, buy_margin / high, np.nan),
         np.where(is_sell, np.where(mean > 0, sell_margin / mean, np.nan), np.nan),
     )
-    d["mr_exp_profit"] = d["mr_exp_margin"] * d["buy_limit"].astype("float64")   # full buy-limit expected gain
+    d["mr_exp_profit"] = d["mr_exp_margin"] * d["units_per_4h"].astype("float64")   # volume-throttled (not full buy-limit)
     strength = np.clip((d["z_7d"].abs() - 1.5) / 2.0 + 0.5, 0.0, 1.0)
     liq = np.clip(np.log10(d["vol_daily_7d"].clip(lower=1)) / 6.0, 0.0, 1.0)
     d["confidence"] = (100 * (0.6 * strength + 0.4 * liq)).round()
@@ -217,7 +225,7 @@ def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None
     d["crash_target"] = crash_target
     d["crash_exp_margin"] = net_target - crash_buy               # per item, after tax
     d["crash_exp_roi"] = np.where(crash_buy > 0, d["crash_exp_margin"] / crash_buy, np.nan)
-    d["crash_exp_profit"] = d["crash_exp_margin"] * d["buy_limit"].astype("float64")
+    d["crash_exp_profit"] = d["crash_exp_margin"] * d["units_per_4h"].astype("float64")  # volume-throttled: crash_score/gate rank on capturable size, not the fantasy full buy-limit
 
     # --- value-buy signal: undervalued vs a STABLE established level (the validated reversion edge,
     # generalised across discount depths + horizons, with a confidence score) ---
@@ -229,7 +237,7 @@ def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None
     net_v = established - taxmod.sell_tax_array(established, exempt_arr)
     d["value_exp_margin"] = net_v - buy_px
     d["value_exp_roi"] = np.where(buy_px > 0, d["value_exp_margin"] / buy_px, np.nan)
-    d["value_exp_profit"] = d["value_exp_margin"] * d["buy_limit"].astype("float64")
+    d["value_exp_profit"] = d["value_exp_margin"] * d["units_per_4h"].astype("float64")  # volume-throttled for column consistency (is_value_buy doesn't gate on it)
     gpv = (d["mid"].fillna(0) * d["vol_daily_7d"].fillna(0)).astype("float64")
     # confidence 0-100: discount depth + how-unusual (z) + cheapness + liquidity + level-health (falling-knife guard)
     disc = np.clip(d["value_discount"].fillna(0) / 0.30, 0, 1)
@@ -320,7 +328,7 @@ TABLE_COLS = [
     "tax", "gross_margin", "net_margin", "roi",
     "profit_per_cycle", "realistic_profit", "slip_margin", "slip_roi", "gp_per_h", "units_per_4h", "sugg_units", "sugg_capital", "sugg_profit", "affordable",
     "high_vol", "low_vol", "vol_side", "vol_daily_7d", "vol_24h", "vol_ratio", "chg_24h", "margin_uptime", "margin_median_7d", "price_age_min",
-    "mean_7d", "sd_7d", "z_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
+    "mean_7d", "sd_7d", "z_7d", "slope_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "mr_exp_profit", "confidence",
     "established", "drawdown", "crash_target", "crash_exp_margin", "crash_exp_roi", "crash_exp_profit", "crash_score", "is_crash",
     "value_discount", "level_health", "value_target", "value_exp_margin", "value_exp_roi", "value_exp_profit",
