@@ -416,15 +416,18 @@ CREATE TABLE IF NOT EXISTS study_results (  -- research.py diagnostics persisted
     kind           VARCHAR,   -- signal kind scored, e.g. 'value' | 'flip'
     bucket         VARCHAR,   -- sub-group within the run: confidence band, age band, 'all', ...
     n              INTEGER,   -- sample size in this bucket
-    win_rate       DOUBLE,    -- fraction profitable, net of cost
-    mean_ret       DOUBLE,    -- mean forward return (fraction)
-    reached_target DOUBLE     -- fraction that reached the fair-value target (NULL where N/A)
+    win_rate       DOUBLE,    -- fraction profitable, net of cost (liquidity-floored)
+    mean_ret       DOUBLE,    -- DIAGNOSTIC mean forward return — inflated by illiquid prints; do not decide on it
+    median_ret     DOUBLE,    -- HEADLINE: liquidity-floored MEDIAN forward net return (the robust edge read)
+    ret_ci_lo      DOUBLE,    -- item-block bootstrap CI low on median_ret — edge is real only if this > 0
+    ret_ci_hi      DOUBLE,    -- item-block bootstrap CI high on median_ret
+    reached_target DOUBLE     -- fraction that reached the fair-value target on a liquid bar (NULL where N/A)
 );
 """
 _TRADE_COLS = ["id", "ts", "item_id", "side", "qty", "price", "note"]
 _NW_COLS = ["day", "ts", "net_worth", "bankroll", "holdings_value", "realized_total", "unrealized_total", "invested"]
 _PLAN_LOG_COLS = ["id", "ts", "action", "item_id", "name", "price", "qty", "margin", "gp_day", "exp_net", "recovery", "target", "cur_price"]
-_STUDY_COLS = ["id", "ts", "study", "kind", "bucket", "n", "win_rate", "mean_ret", "reached_target"]
+_STUDY_COLS = ["id", "ts", "study", "kind", "bucket", "n", "win_rate", "mean_ret", "median_ret", "ret_ci_lo", "ret_ci_hi", "reached_target"]
 
 
 def connect_trades(read_only: bool = False, retries: int = 12, retry_wait: float = 0.5):
@@ -878,8 +881,9 @@ def _num_or_none(x):
 def record_study_results(study: str, rows, ts=None) -> int:
     """Persist a research.py study's per-bucket diagnostics so calibration drift is queryable over
     time (instead of stdout-only). ``rows`` is a list of dicts with keys: kind, bucket, n, win_rate,
-    mean_ret, reached_target (any may be missing/NaN -> stored NULL). Best-effort; returns rows written.
-    READS stay on the prices DB read-only — this only writes the study_results table in the trades DB."""
+    mean_ret, median_ret, ret_ci_lo, ret_ci_hi, reached_target (any may be missing/NaN -> stored NULL).
+    Best-effort; returns rows written. READS stay on the prices DB read-only — this only writes the
+    study_results table in the trades DB."""
     rows = [r for r in (rows or []) if r]
     if not rows:
         return 0
@@ -890,16 +894,19 @@ def record_study_results(study: str, rows, ts=None) -> int:
         return 0
     try:
         con.execute(_TRADES_SCHEMA)
+        for col in ("median_ret", "ret_ci_lo", "ret_ci_hi"):  # migrate pre-existing tables
+            con.execute(f"ALTER TABLE study_results ADD COLUMN IF NOT EXISTS {col} DOUBLE")
         for r in rows:
             n = r.get("n")
             con.execute(
-                "INSERT INTO study_results (ts, study, kind, bucket, n, win_rate, mean_ret, reached_target) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO study_results (ts, study, kind, bucket, n, win_rate, mean_ret, median_ret, "
+                "ret_ci_lo, ret_ci_hi, reached_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [ts, str(study), (str(r["kind"]) if r.get("kind") is not None else None),
                  (str(r["bucket"]) if r.get("bucket") is not None else None),
                  (None if n is None else int(n)),
                  _num_or_none(r.get("win_rate")), _num_or_none(r.get("mean_ret")),
-                 _num_or_none(r.get("reached_target"))],
+                 _num_or_none(r.get("median_ret")), _num_or_none(r.get("ret_ci_lo")),
+                 _num_or_none(r.get("ret_ci_hi")), _num_or_none(r.get("reached_target"))],
             )
         return len(rows)
     except duckdb.Error:

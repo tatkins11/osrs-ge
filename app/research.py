@@ -37,13 +37,50 @@ def _persist(study: str, rows: list[dict]) -> None:
 
 def _hist(item_ids, timestep, con):
     if not len(item_ids):
-        return pd.DataFrame(columns=["item_id", "ts", "avg_high", "avg_low", "mid"])
+        return pd.DataFrame(columns=["item_id", "ts", "avg_high", "avg_low", "mid", "low_vol", "high_vol"])
     ids = ",".join(str(int(i)) for i in set(int(x) for x in item_ids))
     return con.execute(
         f"SELECT item_id, ts, CAST(avg_high AS DOUBLE) AS avg_high, CAST(avg_low AS DOUBLE) AS avg_low, "
-        f"(CAST(avg_high AS DOUBLE)+CAST(avg_low AS DOUBLE))/2.0 AS mid FROM history "
+        f"(CAST(avg_high AS DOUBLE)+CAST(avg_low AS DOUBLE))/2.0 AS mid, "
+        f"CAST(low_vol AS DOUBLE) AS low_vol, CAST(high_vol AS DOUBLE) AS high_vol FROM history "
         f"WHERE timestep='{timestep}' AND item_id IN ({ids}) AND avg_high IS NOT NULL AND avg_low IS NOT NULL"
     ).df()
+
+
+def _forward_net(row, h, exempt, fwd_days):
+    """LIQUIDITY-FLOORED forward exit for one signal. The realized exit price is the avg_low of the LAST
+    forward bar within (ts, ts+fwd_days] on which a real insta-sell actually happened (low_vol>0) — so a
+    thin item that only ever printed a fantasy avg_low gets DROPPED, not counted as a 100%+ winner.
+    Returns (ret_net, win, reached_target) net of the 2% sell tax, or None if there was no liquid exit."""
+    if pd.isna(row.entry) or row.entry <= 0:
+        return None
+    fw = h[(h.item_id == row.item_id) & (h.ts > row.ts) & (h.ts <= row.ts + pd.Timedelta(days=fwd_days))]
+    if fw.empty:
+        return None
+    liq = fw[fw.low_vol.fillna(0) > 0]            # only bars where someone actually sold = a real exit
+    if liq.empty:
+        return None
+    entry = float(row.entry)
+    end_bid = float(liq.sort_values("ts").avg_low.iloc[-1])
+    net_end = taxmod.net_sell(int(round(end_bid)), exempt.get(int(row.item_id), False)) - entry
+    reached = bool(pd.notna(row.target) and liq.mid.max() >= row.target)   # reached on a LIQUID bar
+    return net_end / entry, net_end > 0, reached
+
+
+def _block_ci(df, col, n_boot=1000, lo=5, hi=95, seed=12345):
+    """Item-block bootstrap CI for the MEDIAN of df[col] — resample whole ITEMS (with replacement) so the
+    interval respects same-item autocorrelation (overlapping signals on one item aren't independent N).
+    Returns (ci_lo, ci_hi) percentiles of the bootstrap median distribution, or (None, None)."""
+    if df is None or df.empty:
+        return None, None
+    rng = np.random.default_rng(seed)
+    by_item = {i: g[col].to_numpy() for i, g in df.groupby("item_id")}
+    items = np.array(list(by_item))
+    meds = []
+    for _ in range(n_boot):
+        pick = rng.choice(items, size=len(items), replace=True)
+        meds.append(np.median(np.concatenate([by_item[i] for i in pick])))
+    return float(np.percentile(meds, lo)), float(np.percentile(meds, hi))
 
 
 # --- 1) Invest calibration --------------------------------------------------
@@ -59,39 +96,38 @@ def calib(fwd_days: int = 3):
     con.close()
     rows = []
     for r in first.itertuples():
-        if pd.isna(r.entry) or r.entry <= 0:
+        graded = _forward_net(r, h, exempt, fwd_days)
+        if graded is None:
             continue
-        fw = h[(h.item_id == r.item_id) & (h.ts > r.ts) & (h.ts <= r.ts + pd.Timedelta(days=fwd_days))]
-        if fw.empty:
-            continue
-        ex = exempt.get(int(r.item_id), False)
-        entry = float(r.entry)
-        end_bid = float(fw.sort_values("ts").avg_low.iloc[-1])
-        net_end = taxmod.net_sell(int(round(end_bid)), ex) - entry
-        reached = bool(pd.notna(r.target) and fw.mid.max() >= r.target)
+        ret, win, reached = graded
         disc = ((r.established - r.mid) / r.established) if (pd.notna(r.established) and r.established) else np.nan
-        rows.append({"conf": r.score, "horizon": r.horizon, "disc": disc,
-                     "ret_end": net_end / entry, "win_end": net_end > 0, "reached_target": reached})
+        rows.append({"item_id": int(r.item_id), "conf": r.score, "horizon": r.horizon, "disc": disc,
+                     "ret_end": ret, "win_end": win, "reached_target": reached})
     d = pd.DataFrame(rows)
-    print(f"\n=== [1] INVEST CALIBRATION — {len(d)} value signals w/ >={fwd_days}d forward (net of cost) ===")
+    print(f"\n=== [1] INVEST CALIBRATION — {len(d)} value signals w/ a LIQUID >={fwd_days}d forward exit (net of cost) ===")
     if d.empty:
         return d
-    print(f"  overall: reached fair value {d.reached_target.mean()*100:.0f}% | profitable at {fwd_days}d {d.win_end.mean()*100:.0f}% | mean {fwd_days}d ret {d.ret_end.mean()*100:+.1f}%")
+    clo, chi = _block_ci(d, "ret_end")
+    print(f"  overall: reached fair value {d.reached_target.mean()*100:.0f}% | profitable {d.win_end.mean()*100:.0f}% | "
+          f"MEDIAN {fwd_days}d ret {d.ret_end.median()*100:+.1f}% (90% CI {clo*100:+.1f}..{chi*100:+.1f}%) | mean {d.ret_end.mean()*100:+.1f}% (diag, inflated)")
     d["bucket"] = pd.cut(d.conf, [0, 50, 65, 80, 101], labels=["<50", "50-65", "65-80", "80+"])
-    g = d.groupby("bucket", observed=True).agg(n=("conf", "size"), reached=("reached_target", "mean"),
-                                               win=("win_end", "mean"), ret=("ret_end", "mean"))
-    print("  by CONFIDENCE bucket (is higher confidence actually better?):")
-    for b, x in g.iterrows():
-        print(f"    {str(b):6} n={int(x.n):4}  reached {x.reached*100:3.0f}%  profitable {x.win*100:3.0f}%  mean{fwd_days}d {x.ret*100:+5.1f}%")
-    print("  by HORIZON:")
-    for hz, x in d.groupby("horizon").agg(n=("conf", "size"), reached=("reached_target", "mean"), ret=("ret_end", "mean")).iterrows():
-        print(f"    {str(hz):10} n={int(x.n):4}  reached {x.reached*100:3.0f}%  mean{fwd_days}d {x.ret*100:+5.1f}%")
-    srows = [{"kind": "value", "bucket": "all", "n": len(d),
-              "win_rate": d.win_end.mean(), "mean_ret": d.ret_end.mean(),
-              "reached_target": d.reached_target.mean()}]
-    srows += [{"kind": "value", "bucket": str(b), "n": int(x.n),
-               "win_rate": x.win, "mean_ret": x.ret, "reached_target": x.reached}
-              for b, x in g.iterrows()]
+    srows = [{"kind": "value", "bucket": "all", "n": len(d), "win_rate": d.win_end.mean(),
+              "mean_ret": d.ret_end.mean(), "median_ret": d.ret_end.median(),
+              "ret_ci_lo": clo, "ret_ci_hi": chi, "reached_target": d.reached_target.mean()}]
+    print("  by CONFIDENCE bucket (does higher confidence really pay? — MEDIAN net return, not mean):")
+    for b in ["<50", "50-65", "65-80", "80+"]:
+        s = d[d.bucket == b]
+        if not len(s):
+            continue
+        blo, bhi = _block_ci(s, "ret_end")
+        print(f"    {b:6} n={len(s):4}  reached {s.reached_target.mean()*100:3.0f}%  win {s.win_end.mean()*100:3.0f}%  "
+              f"median{fwd_days}d {s.ret_end.median()*100:+5.1f}% (CI {blo*100:+.1f}..{bhi*100:+.1f}%)")
+        srows.append({"kind": "value", "bucket": b, "n": int(len(s)), "win_rate": s.win_end.mean(),
+                      "mean_ret": s.ret_end.mean(), "median_ret": s.ret_end.median(),
+                      "ret_ci_lo": blo, "ret_ci_hi": bhi, "reached_target": s.reached_target.mean()})
+    print("  by HORIZON (median):")
+    for hz, s in d.groupby("horizon"):
+        print(f"    {str(hz):10} n={len(s):4}  reached {s.reached_target.mean()*100:3.0f}%  median{fwd_days}d {s.ret_end.median()*100:+5.1f}%")
     _persist("calib", srows)
     return d
 
@@ -163,27 +199,29 @@ def decay(fwd_days: int = 3):
     con.close()
     rows = []
     for r in samp.itertuples():
-        if pd.isna(r.entry) or r.entry <= 0:
+        graded = _forward_net(r, h, exempt, fwd_days)
+        if graded is None:
             continue
-        fw = h[(h.item_id == r.item_id) & (h.ts > r.ts) & (h.ts <= r.ts + pd.Timedelta(days=fwd_days))]
-        if fw.empty:
-            continue
-        ex = exempt.get(int(r.item_id), False)
-        net_end = taxmod.net_sell(int(round(float(fw.sort_values("ts").avg_low.iloc[-1]))), ex) - float(r.entry)
-        rows.append({"age": "fresh (<1d)" if r.age_d < 1 else ("mid (1-3d)" if r.age_d < 3 else "stale (>=3d)"),
-                     "ret": net_end / r.entry, "win": net_end > 0})
+        ret, win, _ = graded
+        rows.append({"item_id": int(r.item_id),
+                     "age": "fresh (<1d)" if r.age_d < 1 else ("mid (1-3d)" if r.age_d < 3 else "stale (>=3d)"),
+                     "ret": ret, "win": win})
     d = pd.DataFrame(rows)
-    print(f"\n=== [3] SIGNAL DECAY — value signals' {fwd_days}d forward return by how long they'd been showing ===")
+    print(f"\n=== [3] SIGNAL DECAY — value signals' LIQUID {fwd_days}d forward return by how long they'd been showing ===")
     if d.empty:
         return d
-    srows = [{"kind": "value", "bucket": "all", "n": len(d),
-              "win_rate": d.win.mean(), "mean_ret": d.ret.mean(), "reached_target": None}]
+    alo, ahi = _block_ci(d, "ret")
+    srows = [{"kind": "value", "bucket": "all", "n": len(d), "win_rate": d.win.mean(),
+              "mean_ret": d.ret.mean(), "median_ret": d.ret.median(), "ret_ci_lo": alo, "ret_ci_hi": ahi,
+              "reached_target": None}]
     for a in ["fresh (<1d)", "mid (1-3d)", "stale (>=3d)"]:
         s = d[d.age == a]
         if len(s):
-            print(f"    {a:12} n={len(s):4}  profitable {s.win.mean()*100:3.0f}%  mean ret {s.ret.mean()*100:+5.1f}%")
-            srows.append({"kind": "value", "bucket": a, "n": int(len(s)),
-                          "win_rate": s.win.mean(), "mean_ret": s.ret.mean(), "reached_target": None})
+            slo, shi = _block_ci(s, "ret")
+            print(f"    {a:12} n={len(s):4}  profitable {s.win.mean()*100:3.0f}%  median ret {s.ret.median()*100:+5.1f}% (CI {slo*100:+.1f}..{shi*100:+.1f}%)")
+            srows.append({"kind": "value", "bucket": a, "n": int(len(s)), "win_rate": s.win.mean(),
+                          "mean_ret": s.ret.mean(), "median_ret": s.ret.median(),
+                          "ret_ci_lo": slo, "ret_ci_hi": shi, "reached_target": None})
     _persist("decay", srows)
     return d
 
