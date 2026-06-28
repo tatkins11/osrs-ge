@@ -271,7 +271,14 @@ def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None
     d["value_confidence"] = np.clip(conf, 0.0, 100.0).round()
     # crash ranking shares the update-proximity logic: an update-driven crash recovers worse, so
     # down-weight it in the Crashes sort (display profit unchanged -- penalise, don't exclude).
-    d["crash_score"] = d["crash_exp_profit"].astype("float64") * np.where(d["post_update_drop"], th.update_drop_factor, 1.0)
+    # ALSO tilt by alch-floor proximity (re-graded crashcond, liquidity-floored): crashes bottoming
+    # near the floor recover FAR better (support<=10%: 92% win / PF 24) than far-from-floor ones
+    # (>30%: 56% / PF 1.1). Boost floor-supported crashes, haircut far ones; no measurable floor -> neutral.
+    sup = d["alch_support"]
+    floor_tilt = np.where(sup.notna(), np.clip(1.5 - sup.fillna(0.30) / 0.30, 0.5, 1.5), 1.0)
+    d["crash_score"] = (d["crash_exp_profit"].astype("float64")
+                        * np.where(d["post_update_drop"], th.update_drop_factor, 1.0)
+                        * floor_tilt)
     # horizon by liquidity (study: liquid dislocations revert in days; thin / high-value take longer)
     d["value_horizon"] = np.select([gpv >= 200_000_000, gpv >= 20_000_000],
                                     ["1-3 days", "~1 week"], default="2-4 weeks")

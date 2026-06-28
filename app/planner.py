@@ -135,9 +135,14 @@ def recovery_score(sig: dict, avg_cost: float, cur_price: float | None) -> tuple
         score += (vc - 50.0) * 0.2
     if sig.get("is_crash"):
         score += 10; why.append("crash-recover setup")
+    # alch floor = the strongest validated recovery signal (re-graded crashcond: within 10% of the
+    # floor -> 92% recover, PF 24; within 30% -> 75%). Graded bump, was a flat +10.
     alch, cur = _f(sig.get("alch_floor")), _f(cur_price)
-    if alch and cur and cur <= alch * 1.10:
-        score += 10; why.append("near alch floor (downside-capped)")
+    if alch and cur:
+        if cur <= alch * 1.10:
+            score += 22; why.append("at alch floor (92% recover historically)")
+        elif cur <= alch * 1.30:
+            score += 11; why.append("near alch floor (downside support)")
     if sig.get("post_update_drop"):
         score -= 25; why.append("hit by a game update")
     p30 = _f(sig.get("pct_30d"))
