@@ -371,12 +371,13 @@ def ofi(fwd_bars: int = 6):
     if len(d) < 1000:
         print(f"  too few liquid observations ({len(d)})")
         return d
-    ic = d["ofi6"].corr(d["fwd"], method="spearman")
+    def _spear(s):  # Spearman rank-IC = Pearson of ranks (no scipy dependency)
+        return s["ofi6"].rank().corr(s["fwd"].rank())
+    ic = _spear(d)
     rng = np.random.default_rng(7)
     by = {i: g for i, g in d.groupby("item_id")}
     items = np.array(list(by))
-    ics = [pd.concat([by[i] for i in rng.choice(items, size=len(items), replace=True)])
-             .pipe(lambda s: s["ofi6"].corr(s["fwd"], method="spearman")) for _ in range(100)]
+    ics = [_spear(pd.concat([by[i] for i in rng.choice(items, size=len(items), replace=True)])) for _ in range(100)]
     clo, chi = float(np.percentile(ics, 5)), float(np.percentile(ics, 95))
     verdict = "EDGE" if (clo > 0.03 or chi < -0.03) else ("weak" if abs(ic) >= 0.02 else "no usable signal")
     print(f"  obs {len(d):,} | items {len(items)} | Spearman rank-IC = {ic:+.3f} "
