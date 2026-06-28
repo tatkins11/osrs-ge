@@ -386,17 +386,18 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     thin_skip = 0
     exit_skip = 0
     if free_slots > 0 and good_buy_ids:
-        # Rank by TOTAL deployable round-trip profit (margin x the units this slot can realistically size),
-        # tilted by liquidity — so idle bankroll flows into the bigger liquid flips instead of small
-        # high-per-unit-margin singles that leave capital idle. The quality bars (uptime/sell/ROI/profit/
-        # exit gates) are unchanged; this only reorders WHICH qualifying buys fill the slots.
-        def _score(kv):  # LIVE ranking: total deployable profit x liquidity credit
+        # Rank by modeled gp PER DAY (margin x the units you actually CYCLE per day), tilted by liquidity.
+        # This is the true profit-rate objective: it rewards both deploying capital AND recycling it fast,
+        # so a big slow position no longer beats a slightly-smaller one that round-trips 3x as often. The
+        # quality bars (uptime/sell/ROI/profit/exit gates) are unchanged; this only reorders the slots.
+        def _score(kv):  # LIVE ranking: modeled gp/DAY (margin x daily turnover) x liquidity credit
             iid_, (mgn, buy_at, sell_at, ex, vol_day, limit, r) = kv
             up = prof.get(iid_, {}).get("buy", 0.0)                         # buy-side trade frequency
             liq = 0.25 + 0.75 * min(1.0, up / 0.5)                          # full liquidity credit at >=50% uptime
             pcap = (per_slot_cap // buy_at) if (per_slot_cap > 0 and buy_at > 0) else float("inf")
             units = max(1.0, min(size_for_timeline(vol_day), limit, pcap, offer_cap(r.name)))
-            return mgn * units * liq                                        # margin x sized units = gp/round-trip
+            daily_units = timeline(units, vol_day, limit)[2]               # units realistically cycled per day
+            return mgn * daily_units * liq                                 # margin x daily turnover = gp/day
 
         def _ev(iid_, mgn, buy_at, vol_day, limit, r):
             # capital-normalized, TWO-SIDED expected value (gp per gp-of-capital per day): two-sided fill
