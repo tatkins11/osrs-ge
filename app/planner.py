@@ -70,7 +70,11 @@ MARGIN_SANITY_MULT = 3.0   # skip a margin more than this x the item's own 7d-ty
 # spread on a heavily-traded item is a real edge, not a ghost. Only a loosened glitch backstop remains.
 LIQ_PROOF_BUY = 0.30       # buy-side uptime that "proves" the item trades (then waive spread + m-uptime)
 LIQ_PROOF_SELL = 0.15      # and it must trade on the sell side too, or you could never exit
-LIQ_SANITY_MULT = 6.0      # even a proven item can't show a margin > this x its 7d median (price glitch)
+LIQ_SANITY_MULT = 12.0     # a PROVEN-liquid item (trades both sides) whose margin widened above its 7d
+                           # norm is a real opportunity, not a stale ghost — only block a true glitch
+                           # (>12x median). Raised 6->12 to stop dropping big, tight-spread, heavily-traded
+                           # flips (Berserker necklace etc.) that were leaving bankroll idle. Non-proven
+                           # items keep the strict MARGIN_SANITY_MULT=3x (the illiquid-ghost guard).
 # Items the GE restricts to ONE per slot per offer (you can't stack the offer). Only bonds.
 ONE_PER_SLOT = {"old school bond"}
 # Items that are NEVER worth flipping regardless of margin/liquidity — keep them out of BUY recs.
