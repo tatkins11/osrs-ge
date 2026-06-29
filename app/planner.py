@@ -390,14 +390,30 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         # This is the true profit-rate objective: it rewards both deploying capital AND recycling it fast,
         # so a big slow position no longer beats a slightly-smaller one that round-trips 3x as often. The
         # quality bars (uptime/sell/ROI/profit/exit gates) are unchanged; this only reorders the slots.
-        def _score(kv):  # LIVE ranking: modeled gp/DAY (margin x daily turnover) x liquidity credit
+        def _fair_tilt(r):
+            # Validated (graded flips): a flip BELOW its 7d fair value wins 59% and COMPLETES its sell 2x
+            # more (reached 39% vs 19%) — the price drifts UP toward your ask. Above fair, it reverts down
+            # and the sell sticks. So favor below-fair, mildly deprioritise significantly-above-fair. The
+            # effect is a STEP not a gradient (below-fair good, near/above both meh), so use bands.
+            disc = _f(getattr(r, "value_discount", None))   # +ve = below fair value
+            if disc is None:
+                return 1.0
+            if disc >= 0.05:
+                return 1.4
+            if disc > 0.0:
+                return 1.15
+            if disc > -0.05:
+                return 1.0
+            return 0.75                                      # >=5% above fair: stuck-sell risk
+
+        def _score(kv):  # LIVE ranking: modeled gp/DAY (margin x daily turnover) x liquidity x fair-value tilt
             iid_, (mgn, buy_at, sell_at, ex, vol_day, limit, r) = kv
             up = prof.get(iid_, {}).get("buy", 0.0)                         # buy-side trade frequency
             liq = 0.25 + 0.75 * min(1.0, up / 0.5)                          # full liquidity credit at >=50% uptime
             pcap = (per_slot_cap // buy_at) if (per_slot_cap > 0 and buy_at > 0) else float("inf")
             units = max(1.0, min(size_for_timeline(vol_day), limit, pcap, offer_cap(r.name)))
             daily_units = timeline(units, vol_day, limit)[2]               # units realistically cycled per day
-            return mgn * daily_units * liq                                 # margin x daily turnover = gp/day
+            return mgn * daily_units * liq * _fair_tilt(r)                 # gp/day, tilted toward below-fair flips
 
         def _ev(iid_, mgn, buy_at, vol_day, limit, r):
             # capital-normalized, TWO-SIDED expected value (gp per gp-of-capital per day): two-sided fill
