@@ -399,12 +399,14 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             if disc is None:
                 return 1.0
             if disc >= 0.05:
-                return 1.4
+                return 1.4                                   # >=5% below fair: wins 59%, completes 39%
             if disc > 0.0:
                 return 1.15
             if disc > -0.05:
-                return 1.0
-            return 0.75                                      # >=5% above fair: stuck-sell risk
+                return 1.0                                   # near fair
+            if disc > -0.12:
+                return 0.55                                  # 5-12% above fair: completes only ~19% -> stuck-sell
+            return 0.4                                       # >=12% above fair: significantly stretched, avoid
 
         def _score(kv):  # LIVE ranking: modeled gp/DAY (margin x daily turnover) x liquidity x fair-value tilt
             iid_, (mgn, buy_at, sell_at, ex, vol_day, limit, r) = kv
