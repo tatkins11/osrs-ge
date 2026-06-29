@@ -261,7 +261,8 @@ def grade_signal_log():
     first = sl.sort_values("ts").groupby(["kind", "item_id", "day"], as_index=False).first()
     _, exempt = _items()
     con = connect(read_only=True)
-    h = _hist(first.item_id.unique().tolist(), "1h", con)
+    con.execute("PRAGMA memory_limit='600MB'")   # this runs nightly in the collector — cap it so a spike
+    h = _hist(first.item_id.unique().tolist(), "1h", con)   # spills to disk/swap, never OOMs the 2GB box
     con.close()
     h_by = {iid: g for iid, g in h.groupby("item_id")} if not h.empty else {}
     out_rows, graded = [], []
@@ -306,6 +307,7 @@ def misses(fwd_days: int = 3, min_gain: float = 0.06):
     worth a new signal. Reports our catch rate + the biggest misses."""
     name, _ = _items()
     con = connect(read_only=True)
+    con.execute("PRAGMA memory_limit='600MB'")   # whole-market scan — cap so it spills to disk, never OOMs
     h = con.execute(
         "SELECT item_id, ts, (CAST(avg_high AS DOUBLE)+CAST(avg_low AS DOUBLE))/2.0 AS mid, "
         "CAST(low_vol AS DOUBLE) AS low_vol FROM history "
