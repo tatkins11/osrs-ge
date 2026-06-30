@@ -12,6 +12,7 @@ All prices are gp; all timestamps are naive UTC.
 from __future__ import annotations
 
 import math
+import time
 
 import numpy as np
 import pandas as pd
@@ -92,8 +93,20 @@ LEFT JOIN dropagg dd USING (item_id)
 """
 
 
+_STATS_CACHE: dict = {"ts": 0.0, "df": None}
+_STATS_TTL = 90.0   # the heavy 7d/30d history SQL (~8M rows) is bankroll/filter-INDEPENDENT pure market
+                    # data — cache it so a burst of /api/plan calls (UI refetch storm) reuses one scan
+                    # instead of pegging the 1-vCPU box. 7d stats barely move in 90s; latest prices stay live.
+
+
 def _market_history_stats(con) -> pd.DataFrame:
-    return con.execute(_MARKET_STATS_SQL).df()
+    now = time.time()
+    c = _STATS_CACHE
+    if c["df"] is not None and (now - c["ts"]) < _STATS_TTL:
+        return c["df"]
+    df = con.execute(_MARKET_STATS_SQL).df()
+    c["ts"], c["df"] = now, df
+    return df
 
 
 def market_table(con=None, bankroll: int = DEFAULT_BANKROLL) -> pd.DataFrame:
