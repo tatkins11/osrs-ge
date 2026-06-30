@@ -103,14 +103,20 @@ export function Planner({
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setErr(null);
-    getPlan(filters)
-      .then((p) => !cancelled && setPlan(p))
-      .catch((e) => !cancelled && setErr(String(e)))
-      .finally(() => !cancelled && setLoading(false));
+    // Debounce: the bankroll filter auto-syncs from live GE fills, so a burst of fills would
+    // otherwise fire a burst of full /api/plan scans and hammer the 1-vCPU box (this froze the
+    // site). Coalesce rapid changes into one fetch after things settle.
+    const t = setTimeout(() => {
+      setLoading(true);
+      getPlan(filters)
+        .then((p) => !cancelled && setPlan(p))
+        .catch((e) => !cancelled && setErr(String(e)))
+        .finally(() => !cancelled && setLoading(false));
+    }, 700);
     return () => {
       cancelled = true;
+      clearTimeout(t);
     };
   }, [filters, refreshNonce]);
 
