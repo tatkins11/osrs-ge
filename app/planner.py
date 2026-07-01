@@ -21,6 +21,8 @@ Design:
 """
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 
 from . import portfolio as pf
@@ -119,6 +121,8 @@ def _trusted_cash(free_gp: float) -> tuple[float, bool]:
             rows = con.execute(
                 "SELECT bankroll FROM net_worth_log WHERE bankroll IS NOT NULL AND bankroll > 0 ORDER BY day DESC LIMIT 5"
             ).fetchall()
+            man = con.execute("SELECT value FROM settings WHERE key = 'free_gp_manual'").fetchone()
+            mts = con.execute("SELECT value FROM settings WHERE key = 'free_gp_manual_ts'").fetchone()
         finally:
             con.close()
     except Exception:
@@ -127,6 +131,10 @@ def _trusted_cash(free_gp: float) -> tuple[float, bool]:
     if len(vals) < 3:
         return free_gp, False
     cap = TRUST_MULT * vals[len(vals) // 2]
+    # a RECENT manual re-baseline is the user stating ground truth — trust it over the trailing
+    # median (which lags several days behind a deliberate correction).
+    if man and man[0] is not None and mts and mts[0] is not None and (time.time() - float(mts[0])) < 3 * 86400:
+        cap = max(cap, float(man[0]))
     return (min(free_gp, cap), free_gp > cap)
 
 

@@ -557,8 +557,12 @@ def set_free_gp(value: float) -> None:
     try:
         _ensure_schema(con)
         _set_setting(con, "free_gp", max(0.0, float(value)))
-        for o in con.execute("SELECT order_id, side, price, total_qty, filled_qty, state FROM orders").fetchall():
-            tgt = _target_cash(o[1], o[2], o[3], o[4], o[5])
+        # a manual re-baseline is the USER stating ground truth — remember it so the planner's
+        # corruption clamp trusts it (for a few days) over the trailing snapshot median.
+        _set_setting(con, "free_gp_manual", max(0.0, float(value)))
+        _set_setting(con, "free_gp_manual_ts", float(time.time()))
+        for o in con.execute("SELECT order_id, side, price, total_qty, filled_qty, state, spent FROM orders").fetchall():
+            tgt = _target_cash(o[1], o[2], o[3], o[4], o[5], o[6])
             con.execute("UPDATE orders SET cash_done=? WHERE order_id=?", [int(tgt), o[0]])
     finally:
         con.close()
