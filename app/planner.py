@@ -552,7 +552,9 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
             if margin * units < float(th.min_rt_profit or 0):
                 small_skip += 1
                 continue
-            why = f"overnight lowball — fills {fp:.0%} of nights, wins {wr:.0%} when filled"
+            odisc = _f(o.get("on_disc"))
+            why = (f"overnight lowball {odisc:.0%} below bid — " if odisc else "overnight lowball — ") \
+                + f"fills {fp:.0%} of nights, wins {wr:.0%} when filled"
             if boost > 1.0:
                 why += f"; PROVEN roster ({n_gr} graded, {win_gr:.0%} win)"
             elif boost < 1.0:
@@ -724,6 +726,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
                 "margin": round(o.get("on_margin") or 0), "roi": o.get("on_roi"),
                 "fill_prob": o.get("on_fill_prob"), "win_rate": o.get("on_win_rate"),
                 "units": int(o.get("on_units") or 0), "ev": round(o.get("on_ev") or 0),
+                "disc": o.get("on_disc"),
             })
             if len(overnight) >= 5:
                 break

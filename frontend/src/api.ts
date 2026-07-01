@@ -448,10 +448,11 @@ export interface OvernightPick {  // OOS-proven overnight edge: place a lowball 
   target: number;       // sell-back target next day
   margin: number;       // after-tax gp/unit if it reverts
   roi: number | null;
-  fill_prob: number | null;   // historical odds it fills overnight
+  fill_prob: number | null;   // historical odds it fills overnight (calibrated to realized)
   win_rate: number | null;    // historical win rate when it fills
   units: number;
   ev: number;           // expected gp/night = margin × fill_prob × win_rate
+  disc?: number | null; // this item's EV-optimal lowball depth below the bid (per-item, not global)
 }
 export interface ReconcileItem {
   order_id: string | null;

@@ -482,26 +482,47 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100, d=
         cand = d[elig].copy()
         if cand.empty:
             return []
-        # real historical odds: how often the lowball fills overnight, and wins when it does
+        # per-item EV-optimal lowball depth: sweep each candidate's own history across the
+        # discount grid instead of pricing every item at one global discount (a placid
+        # consumable and a swingy weapon have different fill-vs-margin sweet spots)
         exempt_map = dict(zip(cand["item_id"].astype(int).tolist(), cand["exempt"].astype(bool).tolist()))
-        stats = on.fill_stats(cand["item_id"].tolist(), con, disc, exempt_map=exempt_map)
+        stats = on.sweep_fill_stats(cand["item_id"].tolist(), con, exempt_map=exempt_map)
     finally:
         if own:
             con.close()
 
-    cand["on_fill_prob"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("fill_prob"))
-    cand["on_win_rate"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("win_rate"))
-    cand["on_exp_margin"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("exp_margin"))
-    cand["on_nights"] = cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get("nights"))
+    def _st(col, default=None):
+        return cand["item_id"].map(lambda i: (stats.get(int(i)) or {}).get(col, default))
+
+    # re-price each item at ITS chosen discount and recompute the disc-dependent economics
+    cand["on_disc"] = _st("disc").fillna(disc)
+    bid_c = cand["buy_price"].astype("float64")
+    ask_c = cand["sell_price"].astype("float64")
+    net_c = ask_c - taxmod.sell_tax_array(ask_c, cand["exempt"].to_numpy())
+    cand["on_buy"] = np.floor(bid_c * (1.0 - cand["on_disc"].astype("float64")))
+    cand["on_margin"] = net_c - cand["on_buy"]
+    cand["on_roi"] = np.where(cand["on_buy"] > 0, cand["on_margin"] / cand["on_buy"], np.nan)
+    cand["on_exp_profit"] = cand["on_margin"] * cand["on_units"]
+    cand["on_fill_prob"] = _st("fill_prob")
+    cand["on_win_rate"] = _st("win_rate")
+    cand["on_exp_margin"] = _st("exp_margin")
+    cand["on_nights"] = _st("nights")
     # rank by per-ITEM expected gp (margin × odds) — surfaces high-value lowballs, not high-qty junk
     cand["on_ev"] = cand["on_margin"].fillna(0) * cand["on_fill_prob"].fillna(0) * cand["on_win_rate"].fillna(0)
-    # keep only realistic, positive-edge setups: a meaningful fill chance AND a winning history when filled
-    keep = (cand["on_fill_prob"].fillna(0) >= 0.30) & (cand["on_win_rate"].fillna(0) >= 0.55)
+    # keep only realistic, positive-edge setups that still clear the margin gates at the CHOSEN
+    # depth. Fill gate is 0.25 on the CALIBRATED probability — the old 0.30 was tuned against the
+    # pre-calibration inflated numbers (44% predicted vs 32% realized); honest odds run lower, and
+    # the planner's per-slot profit bar + EV ranking carry the economics.
+    keep = (
+        (cand["on_fill_prob"].fillna(0) >= 0.25) & (cand["on_win_rate"].fillna(0) >= 0.55)
+        & (cand["on_margin"].fillna(0) >= th.overnight_min_margin) & (cand["on_roi"].fillna(0) >= th.min_roi)
+        & (cand["on_buy"] >= th.min_price)
+    )
     cand = cand[keep]
     if cand.empty:
         return []
     cand = cand.sort_values("on_ev", ascending=False).head(limit)   # expected gp/night, not just fill odds
-    return _records(cand, TABLE_COLS + ["on_buy", "on_target", "on_margin", "on_roi",
+    return _records(cand, TABLE_COLS + ["on_buy", "on_target", "on_margin", "on_roi", "on_disc",
                                         "on_fill_prob", "on_win_rate", "on_exp_margin", "on_nights",
                                         "on_units", "on_exp_profit", "on_ev"])
 

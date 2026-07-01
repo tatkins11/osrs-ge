@@ -210,6 +210,95 @@ def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 1
     return out
 
 
+DISC_GRID = (0.04, 0.06, 0.08, 0.10, 0.12, 0.15)
+
+
+def sweep_fill_stats(item_ids, con, grid=DISC_GRID, buy_hour: int = 2, sell_hour: int = 14,
+                     window_h: int = 12, min_nights: int = 5, exempt_map: dict | None = None) -> dict:
+    """Per-item EV-MAXIMIZING lowball discount. One global discount treats a placid consumable
+    and a swingy weapon identically; each item has its own sweet spot on the fill-vs-margin
+    curve. For every night we precompute the deepest TRADED dip and the next-day sell, then
+    grade the whole discount grid against it: EV/unit = calibrated_fill x win_rate x median
+    margin. Overfitting guards: a discount needs >= 4 historical fills to be eligible, and we
+    take the SHALLOWEST discount within 10% of the best EV (shallower = more fills = the more
+    robust estimate of two similar EVs). Returns {item_id: {disc, fill_prob, fill_prob_raw,
+    win_rate, exp_margin, nights, ev_unit}} for the chosen discount."""
+    ids = [int(i) for i in item_ids]
+    if not ids:
+        return {}
+    ph = ",".join(str(i) for i in ids)
+    h = con.execute(
+        f"""SELECT item_id, ts, avg_high, avg_low, low_vol,
+                   CAST(date_part('hour', ts) AS INTEGER) AS hour
+            FROM history WHERE timestep = '1h' AND item_id IN ({ph})
+              AND avg_high IS NOT NULL AND avg_low IS NOT NULL ORDER BY item_id, ts"""
+    ).df()
+    out: dict = {}
+    G = len(grid)
+    for iid, g in h.groupby("item_id"):
+        g = g.reset_index(drop=True)
+        lo = g["avg_low"].to_numpy("float64")
+        hi = g["avg_high"].to_numpy("float64")
+        lv = g["low_vol"].fillna(0).to_numpy("float64")
+        hr = g["hour"].to_numpy()
+        eh = g["ts"].to_numpy().astype("datetime64[h]").astype("int64")
+        n = len(g)
+        ex = bool(exempt_map.get(int(iid))) if exempt_map else False
+        nights = 0
+        fills = [0] * G
+        wins = [0] * G
+        margins: list[list[float]] = [[] for _ in range(G)]
+        for i in range(n):
+            if hr[i] != buy_hour or np.isnan(lo[i]):
+                continue
+            nights += 1
+            # deepest TRADED dip within the overnight window (time-indexed, not row-indexed)
+            j = i + 1
+            deep = np.inf
+            while j < n and eh[j] - eh[i] <= window_h:
+                if lv[j] > 0 and lo[j] < deep:
+                    deep = lo[j]
+                j += 1
+            if not np.isfinite(deep):
+                continue
+            sells = [k for k in range(i + 1, min(i + 30, n)) if hr[k] == sell_hour and not np.isnan(hi[k])]
+            sell_px = hi[sells[0]] if sells else None
+            for d_idx, disc in enumerate(grid):
+                offer = lo[i] * (1.0 - disc)
+                if deep > offer:
+                    continue
+                fills[d_idx] += 1
+                if sell_px is not None:
+                    m = taxmod.net_sell(int(round(sell_px)), ex) - offer
+                    margins[d_idx].append(m)
+                    if m > 0:
+                        wins[d_idx] += 1
+        if nights < min_nights:
+            continue
+        evs = []
+        for d_idx, disc in enumerate(grid):
+            if fills[d_idx] < 4:            # too few historical fills to trust this depth
+                evs.append(None)
+                continue
+            raw = fills[d_idx] / nights
+            cal = min(0.95, max(0.05, ONFILL_A + ONFILL_B * raw))
+            wr = wins[d_idx] / fills[d_idx]
+            med = float(np.median(margins[d_idx])) if margins[d_idx] else 0.0
+            evs.append((cal * wr * max(med, 0.0), disc, cal, raw, wr, med))
+        valid = [e for e in evs if e is not None and e[0] > 0]
+        if not valid:
+            continue
+        best_ev = max(e[0] for e in valid)
+        # shallowest discount within 10% of the best EV (grid is ascending)
+        pick = next(e for e in valid if e[0] >= 0.9 * best_ev)
+        ev, disc, cal, raw, wr, med = pick
+        out[int(iid)] = {
+            "disc": float(disc), "fill_prob": float(cal), "fill_prob_raw": float(raw),
+            "win_rate": float(wr), "exp_margin": med, "nights": int(nights), "ev_unit": float(ev),
+        }
+    return out
+
+
 def _pct(x):
     return "-" if x is None or (isinstance(x, float) and np.isnan(x)) else f"{x * 100:.1f}%"
 

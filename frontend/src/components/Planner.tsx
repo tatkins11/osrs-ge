@@ -323,8 +323,10 @@ export function Planner({
           <table className="tbl">
             <thead>
               <tr>
-                <th className="left">Item</th><th>Buy ≤</th><th>Sell target</th><th>Margin/ea</th>
-                <th title="Historical odds this lowball fills overnight">Fill odds</th>
+                <th className="left">Item</th>
+                <th title="This item's own EV-optimal lowball depth below the bid (fitted per item, not one global setting)">Disc</th>
+                <th>Buy ≤</th><th>Sell target</th><th>Margin/ea</th>
+                <th title="Historical odds this lowball fills overnight (calibrated to realized fills)">Fill odds</th>
                 <th title="Historical win rate on the nights it fills">Win</th>
                 <th title="Expected gp/night = margin × fill odds × win rate">EV/night</th>
                 <th className="left">Add</th>
@@ -334,6 +336,7 @@ export function Planner({
               {plan.overnight.map((o) => (
                 <tr key={o.item_id} className={o.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(o.item_id)}>
                   <td className="name left">{o.name}</td>
+                  <td className="dim">{o.disc != null ? `−${Math.round(o.disc * 100)}%` : "–"}</td>
                   <td>{gp(o.buy)}</td>
                   <td>{gp(o.target)}</td>
                   <td className="pos">{gp(o.margin)}</td>
