@@ -36,7 +36,7 @@ const fillCell = (s: PlanSlot) => (
 );
 
 /** Market-wide trade volume by hour, shown in Central time — a "when do orders fill" clock. */
-function LiquidityClock({ clock }: { clock: ClockHour[] }) {
+export function LiquidityClock({ clock }: { clock: ClockHour[] }) {
   if (!clock?.length) return null;
   const byUtc = new Map(clock.map((c) => [c.hour, c]));
   const peakUtc = new Set([...clock].sort((a, b) => b.rel - a.rel).slice(0, 6).map((c) => c.hour));

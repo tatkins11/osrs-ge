@@ -22,7 +22,7 @@ const fmtDays = (days: number | null) =>
   days == null || days <= 0 ? "" : days < 60 ? `${Math.round(days)}d` : days < 730 ? `${(days / 30.4).toFixed(1)}mo` : `${(days / 365).toFixed(1)}yr`;
 
 /** Growth chart: log-scale net worth over time (solid) + compounding projection to the next target (dashed). */
-function GrowthChart({ g }: { g: GrowthResponse }) {
+export function GrowthChart({ g }: { g: GrowthResponse }) {
   const W = 760, H = 240, PAD = 46;
   const nw = g.net_worth;
   const headline = g.targets.find((t) => t.value > nw) ?? g.targets[g.targets.length - 1];

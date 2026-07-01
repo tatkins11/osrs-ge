@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addOrder, getAccount, getCrashes, getFlips, getInvest, getItems, getMeta, getOrders, getOvernight, getSectors, getVolume, setFreeGp, type Filters, type InvestResponse, type Meta, type Order, type Row, type SectorsResponse, type TradePrefill } from "./api";
 import { gpShort } from "./format";
+import { Dashboard } from "./components/Dashboard";
 import { Planner } from "./components/Planner";
 import { GrowthTracker } from "./components/GrowthTracker";
 import { ProvenItems } from "./components/ProvenItems";
@@ -16,7 +17,7 @@ import { SectorGrid } from "./components/SectorGrid";
 import { SectorPanel } from "./components/SectorPanel";
 import { VolumeTable } from "./components/VolumeTable";
 
-type Tab = "flips" | "allocate" | "growth" | "proven" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "orders" | "portfolio";
+type Tab = "today" | "flips" | "allocate" | "growth" | "proven" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "orders" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -34,6 +35,7 @@ const DEFAULT_FILTERS: Filters = {
 };
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "today", label: "Today" },
   { id: "flips", label: "Flips" },
   { id: "allocate", label: "8-Slot Plan" },
   { id: "growth", label: "Growth" },
@@ -53,7 +55,15 @@ const REFRESH_MS = 60_000;
 export default function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [tab, setTab] = useState<Tab>(() => {
-    try { return (localStorage.getItem("ge.tab") as Tab) || "flips"; } catch { return "flips"; }
+    try {
+      const saved = localStorage.getItem("ge.tab") as Tab | null;
+      // one-time: land on the new Today dashboard (the old default was the Flips table)
+      if (localStorage.getItem("ge.tab.todaymig") !== "1") {
+        localStorage.setItem("ge.tab.todaymig", "1");
+        if (!saved || saved === "flips") return "today";
+      }
+      return saved || "today";
+    } catch { return "today"; }
   });
   const [filters, setFilters] = useState<Filters>(() => {
     try {
@@ -138,7 +148,7 @@ export default function App() {
 
   const deb = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (tab === "portfolio" || tab === "allocate" || tab === "growth") return; // these components self-fetch
+    if (tab === "portfolio" || tab === "allocate" || tab === "growth" || tab === "today") return; // these components self-fetch
     window.clearTimeout(deb.current);
     let cancelled = false; // ignore a response that arrives after the tab/filters changed (race guard)
     deb.current = window.setTimeout(() => {
@@ -248,7 +258,7 @@ export default function App() {
         </div>
         <div className="spacer" />
         <span className="note">
-          {loading ? <><span className="spinner" />loading…</> : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : tab === "orders" ? `${ordersData.length} orders` : tab === "allocate" ? "8-slot plan" : tab === "growth" ? "bankroll growth" : tab === "portfolio" ? "" : `${shown.length} rows`}
+          {loading ? <><span className="spinner" />loading…</> : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : tab === "orders" ? `${ordersData.length} orders` : tab === "allocate" ? "8-slot plan" : tab === "growth" ? "bankroll growth" : tab === "today" ? "session dashboard" : tab === "portfolio" ? "" : `${shown.length} rows`}
           {updatedAt ? ` · updated ${ago(updatedAt)}` : ""}
           {err ? ` · error: ${err}` : ""}
         </span>
@@ -268,7 +278,16 @@ export default function App() {
       </div>
 
       <div className={`main ${panelCollapsed ? "panel-collapsed" : ""}`}>
-        {tab === "portfolio" ? (
+        {tab === "today" ? (
+          <>
+            <div className="table-wrap">
+              <Dashboard filters={filters} refreshNonce={nonce} onSelect={setSelected} goTo={(t) => setTab(t as Tab)} />
+            </div>
+            <div className={`panel-wrap ${selected != null ? "open" : ""}`}>
+              <ItemPanel itemId={selected} filters={filters} refreshNonce={nonce} onClose={() => setSelected(null)} />
+            </div>
+          </>
+        ) : tab === "portfolio" ? (
           <>
             <div className="table-wrap">
               <Portfolio refreshNonce={nonce} prefill={prefill} onSelect={setSelected} />
