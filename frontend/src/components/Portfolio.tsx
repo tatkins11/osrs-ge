@@ -5,6 +5,7 @@ import {
 } from "../api";
 import { fmtTsCentral, gp, gpShort, pct } from "../format";
 import { SortTh, useSortable } from "./sortable";
+import { C } from "../theme";
 
 function Tile({ k, v, cls = "" }: { k: string; v: ReactNode; cls?: string }) {
   return (
@@ -29,7 +30,7 @@ function EquitySpark({ data }: { data: { ts: string; cum: number }[] }) {
   return (
     <svg width={w} height={h} style={{ display: "block" }} aria-label="realized P&L curve">
       <line x1={pad} y1={y(0)} x2={w - pad} y2={y(0)} stroke="#1e2a39" strokeWidth={1} />
-      <polyline points={pts} fill="none" stroke={last >= 0 ? "#25d07d" : "#ff5b6e"} strokeWidth={1.5} />
+      <polyline points={pts} fill="none" stroke={last >= 0 ? C.green : C.red} strokeWidth={1.5} />
     </svg>
   );
 }
@@ -333,7 +334,7 @@ export function Portfolio({
                         <td><input className="edit-in" value={ePrice} onChange={(e) => setEPrice(e.target.value)}
                           onKeyDown={(e) => e.key === "Enter" && saveEdit()} /></td>
                         <td className="left" style={{ whiteSpace: "nowrap" }}>
-                          <button className="del" style={{ color: "#25d07d" }} onClick={saveEdit} title="Save">✓</button>
+                          <button className="del" style={{ color: C.green }} onClick={saveEdit} title="Save">✓</button>
                           <button className="del" onClick={() => setEditId(null)} title="Cancel">✕</button>
                         </td>
                       </>

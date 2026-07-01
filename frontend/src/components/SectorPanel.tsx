@@ -3,6 +3,7 @@ import { ColorType, createChart, type UTCTimestamp } from "lightweight-charts";
 import { getSectorDetail, HORIZON_KEYS, type Filters, type SectorDetail, type SectorIndexPoint } from "../api";
 import { gp, gpShort, spct } from "../format";
 import { ChartModal } from "./ChartModal";
+import { C } from "../theme";
 
 const cls = (x: number | null | undefined) => (x == null ? "" : x > 0 ? "pos" : x < 0 ? "neg" : "");
 const TFS: [string, string][] = [["2wk", "2wk"], ["3mo", "3mo"], ["1yr", "1yr"]];
@@ -40,10 +41,10 @@ function SectorChart({ series, className = "" }: { series: SectorIndexPoint[]; c
     });
     const base = chart.addBaselineSeries({
       baseValue: { type: "price", price: 0 },
-      topLineColor: "#25d07d",
+      topLineColor: C.green,
       topFillColor1: "rgba(37,208,125,.28)",
       topFillColor2: "rgba(37,208,125,.02)",
-      bottomLineColor: "#ff5b6e",
+      bottomLineColor: C.red,
       bottomFillColor1: "rgba(255,91,110,.02)",
       bottomFillColor2: "rgba(255,91,110,.28)",
       lineWidth: 2,

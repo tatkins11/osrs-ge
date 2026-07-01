@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ColorType, createChart, type UTCTimestamp } from "lightweight-charts";
 import type { SeriesPoint } from "../api";
+import { C } from "../theme";
 
 // Render axis + crosshair in the viewer's LOCAL timezone (lightweight-charts is UTC by default).
 const fmtFull = (t: number) =>
@@ -42,15 +43,19 @@ export function PriceChart({
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#9fb0c3",
-        fontFamily: "ui-monospace, monospace",
+        textColor: C.fg2,
+        fontFamily: C.mono,
         fontSize: 11,
       },
-      grid: { vertLines: { color: "#15202d" }, horzLines: { color: "#15202d" } },
-      rightPriceScale: { borderColor: "#1e2a39", scaleMargins: { top: 0.06, bottom: 0.30 } },
-      timeScale: { borderColor: "#1e2a39", timeVisible: true, secondsVisible: false, tickMarkFormatter: tickFmt },
+      grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
+      rightPriceScale: { borderColor: C.border, scaleMargins: { top: 0.06, bottom: 0.30 } },
+      timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: false, tickMarkFormatter: tickFmt },
       localization: { timeFormatter: fmtFull },
-      crosshair: { mode: 0 },
+      crosshair: {
+        mode: 0,
+        vertLine: { color: C.accentSoft, width: 1, style: 2, labelBackgroundColor: "#12203a" },
+        horzLine: { color: C.accentSoft, width: 1, style: 2, labelBackgroundColor: "#12203a" },
+      },
     });
 
     const t = (p: SeriesPoint) => p.time as UTCTimestamp;
@@ -59,11 +64,11 @@ export function PriceChart({
 
     const band = (color: string) =>
       chart.addLineSeries({ color, lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-    band("rgba(123,211,252,.35)").setData(sel("upper"));
-    band("rgba(123,211,252,.35)").setData(sel("lower"));
-    chart.addLineSeries({ color: "#f5b53d", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(sel("ma"));
+    band("rgba(125,211,252,.30)").setData(sel("upper"));
+    band("rgba(125,211,252,.30)").setData(sel("lower"));
+    chart.addLineSeries({ color: C.amber, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(sel("ma"));
 
-    const vol = chart.addHistogramSeries({ priceScaleId: "vol", color: "rgba(78,161,255,.30)", lastValueVisible: false, priceLineVisible: false });
+    const vol = chart.addHistogramSeries({ priceScaleId: "vol", color: "rgba(77,163,255,.28)", lastValueVisible: false, priceLineVisible: false });
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.88, bottom: 0 } });
     vol.setData(
       series
@@ -72,20 +77,20 @@ export function PriceChart({
     );
 
     // z-score oscillator sub-pane: how stretched vs the 7d mean, with buy/sell guides
-    const osc = chart.addLineSeries({ priceScaleId: "osc", color: "#9b8cff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    const osc = chart.addLineSeries({ priceScaleId: "osc", color: C.violet, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
     chart.priceScale("osc").applyOptions({ scaleMargins: { top: 0.72, bottom: 0.14 } });
     osc.setData(sel("z"));
-    osc.createPriceLine({ price: 1.5, color: "rgba(255,91,110,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "z +1.5" });
+    osc.createPriceLine({ price: 1.5, color: "rgba(255,92,114,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "z +1.5" });
     osc.createPriceLine({ price: 0, color: "rgba(120,138,160,.4)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
-    osc.createPriceLine({ price: -1.5, color: "rgba(37,208,125,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "z -1.5" });
+    osc.createPriceLine({ price: -1.5, color: "rgba(46,224,138,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "z -1.5" });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let main: any;
     if (type === "candle") {
       main = chart.addCandlestickSeries({
-        upColor: "#25d07d", downColor: "#ff5b6e",
-        borderUpColor: "#25d07d", borderDownColor: "#ff5b6e",
-        wickUpColor: "#25d07d", wickDownColor: "#ff5b6e",
+        upColor: C.green, downColor: C.red,
+        borderUpColor: C.green, borderDownColor: C.red,
+        wickUpColor: C.green, wickDownColor: C.red,
       });
       // Candles from the MID series only. Using avg-high/avg-low (the bid-ask spread) for the
       // wicks made every candle sprout a fat spread-sized wick -- wild on 1h bars / low-volume
@@ -111,7 +116,12 @@ export function PriceChart({
       }
       main.setData(data);
     } else {
-      main = chart.addLineSeries({ color: "#4ea1ff", lineWidth: 2, priceLineVisible: false });
+      // area (line + soft gradient fill) reads better than a bare line on a dark canvas
+      main = chart.addAreaSeries({
+        lineColor: C.accent, lineWidth: 2, priceLineVisible: false,
+        topColor: C.areaTop, bottomColor: C.areaBottom,
+        crosshairMarkerBackgroundColor: C.accent,
+      });
       main.setData(sel("mid"));
     }
 
@@ -143,12 +153,12 @@ export function PriceChart({
       for (const m of markers) {
         if (m.time < lo || m.time > hi) continue;
         all.push({ time: m.time as UTCTimestamp, position: m.side === "buy" ? "belowBar" : "aboveBar",
-          color: m.side === "buy" ? "#25d07d" : "#ff5b6e", shape: m.side === "buy" ? "arrowUp" : "arrowDown", text: m.side === "buy" ? "B" : "S" });
+          color: m.side === "buy" ? C.green : C.red, shape: m.side === "buy" ? "arrowUp" : "arrowDown", text: m.side === "buy" ? "B" : "S" });
       }
       for (const ev of events) {
         if (ev.time < lo - 86400 || ev.time > hi + 86400) continue;
         const bt = nearest(ev.time);
-        all.push({ time: bt as UTCTimestamp, position: "aboveBar", color: "#f5b53d", shape: "square", text: "📰" });
+        all.push({ time: bt as UTCTimestamp, position: "aboveBar", color: C.amber, shape: "square", text: "📰" });
         eventByBar.set(bt, eventByBar.has(bt) ? `${eventByBar.get(bt)} · ${ev.title}` : ev.title);
       }
       if (all.length) {
@@ -193,7 +203,7 @@ export function PriceChart({
           ? `<div class="tip-v dim">z ${sp.z.toFixed(1)}${sp.rsi != null ? ` · RSI ${Math.round(sp.rsi)}` : ""}</div>`
           : "";
       const evt = eventByBar.get(param.time as number);
-      const evTxt = evt ? `<div class="tip-v" style="color:#f5b53d">📰 ${evt}</div>` : "";
+      const evTxt = evt ? `<div class="tip-v" style="color:${C.amber}">📰 ${evt}</div>` : "";
       tip.innerHTML = `<div class="tip-t">${fmtFull(param.time as number)}</div><div class="tip-v">${body}${volTxt}</div>${vf}${zr}${evTxt}`;
       tip.style.display = "block";
       tip.style.left = Math.min(pt.x + 14, el.clientWidth - 190) + "px";

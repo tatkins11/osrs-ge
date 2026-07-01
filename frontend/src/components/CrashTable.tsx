@@ -1,6 +1,7 @@
 import type { Row, TradePrefill } from "../api";
 import { gp, gpShort, pct } from "../format";
 import { SortTh, useSortable } from "./sortable";
+import { C } from "../theme";
 
 /** Items currently crashed below their established level, with a recovery plan.
  *  Click a header to sort; click a row for the deep dive. */
@@ -46,7 +47,7 @@ export function CrashTable({
                 {r.name}
                 {r.post_update_drop ? (
                   <span
-                    style={{ marginLeft: 6, color: "#f5b53d", fontSize: "0.78em", whiteSpace: "nowrap" }}
+                    style={{ marginLeft: 6, color: C.amber, fontSize: "0.78em", whiteSpace: "nowrap" }}
                     title={`Crash coincided with a game update${r.post_update_title ? `: "${r.post_update_title}"` : ""}. Update-driven drops historically recover ~30% worse (PF 0.48 vs 0.67) — more likely a permanent repricing. Ranked lower.`}
                   >
                     ⚠ update

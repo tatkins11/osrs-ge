@@ -467,10 +467,19 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
                     status, note = "keep", "sell offer (no tracked holding)"
             else:  # buy
                 bu = prof.get(iid, {}).get("buy", 0.0)
-                if iid in good_buy_ids and bu >= MIN_BUY_UPTIME:
+                # the item being a good buy at the COMPETITIVE price isn't enough — the margin must
+                # also survive at YOUR standing order's price, or "keep filling" locks in a loss
+                # (the flaw showed as a negative Buys-gp/day tile on a kept order).
+                order_mgn = 0.0
+                if iid in good_buy_ids and price > 0:
+                    _m, _b, c_sell, c_ex, *_rest = cand_rows[iid]
+                    order_mgn = taxmod.net_sell(int(round(c_sell)), c_ex) - price
+                if iid in good_buy_ids and bu >= MIN_BUY_UPTIME and order_mgn > 0:
                     status, note = "keep", f"still a good buy — keep filling ({prog})"
                     kept_buy_ids.add(iid)
                     kept_buy_info[iid] = (int(o.price or 0), int(o.total_qty or 0), int(o.filled_qty or 0))
+                elif iid in good_buy_ids and order_mgn <= 0:
+                    status, note = "cancel", "your buy price no longer clears a profit after tax — cancel & re-place lower"
                 elif iid in good_buy_ids:  # still has a margin, but it barely trades — it'll just sit
                     status, note = "cancel", f"rarely trades — a seller appears only ~{bu * 100:.0f}% of the time; cancel & redeploy"
                 else:

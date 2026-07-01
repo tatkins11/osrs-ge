@@ -1,5 +1,6 @@
 import type { SectorsResponse } from "../api";
 import { gpShort, spct } from "../format";
+import { C } from "../theme";
 
 const cls = (x: number | null | undefined) => (x == null ? "flat" : x > 0 ? "pos" : x < 0 ? "neg" : "flat");
 
@@ -15,7 +16,7 @@ function Sparkline({ data, up }: { data: number[]; up: boolean }) {
   return (
     <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
       <line x1={0} x2={w} y1={y(0)} y2={y(0)} className="spark-zero" />
-      <polyline points={pts} fill="none" stroke={up ? "#25d07d" : "#ff5b6e"} strokeWidth={1.6} />
+      <polyline points={pts} fill="none" stroke={up ? C.green : C.red} strokeWidth={1.6} />
     </svg>
   );
 }

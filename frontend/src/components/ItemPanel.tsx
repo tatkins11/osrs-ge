@@ -5,6 +5,7 @@ import { ChartModal } from "./ChartModal";
 import { PriceChart } from "./PriceChart";
 import { ProfileBars } from "./ProfileBars";
 import { SignalBadge } from "./SignalBadge";
+import { C } from "../theme";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -118,19 +119,19 @@ export function ItemPanel({
     const target = sr.value_target ?? sr.crash_target;
     if (fair && target && Math.abs(target - fair) / fair > 0.01) {
       out.push({ price: fair, color: "#22d3ee", title: "fair value" });
-      out.push({ price: target, color: "#25d07d", title: "target" });
+      out.push({ price: target, color: C.green, title: "target" });
     } else if (fair) {
       out.push({ price: fair, color: "#22d3ee", title: "fair value / target" });
     } else if (target) {
-      out.push({ price: target, color: "#25d07d", title: "target" });
+      out.push({ price: target, color: C.green, title: "target" });
     }
     // alch floor only when price is genuinely near it (else it's far off-axis clutter)
     if (sr.alch_floor && sr.alch_floor > 0 && sr.alch_support != null && sr.alch_support <= 0.5) {
-      out.push({ price: sr.alch_floor, color: "#9b8cff", title: "alch floor", dashed: true });
+      out.push({ price: sr.alch_floor, color: C.violet, title: "alch floor", dashed: true });
     }
     if (pos) {
       out.push({ price: pos.avg_cost, color: "#e8edf2", title: "avg cost" });
-      if (pos.breakeven) out.push({ price: pos.breakeven, color: "#ff5b6e", title: "breakeven", dashed: true });
+      if (pos.breakeven) out.push({ price: pos.breakeven, color: C.red, title: "breakeven", dashed: true });
     }
     return out;
   }, [sr.established, sr.value_target, sr.crash_target, sr.alch_floor, sr.alch_support, pos?.avg_cost, pos?.breakeven]);

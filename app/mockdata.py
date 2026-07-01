@@ -113,49 +113,175 @@ def _gen_history(item: tuple, ts: pd.DatetimeIndex, rng: np.random.Generator) ->
     )
 
 
-def _gen_snapshots(hist: pd.DataFrame, recent_hours: int = 48) -> pd.DataFrame:
-    """Build recent live-style snapshots from the tail of an item's history,
-    plus one fresh row at 'now' so the flip-finder sees a current price."""
-    tail = hist.tail(recent_hours).copy()
+def _gen_snapshots(hist: pd.DataFrame, recent_days: int = 7) -> pd.DataFrame:
+    """Build recent live-style snapshots at the collector's real 5-MINUTE cadence by
+    upsampling the hourly history (linear mid interpolation + jitter, per-window Poisson
+    volumes so quiet windows are genuinely empty). The 5-min grid matters: fill-uptime,
+    clearing-VWAP and liquidity-clock all measure 5-min windows — hourly-only snapshots
+    made every demo item look dead (uptime ~8%) and starved the planner's gates.
+    Ends with one fresh row at 'now' so the flip-finder sees a current price."""
+    rng = np.random.default_rng(int(hist["item_id"].iloc[0]) + 1)
+    tail = hist.tail(recent_days * 24 + 1).copy()
+    hours = tail["ts"].to_numpy().astype("datetime64[s]").astype("int64")   # epoch seconds ([us]-safe)
+    grid = np.arange(hours[0], hours[-1] + 1, 300)                   # 5-min steps
+    mid_h = ((tail["avg_high"] + tail["avg_low"]) / 2.0).to_numpy(dtype="float64")
+    spread_h = (tail["avg_high"] - tail["avg_low"]).to_numpy(dtype="float64")
+    mid = np.interp(grid, hours, mid_h) * (1.0 + rng.normal(0.0, 0.002, len(grid)))
+    spread = np.maximum(1.0, np.interp(grid, hours, spread_h))
+    hvol_h = np.interp(grid, hours, tail["high_vol"].to_numpy(dtype="float64")) / 12.0
+    lvol_h = np.interp(grid, hours, tail["low_vol"].to_numpy(dtype="float64")) / 12.0
+    high_vol = rng.poisson(np.maximum(hvol_h, 0.05))                 # zero-vol windows = no prints
+    low_vol = rng.poisson(np.maximum(lvol_h, 0.05))
+    ts = pd.to_datetime(grid, unit="s")
     snap = pd.DataFrame(
         {
-            "ts": tail["ts"],
-            "item_id": tail["item_id"],
-            "instabuy": tail["avg_high"],
-            "instasell": tail["avg_low"],
-            "high_time": tail["ts"],
-            "low_time": tail["ts"],
-            "avg_high": tail["avg_high"],
-            "avg_low": tail["avg_low"],
-            "high_vol": tail["high_vol"],
-            "low_vol": tail["low_vol"],
+            "ts": ts,
+            "item_id": int(tail["item_id"].iloc[0]),
+            "instabuy": np.round(mid + spread / 2.0).astype("int64"),
+            "instasell": np.round(mid - spread / 2.0).astype("int64"),
+            "high_time": ts,
+            "low_time": ts,
+            "avg_high": np.round(mid + spread / 2.0).astype("int64"),
+            "avg_low": np.round(mid - spread / 2.0).astype("int64"),
+            "high_vol": high_vol.astype("int64"),
+            "low_vol": low_vol.astype("int64"),
         }
     )
-    last = tail.iloc[-1]
+    last = snap.iloc[-1]
     now = pd.Timestamp(utcnow())
-    jitter_h = 1.0 + np.random.default_rng(int(last["item_id"])).uniform(-0.004, 0.004)
-    fresh = pd.DataFrame(
-        [
-            {
-                "ts": now,
-                "item_id": int(last["item_id"]),
-                "instabuy": int(round(last["avg_high"] * jitter_h)),
-                "instasell": int(round(last["avg_low"] * jitter_h)),
-                "high_time": now,
-                "low_time": now,
-                "avg_high": int(last["avg_high"]),
-                "avg_low": int(last["avg_low"]),
-                "high_vol": int(last["high_vol"]),
-                "low_vol": int(last["low_vol"]),
-            }
-        ]
-    )
-    return pd.concat([snap, fresh], ignore_index=True)
+    fresh = last.to_dict()
+    fresh.update({"ts": now, "high_time": now, "low_time": now})
+    return pd.concat([snap, pd.DataFrame([fresh])], ignore_index=True)
 
 
 def clear(con) -> None:
     for t in ("snapshots", "history", "items"):
         con.execute(f"DELETE FROM {t}")
+
+
+DEMO_FREE_GP = 152_000_000
+_BASE = {iid: base for (iid, _n, base, *_r) in DEMO_ITEMS}
+_NAME = {iid: n for (iid, n, *_r) in DEMO_ITEMS}
+
+
+def seed_activity(end: pd.Timestamp) -> None:
+    """Populate the trades + log DBs with a coherent DEMO story so every page renders with
+    active information: ~3 weeks of closed round-trips, open positions in every state the
+    planner grades (profitable / stale / underwater), live + terminal GE orders, a compounding
+    net-worth history, and graded signal outcomes (an overnight roster with repeat winners).
+    WIPES those tables first — this is the offline dev tool, never run on the live box."""
+    from . import db as dbm
+
+    rng = np.random.default_rng(7)
+    dbm.ensure_trades_db()
+    dbm.ensure_log_db()
+
+    tcon = dbm.connect_trades()
+    try:
+        for t in ("trades", "orders", "net_worth_log", "plan_log", "settings"):
+            tcon.execute(f"DELETE FROM {t}")
+
+        def trade(ts, iid, side, qty, price, note="demo"):
+            tcon.execute(
+                "INSERT INTO trades (ts, item_id, side, qty, price, note) VALUES (?,?,?,?,?,?)",
+                [ts.to_pydatetime(), int(iid), side, int(qty), int(round(price)), note],
+            )
+
+        # ---- ~3 weeks of closed round-trips on the liquid flip staples -------------------
+        flippers = [4151, 2434, 6685, 3024, 11235, 4587, 9245, 1631, 11832]
+        for d in range(20, 0, -1):
+            day0 = end - pd.Timedelta(days=d)
+            for _ in range(int(rng.integers(1, 4))):
+                iid = int(rng.choice(flippers))
+                base = _BASE[iid]
+                qty = max(1, int(min(25_000_000 / base, 4000) * rng.uniform(0.4, 1.0)))
+                buy = base * rng.uniform(0.96, 1.03)
+                m = float(np.clip(rng.normal(0.023, 0.016), -0.035, 0.06))   # net margin, losers included
+                sell = buy * (1 + m) / 0.98                                   # gross so net-of-tax hits m
+                t0 = day0 + pd.Timedelta(hours=float(rng.uniform(8, 20)))
+                t1 = t0 + pd.Timedelta(hours=float(np.clip(rng.lognormal(1.2, 0.8), 0.4, 30)))
+                trade(t0, iid, "buy", qty, buy)
+                trade(t1, iid, "sell", qty, sell)
+
+        # ---- open positions in every state the planner grades ----------------------------
+        trade(end - pd.Timedelta(days=9), 11802, "buy", 3, _BASE[11802] * 0.95)     # AGS: in profit -> SELL/HOLD
+        trade(end - pd.Timedelta(days=4, hours=8), 21555, "buy", 1, _BASE[21555] * 1.033)  # Ancestral: flat/underwater -> stale
+        trade(end - pd.Timedelta(days=2, hours=3), 6571, "buy", 25, _BASE[6571] * 1.046)   # Onyx: underwater -> recovery read
+        trade(end - pd.Timedelta(days=1, hours=5), 3024, "buy", 2500, _BASE[3024] * 0.982) # restores: feeding the live sell
+
+        # ---- GE orders: live (buying / selling / fresh) + recent terminal ----------------
+        def order(oid, slot, iid, side, price, total, filled, state, opened_h, done_h=None):
+            opened = (end - pd.Timedelta(hours=opened_h)).to_pydatetime()
+            done = (end - pd.Timedelta(hours=done_h)).to_pydatetime() if done_h is not None else None
+            tcon.execute(
+                "INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty, filled_qty,"
+                " spent, state, opened_ts, updated_ts, completed_ts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [oid, "demo", slot, int(iid), side, int(round(price)), int(total), int(filled),
+                 int(round(price)) * int(filled), state, opened, done or opened, done],
+            )
+
+        order("demo-b1", 0, 6685, "buy", _BASE[6685] * 0.985, 3000, 1200, "BUYING", 2.2)
+        order("demo-b2", 1, 1513, "buy", _BASE[1513] * 0.97, 20000, 0, "BUYING", 0.6)
+        order("demo-s1", 2, 3024, "sell", _BASE[3024] * 1.025, 2500, 900, "SELLING", 3.1)
+        order("demo-t1", 3, 11212, "buy", _BASE[11212] * 0.99, 8000, 8000, "BOUGHT", 6.0, 5.0)
+        order("demo-t2", 4, 13441, "sell", _BASE[13441] * 1.02, 10000, 10000, "SOLD", 27.0, 26.0)
+        order("demo-t3", 5, 1515, "buy", _BASE[1515] * 0.96, 20000, 6000, "CANCELLED_BUY", 31.0, 30.0)
+
+        # ---- net-worth history: ~3 weeks compounding toward the next target --------------
+        nw = 385_000_000.0
+        realized = 0.0
+        for d in range(21, 0, -1):
+            day = (end - pd.Timedelta(days=d)).date()
+            growth = rng.normal(0.011, 0.012)
+            nw *= 1 + growth
+            realized += max(0.0, nw * growth * 0.7)
+            bank = nw * rng.uniform(0.25, 0.45)
+            tcon.execute(
+                "INSERT INTO net_worth_log (day, ts, net_worth, bankroll, holdings_value,"
+                " realized_total, unrealized_total, invested) VALUES (?,?,?,?,?,?,?,?)",
+                [day, pd.Timestamp(day).to_pydatetime(), int(nw), int(bank), int(nw - bank),
+                 int(realized), int(rng.normal(0, 4e6)), int(nw - bank)],
+            )
+    finally:
+        tcon.close()
+
+    # free gp: set AFTER orders exist — set_free_gp re-anchors every order's cash as already
+    # accounted, so the demo bankroll lands exactly at DEMO_FREE_GP (and sets the manual anchor).
+    dbm.set_free_gp(DEMO_FREE_GP)
+
+    # ---- graded signal outcomes: the Proven tab + the 2-touch roster ----------------------
+    lcon = dbm.connect_log()
+    try:
+        lcon.execute("DELETE FROM signal_outcomes")
+        horizon = {"overnight": 1, "flip": 1, "crash": 7, "value": 3}
+
+        def outcomes(kind, iid, n, win_p, ret_mu, ret_sd):
+            for k in range(n):
+                sig = end - pd.Timedelta(days=float(rng.uniform(1, 20)), hours=float(k))
+                win = bool(rng.random() < win_p)
+                ret = abs(rng.normal(ret_mu, ret_sd)) * (1 if win else -0.6)
+                lcon.execute(
+                    "INSERT OR IGNORE INTO signal_outcomes (kind, item_id, sig_ts, name, score,"
+                    " horizon_d, reached, win, ret_net, graded_ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    [kind, int(iid), sig.to_pydatetime(), _NAME[iid], float(rng.uniform(20, 95)),
+                     horizon[kind], win and bool(rng.random() < 0.9), win, float(ret),
+                     (sig + pd.Timedelta(days=horizon[kind])).to_pydatetime()],
+                )
+
+        # overnight: the proven roster — repeat winners with real edge
+        for iid, n, wp, mu in [(2434, 12, 0.92, 0.105), (6685, 10, 0.9, 0.085), (3024, 9, 0.89, 0.09),
+                               (4151, 9, 0.78, 0.06), (11212, 8, 0.85, 0.07), (9245, 7, 0.7, 0.05)]:
+            outcomes("overnight", iid, n, wp, mu, 0.03)
+        for iid in (4151, 4587, 11235, 1127, 1631, 12934):     # flip: mediocre, honest
+            outcomes("flip", iid, 10, 0.42, 0.012, 0.02)
+        for iid in (11802, 11832, 21555, 6571):                # crash: modest edge
+            outcomes("crash", iid, 6, 0.58, 0.03, 0.025)
+        for iid in (5295, 5304, 1513, 561, 565):               # value: coin-flip
+            outcomes("value", iid, 8, 0.47, 0.015, 0.02)
+    finally:
+        lcon.close()
+
+    log.info("demo activity seeded: trades, orders, net-worth history, signal outcomes, free_gp=%s", f"{DEMO_FREE_GP:,}")
 
 
 def seed(days: int = 60, reset: bool = True) -> None:
@@ -194,6 +320,7 @@ def seed(days: int = 60, reset: bool = True) -> None:
     snaps = pd.concat(snap_frames, ignore_index=True)
     insert_history(hist)
     insert_snapshots(snaps)
+    seed_activity(end)
 
     log.info(
         "SYNTHETIC DEMO DATA seeded: %d items, %d history rows (%s -> %s), %d snapshot rows",

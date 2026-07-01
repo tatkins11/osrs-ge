@@ -1,6 +1,7 @@
 import type { Row, TradePrefill } from "../api";
 import { gp, gpShort, num, pct } from "../format";
 import { SortTh, useSortable } from "./sortable";
+import { C } from "../theme";
 
 const confClass = (c?: number | null) => (c == null ? "" : c >= 70 ? "conf-hi" : c >= 50 ? "conf-md" : "conf-lo");
 
@@ -88,7 +89,7 @@ export function InvestTable({
                 {r.name}
                 {r.post_update_drop ? (
                   <span
-                    style={{ marginLeft: 6, color: "#f5b53d", fontSize: "0.78em", whiteSpace: "nowrap" }}
+                    style={{ marginLeft: 6, color: C.amber, fontSize: "0.78em", whiteSpace: "nowrap" }}
                     title={`Recent drop coincided with a game update${r.post_update_title ? `: "${r.post_update_title}"` : ""}. Update-driven drops historically recover ~30% worse (PF 0.48 vs 0.67) — more likely a permanent repricing than a dip. Confidence is penalized.`}
                   >
                     ⚠ update
