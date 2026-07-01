@@ -143,7 +143,8 @@ def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 1
         return {}
     ph = ",".join(str(i) for i in ids)
     h = con.execute(
-        f"""SELECT item_id, ts, avg_high, avg_low, CAST(date_part('hour', ts) AS INTEGER) AS hour
+        f"""SELECT item_id, ts, avg_high, avg_low, low_vol,
+                   CAST(date_part('hour', ts) AS INTEGER) AS hour
             FROM history WHERE timestep = '1h' AND item_id IN ({ph})
               AND avg_high IS NOT NULL AND avg_low IS NOT NULL ORDER BY item_id, ts"""
     ).df()
@@ -152,7 +153,12 @@ def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 1
         g = g.reset_index(drop=True)
         lo = g["avg_low"].to_numpy("float64")
         hi = g["avg_high"].to_numpy("float64")
+        lv = g["low_vol"].fillna(0).to_numpy("float64")
         hr = g["hour"].to_numpy()
+        # epoch HOURS ([us]-safe) so the fill window is measured in TIME, not rows: slicing rows
+        # silently stretched the "overnight" window across history gaps, crediting daytime dips as
+        # overnight fills — the main source of the measured over-prediction (44% vs 32% realized).
+        eh = g["ts"].to_numpy().astype("datetime64[h]").astype("int64")
         n = len(g)
         ex = bool(exempt_map.get(int(iid))) if exempt_map else False
         nights = fills = wins = 0
@@ -162,11 +168,19 @@ def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 1
                 continue
             nights += 1
             offer = lo[i] * (1.0 - disc)
-            w = lo[i + 1: i + 1 + window_h]
-            if w.size == 0 or np.nanmin(w) > offer:
-                continue  # never dipped to the offer overnight
+            j = i + 1
+            filled = False
+            while j < n and eh[j] - eh[i] <= window_h:
+                # a fill needs a TRADED dip: someone actually insta-sold at/below the offer that
+                # hour (a quote drifting down with zero prints can't fill anything)
+                if lo[j] <= offer and lv[j] > 0:
+                    filled = True
+                    break
+                j += 1
+            if not filled:
+                continue
             fills += 1
-            sells = [j for j in range(i + 1, min(i + 30, n)) if hr[j] == sell_hour and not np.isnan(hi[j])]
+            sells = [k for k in range(i + 1, min(i + 30, n)) if hr[k] == sell_hour and not np.isnan(hi[k])]
             if sells:
                 m = taxmod.net_sell(int(round(hi[sells[0]])), ex) - offer   # after-tax margin (cap + exemptions)
                 margins.append(m)
