@@ -62,9 +62,14 @@ export function Dashboard({
     .sort((a, b) => (order[a.action] ?? 9) - (order[b.action] ?? 9))
     .slice(0, 8);
 
+  // Δ today only means something vs an ACTUAL yesterday snapshot — comparing against an older
+  // gap (or a corrupted-era row) printed a -163M "loss" that never happened. Gaps show "—".
   const hist = g.history.filter((h) => h.value > 0);
-  const prev = hist.length > 1 ? hist[hist.length - 2].value : null;
-  const dToday = prev != null ? g.net_worth - prev : null;
+  const dayOf = (ts: string) => Math.floor(new Date(ts).getTime() / 86400000);
+  const last = hist[hist.length - 1];
+  const prevRow = hist.length > 1 ? hist[hist.length - 2] : null;
+  const prevIsYesterday = last && prevRow && dayOf(last.ts) - dayOf(prevRow.ts) === 1;
+  const dToday = prevIsYesterday && prevRow ? g.net_worth - prevRow.value : null;
   const headline = g.targets.find((t) => t.value > g.net_worth) ?? g.targets[g.targets.length - 1];
   const deployed = 1 - g.idle_frac;
 

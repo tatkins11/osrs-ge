@@ -870,8 +870,10 @@ def purge_terminal_orders() -> int:
 
 @_locked_write
 def record_net_worth(net_worth, bankroll, holdings_value, realized_total, unrealized_total, invested, ts=None) -> bool:
-    """Snapshot today's net worth for the growth curve (at most one row per day). Best-effort:
-    returns True if a new row was written, False if today's already exists or the write failed."""
+    """Snapshot today's net worth for the growth curve (one row per day, refreshed through the
+    day so it ends as the END-of-day state). The old insert-once behavior froze the day at its
+    first plan view — a 00:24 snapshot taken before a free-gp re-baseline made the growth curve
+    lie all day (the -163M 'phantom loss'). Best-effort; returns True if a row was written."""
     ts = ts or utcnow()
     day = ts.date() if hasattr(ts, "date") else ts
     try:
@@ -880,8 +882,7 @@ def record_net_worth(net_worth, bankroll, holdings_value, realized_total, unreal
         return False
     try:
         con.execute(_TRADES_SCHEMA)
-        if con.execute("SELECT 1 FROM net_worth_log WHERE day = ?", [day]).fetchone():
-            return False
+        con.execute("DELETE FROM net_worth_log WHERE day = ?", [day])
         con.execute(
             "INSERT INTO net_worth_log (day, ts, net_worth, bankroll, holdings_value, realized_total, unrealized_total, invested) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
