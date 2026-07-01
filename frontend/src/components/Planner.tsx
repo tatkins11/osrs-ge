@@ -223,6 +223,9 @@ export function Planner({
         {(plan.knife_skipped ?? 0) > 0 && (
           <> · <span className="dim">skipped <b>{plan.knife_skipped}</b> falling knife{(plan.knife_skipped ?? 0) > 1 ? "s" : ""} (down &gt;5%/24h, no alch-floor support)</span></>
         )}
+        {(plan.small_skipped ?? 0) > 0 && (
+          <> · <span className="dim">skipped <b>{plan.small_skipped}</b> too-small overnight setup{(plan.small_skipped ?? 0) > 1 ? "s" : ""} (a filled night wouldn't pay your Min profit/RT — an empty slot beats a scrap)</span></>
+        )}
         {plan.cash_clamped && (
           <> · <span className="neg">⚠ Free gp ({gpShort(plan.free_gp)}) looks inflated vs recent history — buys are sized off {gpShort(plan.sizing_cash ?? 0)} instead. If your real cash IS this high, re-set Free gp on the Portfolio page to re-baseline.</span></>
         )}
@@ -307,7 +310,7 @@ export function Planner({
               <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: b.item_id, side: "buy", price: b.price, qty: b.units, live: b.live })}</td>
             </tr>
           ))}
-          {buys.length === 0 && <tr><td colSpan={12} className="left muted">{plan.free_slots === 0 ? "All 8 slots are taken." : plan.mode === "2touch" ? "No overnight setups qualify tonight (fill odds ≥30% + win rate ≥55% + exitable next day). Some nights are thin — don't force it." : "No buys clear the bar (your Min profit/round-trip + filters). Lower it on the toolbar to surface smaller flips."}</td></tr>}
+          {buys.length === 0 && <tr><td colSpan={12} className="left muted">{plan.free_slots === 0 ? "All 8 slots are taken." : plan.mode === "2touch" ? "No overnight setups qualify tonight (fill odds ≥30% + win ≥55% + exitable next day + a filled night pays your Min profit/RT). Some nights are thin — don't force it; lower Min profit/RT to surface smaller setups." : "No buys clear the bar (your Min profit/round-trip + filters). Lower it on the toolbar to surface smaller flips."}</td></tr>}
         </tbody>
       </table>
 

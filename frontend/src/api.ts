@@ -483,6 +483,7 @@ export interface PlanResponse {
   thin_skipped: number;        // flips dropped because the item rarely trades (low fill-frequency)
   spike_skipped?: number;      // flips dropped as blowoff tops (+2σ / +25% in 24h — they mean-revert)
   knife_skipped?: number;      // flips dropped as intraday falling knives (−5%/24h, no alch-floor support)
+  small_skipped?: number;      // overnight picks dropped for not clearing the per-slot profit bar
   n_stale: number;             // holds flagged stale (parked too long, no progress — cut & redeploy)
   stale_capital: number;       // gp tied up in those stale holds
   liquidity_clock: ClockHour[];// market-wide trade volume by UTC hour — when orders fill best

@@ -496,6 +496,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
     slow_skip = 0
     thin_skip = 0
     exit_skip = 0
+    small_skip = 0
     if mode == "2touch" and free_slots > 0:
         # ---- 2-TOUCH MODE: overnight-first allocation --------------------------------------
         # The whole free-slot budget goes to the one OOS-PROVEN edge (78% win, +7% median/night,
@@ -505,7 +506,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         # also sleeping on inventory. Evening: place these before bed. Morning: collect + list.
         roster = _overnight_roster()
         try:
-            ocands = overnight_table(th, d=ms, limit=24)
+            ocands = overnight_table(th, d=ms, limit=40)   # deep pool — the per-slot profit bar below culls it
         except Exception:  # noqa: BLE001
             ocands = []
         oids = [int(o.get("item_id") or 0) for o in ocands]
@@ -544,6 +545,13 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
             margin = float(o.get("on_margin") or 0)
             fp = float(o.get("on_fill_prob") or 0)
             wr = float(o.get("on_win_rate") or 0)
+            # per-SLOT profit bar (same bar as the fast-flip loop): a filled night must pay at
+            # least min_rt_profit, or the pick is a scrap that wastes one of 8 slots — an EMPTY
+            # slot (capital free in the morning) beats a 15K/night position. Thin-sell items
+            # size down to a handful of units via exit_cap and die here; that's the point.
+            if margin * units < float(th.min_rt_profit or 0):
+                small_skip += 1
+                continue
             why = f"overnight lowball — fills {fp:.0%} of nights, wins {wr:.0%} when filled"
             if boost > 1.0:
                 why += f"; PROVEN roster ({n_gr} graded, {win_gr:.0%} win)"
@@ -742,6 +750,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         "n_holding": len(holding), "n_buys": len(buys), "n_listed": len(listed),
         "mirage_skipped": int(mirage), "slow_skipped": int(slow_skip), "thin_skipped": int(thin_skip),
         "exit_skipped": int(exit_skip), "spike_skipped": int(spikes), "knife_skipped": int(knives),
+        "small_skipped": int(small_skip),
         "n_stale": int(n_stale), "stale_capital": round(stale_capital),
         "liquidity_clock": market_clock(), "overnight": overnight, "mode": mode,
         "slots": slots, "holding": holding, "reconcile": reconcile,
