@@ -435,6 +435,7 @@ export interface PlanSlot {
   roundtrip_h?: number;
   fill_freq?: number;          // 0-1: fraction of 5-min windows the item actually trades on this side
   best_hours?: number[];       // UTC hours when this item's side of the book is busiest (best to place)
+  overnight?: boolean;         // 2-touch mode: overnight lowball (place in the evening, sell next day)
   reason: string;
   live: boolean;               // a matching open order already exists on the GE
   sector?: string | null;
@@ -486,12 +487,14 @@ export interface PlanResponse {
   stale_capital: number;       // gp tied up in those stale holds
   liquidity_clock: ClockHour[];// market-wide trade volume by UTC hour — when orders fill best
   overnight: OvernightPick[];  // OOS-proven overnight picks (place evening, sell next AM) — separate from the 8 slots
+  mode?: string;               // 'active' (fast flips) | '2touch' (overnight-first)
   slots: PlanSlot[];           // the active 8-slot config: SELL/CUT holdings + BUYS
   holding: PlanSlot[];         // held OFF-MARKET (no slot) — waiting for a better price
   reconcile: ReconcileItem[];  // what to do with each current live order
   totals: { expected_realized: number; buy_capital: number; plan_gp_day: number; growth_day: number | null };
 }
-export const getPlan = (f: Filters) => get<PlanResponse>(`/api/plan?${qs(f)}`);
+export const getPlan = (f: Filters, mode: string = "active") =>
+  get<PlanResponse>(`/api/plan?${qs(f)}&mode=${encodeURIComponent(mode)}`);
 
 // --- bankroll growth tracker -----------------------------------------------
 export interface GrowthTarget {

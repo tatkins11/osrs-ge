@@ -464,11 +464,13 @@ def allocator(th: Thresholds = Depends(get_thresholds)) -> dict:
 
 
 @app.get("/api/plan")
-def plan(th: Thresholds = Depends(get_thresholds)) -> dict:
+def plan(th: Thresholds = Depends(get_thresholds),
+         mode: str = Query("active", pattern="^(active|2touch)$")) -> dict:
     """The unified 8-slot decision engine: a SELL / HOLD / CUT verdict on every open position
-    (with a competitive price + recovery read) plus competitive BUYS for the free slots, all with
-    realistic fill timelines. Reads live positions + open orders. Recommender only."""
-    res = build_plan(th)
+    (with a competitive price + recovery read) plus BUYS for the free slots. mode=2touch swaps the
+    presence-required fast flips for overnight-first allocation (place evening, collect morning).
+    Reads live positions + open orders. Recommender only."""
+    res = build_plan(th, mode=mode)
     try:
         insert_plan_log(res)   # ~hourly snapshot for later calibration; never breaks the response
     except Exception:  # noqa: BLE001

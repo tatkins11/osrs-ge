@@ -100,6 +100,13 @@ export function Planner({
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 2touch = overnight-first (the OOS-proven edge; two sessions/day) — the default for a
+  // couple-hours-a-day schedule. active = presence-required fast flips for keyboard sessions.
+  const [mode, setMode] = useState<string>(() => localStorage.getItem("ge.plan.mode") ?? "2touch");
+  const pickMode = (m: string) => {
+    setMode(m);
+    localStorage.setItem("ge.plan.mode", m);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +116,7 @@ export function Planner({
     // site). Coalesce rapid changes into one fetch after things settle.
     const t = setTimeout(() => {
       setLoading(true);
-      getPlan(filters)
+      getPlan(filters, mode)
         .then((p) => !cancelled && setPlan(p))
         .catch((e) => !cancelled && setErr(String(e)))
         .finally(() => !cancelled && setLoading(false));
@@ -118,7 +125,7 @@ export function Planner({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [filters, refreshNonce]);
+  }, [filters, refreshNonce, mode]);
 
   if (err) return <div className="empty">Plan error: {err}</div>;
   if (!plan) return <div className="empty">{loading ? "Building your 8-slot plan…" : "No plan."}</div>;
@@ -168,8 +175,27 @@ export function Planner({
     );
   }
 
+  // 2-touch session guidance by Central time: evening = place overnight buys; morning = collect+list.
+  const ch = centralHourNow();
+  const session =
+    ch >= 17 || ch < 2
+      ? "🌙 Evening session — collect today's fills, list your sells, place the overnight buys below, log off."
+      : ch >= 5 && ch < 12
+        ? "☀️ Morning session — collect overnight fills and list them at their sell targets. That's all it needs."
+        : "Midday — optional touch: refresh stale offers. The buy list below is built for tonight.";
+
   return (
     <div className="tbl-scroll">
+      <div className="slot-head" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <button className={`ord-act ${mode === "2touch" ? "pos" : "dim"}`}
+                title="Overnight-first: the OOS-proven edge (78% win, +7%/night). Two short sessions a day — place in the evening, collect + list in the morning."
+                onClick={() => pickMode("2touch")}>🌙 2-Touch</button>
+        <button className={`ord-act ${mode === "active" ? "pos" : "dim"}`}
+                title="Fast flips for when you're AT the keyboard. Don't leave these working unattended."
+                onClick={() => pickMode("active")}>⚡ Active</button>
+        {mode === "2touch" && <span className="dim">{session}</span>}
+        {mode === "active" && <span className="dim">fast flips — only while you're at the keyboard; switch to 🌙 before logging off</span>}
+      </div>
       <div className="exp-banner">
         <b>8-slot plan.</b> Your live positions, open orders, and capital → one recommendation per slot:{" "}
         <b>SELL</b>/<b>CUT</b> holdings worth listing now, competitive <b>BUYS</b> for the free slots, and — rather than
@@ -248,7 +274,10 @@ export function Planner({
         </tbody>
       </table>
 
-      <div className="slot-head" style={{ marginTop: 16 }}>Buy the free slots{plan.free_slots === 0 ? " — none free" : ""}</div>
+      <div className="slot-head" style={{ marginTop: 16 }}>
+        {plan.mode === "2touch" ? <>🌙 Overnight buys — place tonight, sell tomorrow <span className="dim">· lowballs at the proven discount; gp/day = per-night EV with fill + win odds priced in</span></> : <>Buy the free slots</>}
+        {plan.free_slots === 0 ? " — none free" : ""}
+      </div>
       <table className="tbl">
         <thead>
           <tr>
@@ -262,7 +291,7 @@ export function Planner({
         <tbody>
           {buys.map((b) => (
             <tr key={b.item_id} className={b.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(b.item_id)}>
-              <td className="left"><span className={`badge ${ACT_BADGE[b.action]}`}>{liveDot(b)}{b.action}</span></td>
+              <td className="left"><span className={`badge ${ACT_BADGE[b.action]}`}>{liveDot(b)}{b.overnight ? "🌙 " : ""}{b.action}</span></td>
               <td className="name left">{b.name}</td>
               <td>{(b.units ?? 0).toLocaleString()}</td>
               <td>{gp(b.price)}</td>
@@ -276,7 +305,7 @@ export function Planner({
               <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: b.item_id, side: "buy", price: b.price, qty: b.units, live: b.live })}</td>
             </tr>
           ))}
-          {buys.length === 0 && <tr><td colSpan={12} className="left muted">{plan.free_slots === 0 ? "All 8 slots are taken." : "No buys clear the bar (your Min profit/round-trip + filters). Lower it on the toolbar to surface smaller flips."}</td></tr>}
+          {buys.length === 0 && <tr><td colSpan={12} className="left muted">{plan.free_slots === 0 ? "All 8 slots are taken." : plan.mode === "2touch" ? "No overnight setups qualify tonight (fill odds ≥30% + win rate ≥55% + exitable next day). Some nights are thin — don't force it." : "No buys clear the bar (your Min profit/round-trip + filters). Lower it on the toolbar to surface smaller flips."}</td></tr>}
         </tbody>
       </table>
 

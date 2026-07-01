@@ -27,7 +27,7 @@ import pandas as pd
 
 from . import portfolio as pf
 from . import tax as taxmod
-from .db import connect, connect_trades, get_free_gp, get_orders_df
+from .db import connect, connect_trades, get_free_gp, get_orders_df, get_signal_outcomes_df
 from .liquidity import fill_uptime, market_clock, peak_hours
 from .signals import KNIFE_SLOPE_PER_DAY, Thresholds, market_signals, overnight_table
 
@@ -219,7 +219,26 @@ def _buy_row(r, iid: int, units: float, buy_at: float, sell_at: float, exempt: b
     }
 
 
-def build_plan(th: Thresholds | None = None, con=None) -> dict:
+def _overnight_roster() -> dict[int, tuple[int, float]]:
+    """Graded overnight history per item (n graded, win rate) from signal_outcomes — the repeat-
+    winner roster. Within qualified overnight picks our score adds nothing (every score quartile
+    wins 68-83%), but items with 3+ graded cycles at 80-100% win (Spirit shield, Kovac's grog,
+    Karil's coif...) are a real, persistent pattern — unfashionable mid-price items the crowd's
+    margin-scanner tools never rank. Boost those; fade proven losers."""
+    try:
+        so = get_signal_outcomes_df()
+        if so is None or so.empty:
+            return {}
+        ov = so[so["kind"] == "overnight"]
+        if ov.empty:
+            return {}
+        g = ov.groupby("item_id")["win"].agg(["size", "mean"])
+        return {int(i): (int(r["size"]), float(r["mean"])) for i, r in g.iterrows()}
+    except Exception:  # noqa: BLE001 — roster is a bonus signal, never break the plan
+        return {}
+
+
+def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> dict:
     th = th or Thresholds()
     own = con is None
     con = con or connect(read_only=True)
@@ -468,7 +487,72 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     slow_skip = 0
     thin_skip = 0
     exit_skip = 0
-    if free_slots > 0 and good_buy_ids:
+    if mode == "2touch" and free_slots > 0:
+        # ---- 2-TOUCH MODE: overnight-first allocation --------------------------------------
+        # The whole free-slot budget goes to the one OOS-PROVEN edge (78% win, +7% median/night,
+        # stable across 3 graded weeks) instead of presence-required fast flips. Rationale: with
+        # ~2h/day at the keyboard, fast flips punish absence (every big hit happened while away);
+        # the overnight premium exists BECAUSE you're asleep — actives can't harvest it without
+        # also sleeping on inventory. Evening: place these before bed. Morning: collect + list.
+        roster = _overnight_roster()
+        try:
+            ocands = overnight_table(th, d=ms, limit=24)
+        except Exception:  # noqa: BLE001
+            ocands = []
+        oids = [int(o.get("item_id") or 0) for o in ocands]
+        oprof = fill_uptime([i for i in oids if i and i not in excl]) if oids else {}
+        scored = []
+        for o in ocands:
+            iid = int(o.get("item_id") or 0)
+            on_buy = float(o.get("on_buy") or 0)
+            if not iid or iid in excl or on_buy <= 0:
+                continue
+            pr = oprof.get(iid, {})
+            if pr.get("sell", 0.0) < MIN_SELL_UPTIME:      # must be exitable the next DAY, not just fillable at night
+                exit_skip += 1
+                continue
+            n_gr, win_gr = roster.get(iid, (0, 0.0))
+            boost = 1.5 if (n_gr >= 3 and win_gr >= 0.75) else (0.5 if (n_gr >= 3 and win_gr <= 0.45) else 1.0)
+            sell_ud = pr.get("sell_units_day", 0.0)
+            # overnight thesis = out the NEXT day: size so the position can sell through in ~2 days max
+            exit_cap = (CAPTURE * sell_ud * 2.0) if sell_ud > 0 else 0.0
+            icap = (item_cap_gp // on_buy) if item_cap_gp > 0 else float("inf")
+            pcap = (per_slot_cap // on_buy) if per_slot_cap > 0 else float("inf")
+            units_max = min(float(o.get("on_units") or 0), icap, pcap, exit_cap, offer_cap(o.get("name")))
+            if units_max < 1:
+                continue
+            ev_unit = float(o.get("on_ev") or 0)           # margin x fill-prob x win-rate, per unit
+            scored.append((ev_unit * boost * units_max, boost, units_max, o, pr, n_gr, win_gr))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        for _exp, boost, units_max, o, pr, n_gr, win_gr in scored:
+            if len(new_buys) >= free_slots or remaining <= 0:
+                break
+            iid = int(o["item_id"])
+            on_buy = float(o.get("on_buy") or 0)
+            units = int(min(units_max, remaining // on_buy))
+            if units < 1:
+                continue
+            margin = float(o.get("on_margin") or 0)
+            fp = float(o.get("on_fill_prob") or 0)
+            wr = float(o.get("on_win_rate") or 0)
+            why = f"overnight lowball — fills {fp:.0%} of nights, wins {wr:.0%} when filled"
+            if boost > 1.0:
+                why += f"; PROVEN roster ({n_gr} graded, {win_gr:.0%} win)"
+            elif boost < 1.0:
+                why += f"; caution: graded {win_gr:.0%} win over {n_gr}"
+            sud = pr.get("sell_units_day", 0.0)
+            new_buys.append({
+                "action": "BUY", "item_id": iid, "name": o.get("name"),
+                "price": round(on_buy), "sell_target": round(float(o.get("on_target") or 0)),
+                "units": units, "capital": round(units * on_buy), "margin": round(margin),
+                "gp_day": round(margin * units * fp * wr),   # per-NIGHT expected gp, odds included
+                "buy_h": None, "roundtrip_h": None,
+                "reason": why, "live": False, "overnight": True,
+                "fill_freq": round(fp, 3), "sell_freq": round(pr.get("sell", 0.0), 3),
+                "days_to_liquidate": round(units / (CAPTURE * sud), 1) if sud > 0 else None,
+            })
+            remaining -= units * on_buy
+    elif free_slots > 0 and good_buy_ids:
         # Rank by modeled gp PER DAY (margin x the units you actually CYCLE per day), tilted by liquidity.
         # This is the true profit-rate objective: it rewards both deploying capital AND recycling it fast,
         # so a big slow position no longer beats a slightly-smaller one that round-trips 3x as often. The
@@ -613,7 +697,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     # next morning), so they don't compete for "right now" slots. Affordable, not already held/on order.
     overnight = []
     try:
-        for o in overnight_table(th, d=ms, limit=12):
+        for o in (overnight_table(th, d=ms, limit=12) if mode != "2touch" else []):  # 2touch: they ARE the slots
             iid = int(o.get("item_id"))
             if iid in held_ids or iid in live_buy_ids or (o.get("on_buy") or 0) > free_gp:
                 continue
@@ -650,7 +734,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         "mirage_skipped": int(mirage), "slow_skipped": int(slow_skip), "thin_skipped": int(thin_skip),
         "exit_skipped": int(exit_skip), "spike_skipped": int(spikes), "knife_skipped": int(knives),
         "n_stale": int(n_stale), "stale_capital": round(stale_capital),
-        "liquidity_clock": market_clock(), "overnight": overnight,
+        "liquidity_clock": market_clock(), "overnight": overnight, "mode": mode,
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
             "expected_realized": round(expected_realized),
