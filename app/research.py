@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from . import tax as taxmod
-from .db import connect, get_items_df, get_signal_log_df, get_trades_df, record_study_results
+from .db import connect, connect_log, get_items_df, get_signal_log_df, get_trades_df, record_study_results
 from .sectors import classify_one
 
 
@@ -525,6 +525,68 @@ def velocity():
     print("  -> if the velocity list differs a lot from the raw list, a gp/hour rank would recycle capital faster")
 
 
+def onfill():
+    """Overnight fill-probability calibration: the model's RAW backtest fill rate vs the REALIZED
+    fill rate of every logged overnight signal (did a traded bar dip to the lowball within 14h?).
+    Prints per-bucket calibration + the fitted linear map — when it drifts from the live
+    overnight.ONFILL_A/B constants, update them. Persists buckets to study_results."""
+    from . import overnight as on
+    from .signals import Thresholds
+
+    lcon = connect_log(read_only=True)
+    try:
+        sig = lcon.execute(
+            "SELECT ts, item_id, entry FROM signal_log WHERE kind = 'overnight' AND entry IS NOT NULL ORDER BY ts"
+        ).df()
+    finally:
+        lcon.close()
+    if sig.empty:
+        print("onfill: no logged overnight signals yet")
+        return
+    sig["ts"] = pd.to_datetime(sig["ts"])
+    sig["day"] = sig["ts"].dt.date
+    sig = sig.sort_values("ts").groupby(["item_id", "day"]).first().reset_index()
+
+    con = connect(read_only=True)
+    try:
+        iids = [int(x) for x in sig["item_id"].unique()]
+        stats = on.fill_stats(iids, con, Thresholds().overnight_disc)
+        h = _hist(iids, "1h", con)
+    finally:
+        con.close()
+    h["ts"] = pd.to_datetime(h["ts"])
+    h = h.sort_values(["item_id", "ts"])
+
+    rows = []
+    for s in sig.itertuples():
+        g = h[h["item_id"] == s.item_id]
+        w = g[(g["ts"] > s.ts) & (g["ts"] <= s.ts + pd.Timedelta(hours=14))]
+        if not len(w):
+            continue
+        traded = w[w["low_vol"].fillna(0) > 0]
+        realized = bool((traded["avg_low"] <= s.entry).any()) if len(traded) else False
+        raw = (stats.get(int(s.item_id)) or {}).get("fill_prob_raw")
+        if raw is None:
+            continue
+        rows.append({"raw": float(raw), "realized": realized})
+    df = pd.DataFrame(rows)
+    if df.empty:
+        print("onfill: nothing gradeable")
+        return
+    print(f"onfill: n={len(df)} raw-predicted {df['raw'].mean():.0%} vs realized {df['realized'].mean():.0%}")
+    df["bucket"] = pd.cut(df["raw"], [-0.01, 0.15, 0.3, 0.45, 1.0], labels=["<15", "15-30", "30-45", "45+"])
+    out = []
+    for b, g in df.groupby("bucket", observed=True):
+        if len(g) < 5:
+            continue
+        print(f"  raw {b}: n={len(g)} predicted {g['raw'].mean():.2f} realized {g['realized'].mean():.2f}")
+        out.append({"kind": "overnight", "bucket": str(b), "n": int(len(g)),
+                    "win_rate": float(g["realized"].mean()), "mean_ret": float(g["raw"].mean())})
+    slope, inter = np.polyfit(df["raw"].to_numpy(), df["realized"].astype(float).to_numpy(), 1)
+    print(f"  fitted map: realized ~= {inter:.2f} + {slope:.2f} x raw  (live: ONFILL_A={on.ONFILL_A}, ONFILL_B={on.ONFILL_B})")
+    _persist("onfill", out)
+
+
 def main():
     which = sys.argv[1:] or ["calib", "trades", "decay", "grade", "rotation"]
     if "calib" in which: calib()
@@ -533,6 +595,7 @@ def main():
     if "grade" in which: grade_signal_log()
     if "misses" in which: misses()
     if "ofi" in which: ofi()
+    if "onfill" in which: onfill()
     if "rotation" in which: rotation()
     if "slippage" in which: slippage()
     if "velocity" in which: velocity()

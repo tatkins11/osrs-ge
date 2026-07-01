@@ -28,6 +28,12 @@ import pandas as pd
 from . import tax as taxmod
 from .db import connect, get_items_df
 
+# Fill-probability calibration: realized ≈ ONFILL_A + ONFILL_B × raw_backtest_rate.
+# Fitted 2026-07-01 against 347 logged overnight item-nights (see fill_stats docwork);
+# re-measure with `python -m app.research onfill` and update when the fit drifts.
+ONFILL_A = 0.15
+ONFILL_B = 0.72
+
 log = logging.getLogger("overnight")
 WINSOR = 0.50
 
@@ -187,8 +193,16 @@ def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 1
                 if m > 0:
                     wins += 1
         if nights >= min_nights:
+            raw = fills / nights
             out[int(iid)] = {
-                "fill_prob": fills / nights,
+                # empirical calibration to REALIZED fills (347 logged item-nights, 2026-07-01):
+                # the raw backtest under-predicts non-uniformly (raw 0.18 -> 0.28 realized,
+                # 0.36 -> 0.41) because live lowballs anchor off the instantaneous evening bid
+                # while the backtest anchors off the 2AM bar's AVERAGE low (deeper offer, fewer
+                # fills). Linear map fitted on the two well-populated buckets; re-measure with
+                # `python -m app.research onfill` as new graded nights accumulate.
+                "fill_prob": float(min(0.95, max(0.05, ONFILL_A + ONFILL_B * raw))),
+                "fill_prob_raw": raw,
                 "win_rate": (wins / fills) if fills else None,
                 "exp_margin": float(np.median(margins)) if margins else None,
                 "nights": int(nights),
