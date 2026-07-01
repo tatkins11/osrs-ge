@@ -211,6 +211,9 @@ def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 1
 
 
 DISC_GRID = (0.04, 0.06, 0.08, 0.10, 0.12, 0.15)
+SWEEP_LOOKBACK_DAYS = 180   # recent regime; also keeps the per-plan sweep affordable on 1 vCPU
+_SWEEP_CACHE: dict[int, tuple[float, dict]] = {}   # item_id -> (expiry_epoch, result)
+_SWEEP_TTL = 3600.0         # fill odds move nightly, not per page view
 
 
 def sweep_fill_stats(item_ids, con, grid=DISC_GRID, buy_hour: int = 2, sell_hour: int = 14,
@@ -223,18 +226,33 @@ def sweep_fill_stats(item_ids, con, grid=DISC_GRID, buy_hour: int = 2, sell_hour
     take the SHALLOWEST discount within 10% of the best EV (shallower = more fills = the more
     robust estimate of two similar EVs). Returns {item_id: {disc, fill_prob, fill_prob_raw,
     win_rate, exp_margin, nights, ev_unit}} for the chosen discount."""
+    import time as _time
+
     ids = [int(i) for i in item_ids]
     if not ids:
         return {}
-    ph = ",".join(str(i) for i in ids)
+    now = _time.time()
+    out: dict = {}
+    fresh: list[int] = []
+    for i in ids:                      # serve from the TTL cache; sweep only the missing items
+        hit = _SWEEP_CACHE.get(i)
+        if hit and hit[0] > now:
+            if hit[1]:
+                out[i] = hit[1]
+        else:
+            fresh.append(i)
+    if not fresh:
+        return out
+    ph = ",".join(str(i) for i in fresh)
     h = con.execute(
         f"""SELECT item_id, ts, avg_high, avg_low, low_vol,
                    CAST(date_part('hour', ts) AS INTEGER) AS hour
             FROM history WHERE timestep = '1h' AND item_id IN ({ph})
+              AND ts >= now() - INTERVAL {SWEEP_LOOKBACK_DAYS} DAY
               AND avg_high IS NOT NULL AND avg_low IS NOT NULL ORDER BY item_id, ts"""
     ).df()
-    out: dict = {}
     G = len(grid)
+    swept: set[int] = set()
     for iid, g in h.groupby("item_id"):
         g = g.reset_index(drop=True)
         lo = g["avg_low"].to_numpy("float64")
@@ -292,10 +310,17 @@ def sweep_fill_stats(item_ids, con, grid=DISC_GRID, buy_hour: int = 2, sell_hour
         # shallowest discount within 10% of the best EV (grid is ascending)
         pick = next(e for e in valid if e[0] >= 0.9 * best_ev)
         ev, disc, cal, raw, wr, med = pick
-        out[int(iid)] = {
+        res = {
             "disc": float(disc), "fill_prob": float(cal), "fill_prob_raw": float(raw),
             "win_rate": float(wr), "exp_margin": med, "nights": int(nights), "ev_unit": float(ev),
         }
+        out[int(iid)] = res
+        _SWEEP_CACHE[int(iid)] = (now + _SWEEP_TTL, res)
+        swept.add(int(iid))
+    # negative-cache items that produced no valid depth, so they don't re-sweep every plan view
+    for i in fresh:
+        if i not in swept:
+            _SWEEP_CACHE[i] = (now + _SWEEP_TTL, {})
     return out
 
 
