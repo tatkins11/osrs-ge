@@ -248,7 +248,7 @@ export default function App() {
         </div>
         <div className="spacer" />
         <span className="note">
-          {loading ? "loading…" : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : tab === "orders" ? `${ordersData.length} orders` : tab === "allocate" ? "8-slot plan" : tab === "growth" ? "bankroll growth" : tab === "portfolio" ? "" : `${shown.length} rows`}
+          {loading ? <><span className="spinner" />loading…</> : tab === "sectors" ? `${sectorsData?.sectors.length ?? 0} sectors` : tab === "invest" ? `${investData?.buys.length ?? 0} buys` : tab === "orders" ? `${ordersData.length} orders` : tab === "allocate" ? "8-slot plan" : tab === "growth" ? "bankroll growth" : tab === "portfolio" ? "" : `${shown.length} rows`}
           {updatedAt ? ` · updated ${ago(updatedAt)}` : ""}
           {err ? ` · error: ${err}` : ""}
         </span>

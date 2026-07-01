@@ -186,13 +186,15 @@ export function Planner({
 
   return (
     <div className="tbl-scroll">
-      <div className="slot-head" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <button className={`ord-act ${mode === "2touch" ? "pos" : "dim"}`}
-                title="Overnight-first: the OOS-proven edge (78% win, +7%/night). Two short sessions a day — place in the evening, collect + list in the morning."
-                onClick={() => pickMode("2touch")}>🌙 2-Touch</button>
-        <button className={`ord-act ${mode === "active" ? "pos" : "dim"}`}
-                title="Fast flips for when you're AT the keyboard. Don't leave these working unattended."
-                onClick={() => pickMode("active")}>⚡ Active</button>
+      <div className="slot-head" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+        <div className="seg">
+          <button className={`seg-btn ${mode === "2touch" ? "on" : ""}`}
+                  title="Overnight-first: the OOS-proven edge (78% win, +7%/night). Two short sessions a day — place in the evening, collect + list in the morning."
+                  onClick={() => pickMode("2touch")}>🌙 2-Touch</button>
+          <button className={`seg-btn ${mode === "active" ? "on" : ""}`}
+                  title="Fast flips for when you're AT the keyboard. Don't leave these working unattended."
+                  onClick={() => pickMode("active")}>⚡ Active</button>
+        </div>
         {mode === "2touch" && <span className="dim">{session}</span>}
         {mode === "active" && <span className="dim">fast flips — only while you're at the keyboard; switch to 🌙 before logging off</span>}
       </div>
