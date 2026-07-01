@@ -109,6 +109,25 @@ def _market_history_stats(con) -> pd.DataFrame:
     return df
 
 
+# Clearing prices: the volume-weighted price of ACTUAL prints in the last ~45 min, per side.
+# clear_buy = what sellers accepted (avg_low VWAP) -> a buy offer at/above this actually fills;
+# clear_sell = what buyers paid (avg_high VWAP)    -> a sell offer at/below this actually fills.
+# Calibrated on our own 273 orders (2026-07-01): crossing the trailing clearing VWAP doubled the
+# fill rate on both sides (buys 26%->50%, sells 30%->58%); passive top-of-book offers mostly sat.
+# Light query (last 45m of snapshots), NOT cached — freshness is the point.
+def clearing_vwaps(con) -> pd.DataFrame:
+    return con.execute(
+        """
+        SELECT item_id,
+               sum(avg_low  * low_vol)  / nullif(sum(low_vol),  0) AS clear_buy,
+               sum(avg_high * high_vol) / nullif(sum(high_vol), 0) AS clear_sell
+        FROM snapshots
+        WHERE ts >= now() - INTERVAL 45 MINUTE
+        GROUP BY item_id
+        """
+    ).df()
+
+
 def market_table(con=None, bankroll: int = DEFAULT_BANKROLL) -> pd.DataFrame:
     """Build the enriched per-item market table (one row per tradeable item)."""
     own = con is None
@@ -117,6 +136,7 @@ def market_table(con=None, bankroll: int = DEFAULT_BANKROLL) -> pd.DataFrame:
         items = get_items_df(con)
         latest = latest_snapshot_df(con)
         hist_stats = _market_history_stats(con)
+        clearing = clearing_vwaps(con)
     finally:
         if own:
             con.close()
@@ -124,7 +144,9 @@ def market_table(con=None, bankroll: int = DEFAULT_BANKROLL) -> pd.DataFrame:
     if latest.empty:
         return pd.DataFrame()
 
-    df = items.merge(latest, on="item_id", how="inner").merge(hist_stats, on="item_id", how="left")
+    df = (items.merge(latest, on="item_id", how="inner")
+               .merge(hist_stats, on="item_id", how="left")
+               .merge(clearing, on="item_id", how="left"))
 
     buy = df["instasell"].astype("float64")   # you buy by joining the low side
     sell = df["instabuy"].astype("float64")   # you sell by joining the high side

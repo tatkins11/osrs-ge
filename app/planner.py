@@ -226,7 +226,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     if not ms.empty:
         cols = ["item_id", "name", "buy_price", "sell_price", "mid", "vol_daily_7d", "buy_limit",
                 "established", "z_7d", "slope_7d", "pct_30d", "alch_floor", "value_confidence", "is_value_buy",
-                "is_crash", "post_update_drop", "net_margin", "slip_margin", "exempt", "flip_ok"]
+                "is_crash", "post_update_drop", "net_margin", "slip_margin", "exempt", "flip_ok", "clear_sell"]
         have = [c for c in cols if c in ms.columns]
         for r in ms[have].itertuples(index=False):
             sig[int(r.item_id)] = {c: getattr(r, c) for c in have}
@@ -255,6 +255,13 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         bid, ask = s.get("buy_price"), s.get("sell_price")
         _, sell_at = competitive(bid, ask)
         sell_at = sell_at or _f(p.get("cur_price"))
+        # fill-realistic exits: SELL/CUT rows use this price and need to actually TRADE — undercut to
+        # the trailing 45m clearing print when the passive ask isn't where buyers are paying (a CUT
+        # that sits at a never-printing ask just keeps decaying; sells crossing the clearing VWAP
+        # filled 58% vs 30%). HOLD/LIST keep patient fair-value targets.
+        cl_s = _f(s.get("clear_sell"))
+        if sell_at and cl_s and cl_s < sell_at:
+            sell_at = float(max(round(cl_s) - 1, (_f(bid) or 0) + 1))
         target = _f(p.get("target"))
         cur_net = _f(p.get("cur_net"))
         net_at = taxmod.net_sell(int(round(sell_at)), exempt) if sell_at else None
@@ -356,6 +363,19 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             continue
         buy_at, sell_at = competitive(_f(r.buy_price), _f(r.sell_price))
         if not buy_at or not sell_at:
+            continue
+        # fill-realistic pricing: place at the price that's actually PRINTING, not the passive quote.
+        # Calibrated on our own orders: 63% of buys sat at/below the bid and only 21% filled; offers
+        # crossing the trailing 45m clearing VWAP filled ~2x as often (buys 26%->50%, sells 30%->58%).
+        # The margin is then computed from the CAPTURABLE prices — flips whose "margin" only exists at
+        # prices that never print get killed by the ROI floor instead of wasting a slot for 30 minutes.
+        bid, ask = _f(r.buy_price) or 0.0, _f(r.sell_price) or 0.0
+        cl_b, cl_s = _f(getattr(r, "clear_buy", None)), _f(getattr(r, "clear_sell", None))
+        if cl_b and cl_b > buy_at:
+            buy_at = float(min(round(cl_b) + 1, ask - 1)) if ask > 0 else float(round(cl_b) + 1)
+        if cl_s and cl_s < sell_at:
+            sell_at = float(max(round(cl_s) - 1, bid + 1)) if bid > 0 else float(round(cl_s) - 1)
+        if sell_at <= buy_at:
             continue
         ex = bool(getattr(r, "exempt", False))
         mgn = taxmod.net_sell(int(round(sell_at)), ex) - buy_at
