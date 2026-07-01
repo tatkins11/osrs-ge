@@ -467,7 +467,9 @@ export interface PlanResponse {
   committed_capital: number;  // gp locked in open buy offers
   holdings_value: number;     // inventory at live value
   net_worth: number;          // free_gp + committed + holdings
-  capital_in: number;         // = free_gp (capital for new buys)
+  cash_clamped?: boolean;     // free_gp looked inflated vs recent history — sizing used sizing_cash instead
+  sizing_cash?: number;       // the (possibly clamped) cash the plan actually sized buys from
+  capital_in: number;         // = sizing cash for new buys
   free_slots: number;
   slots_used: number;
   n_positions: number;
@@ -478,6 +480,8 @@ export interface PlanResponse {
   mirage_skipped: number;      // flips dropped as stale/illiquid ghost spreads (not recommended)
   slow_skipped: number;        // flips dropped because the BUY would take too long to fill (too illiquid)
   thin_skipped: number;        // flips dropped because the item rarely trades (low fill-frequency)
+  spike_skipped?: number;      // flips dropped as blowoff tops (+2σ / +25% in 24h — they mean-revert)
+  knife_skipped?: number;      // flips dropped as intraday falling knives (−5%/24h, no alch-floor support)
   n_stale: number;             // holds flagged stale (parked too long, no progress — cut & redeploy)
   stale_capital: number;       // gp tied up in those stale holds
   liquidity_clock: ClockHour[];// market-wide trade volume by UTC hour — when orders fill best

@@ -475,22 +475,26 @@ def _set_setting(con, key, value) -> None:
     con.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [key, float(value)])
 
 
-def _target_cash(side, price, total, filled, state) -> int:
+def _target_cash(side, price, total, filled, state, spent=0) -> int:
     """Net cash impact an order SHOULD have on free_gp given its current state."""
-    price, total, filled = int(price or 0), int(total or 0), int(filled or 0)
+    price, total, filled, spent = int(price or 0), int(total or 0), int(filled or 0), int(spent or 0)
     if side == "sell":
         return net_sell(price, False) * filled               # proceeds for the filled qty (~net of 2% tax)
-    cancelled = str(state or "").upper().startswith("CANCELLED")
-    return -price * (filled if cancelled else total)         # reserve full while live/bought; only filled if cancelled
+    st = str(state or "").upper()
+    if st.startswith("CANCELLED") or st == "BOUGHT":
+        # terminal: only the gp actually consumed stays spent — the GE refunds price-improvement on
+        # completion and the unfilled reserve on cancel. `spent` is the real number when reported.
+        return -(spent if spent > 0 else price * filled)
+    return -price * total                                    # live: the GE holds the full reserve
 
 
 def _reconcile_order_cash(con, oid: str) -> None:
     """Apply the delta between an order's target cash impact and what's already been applied."""
-    r = con.execute("SELECT side, price, total_qty, filled_qty, state, cash_done FROM orders WHERE order_id=?", [oid]).fetchone()
+    r = con.execute("SELECT side, price, total_qty, filled_qty, state, cash_done, spent FROM orders WHERE order_id=?", [oid]).fetchone()
     if not r:
         return
-    side, price, total, filled, state, cash_done = r
-    target = _target_cash(side, price, total, filled, state)
+    side, price, total, filled, state, cash_done, spent = r
+    target = _target_cash(side, price, total, filled, state, spent)
     delta = target - int(cash_done or 0)
     if delta:
         cur = _get_setting(con, "free_gp", None)
@@ -659,7 +663,37 @@ def ingest_offers(events: list[dict]) -> dict:
             slot = int(e.get("slot")) if e.get("slot") is not None else -1
             ts = _to_naive_utc(e.get("ts"))
             terminal = state in _TERMINAL_STATES
-            existing = con.execute("SELECT trade_id FROM orders WHERE order_id = ?", [oid]).fetchone()
+            # --- id-reuse guard (the free_gp corruption bug, found 2026-07-01) -------------------
+            # The plugin keys order ids on an (item, price, qty, side) signature, so a NEW offer
+            # identical to the previous one in the same slot REUSES its id. Overwriting the old
+            # (terminal) row silently dropped one leg's accounting: a re-BUY's cost was never
+            # debited (free_gp inflated 76M->343M overnight -> the planner oversized every buy),
+            # a re-SELL's proceeds were clawed back, and the repeat flip's trades were swallowed
+            # (phantom open lots). Detect the reset (fill/spent went BACKWARD, or a terminal order
+            # came alive again, or a terminal report differs from the terminal row) and route the
+            # event to a NEW generation row (order_id + '#rN') instead of overwriting.
+            gens = con.execute(
+                "SELECT order_id, trade_id, state, filled_qty, spent FROM orders WHERE order_id = ? OR order_id LIKE ?",
+                [oid, oid + "#r%"],
+            ).fetchall()
+            existing = None
+            if gens:
+                def _gen_n(o):
+                    return int(o.rsplit("#r", 1)[1]) if "#r" in o else 0
+                g_oid, g_tid, g_state, g_fill, g_spent = max(gens, key=lambda g: _gen_n(g[0]))
+                g_state = str(g_state or "").upper()
+                g_fill, g_spent = int(g_fill or 0), int(g_spent or 0)
+                prev_terminal = g_state in _TERMINAL_STATES
+                is_reset = (
+                    filled < g_fill or spent < g_spent                          # an offer's fill/spend never decreases
+                    or (prev_terminal and state in ("BUYING", "SELLING"))       # finished order "live" again = new offer
+                    or (prev_terminal and terminal and (filled != g_fill or spent != g_spent))  # different terminal facts
+                )
+                if is_reset:
+                    oid = f"{oid.split('#r', 1)[0]}#r{_gen_n(g_oid) + 1}"       # new generation, own row
+                else:
+                    oid = g_oid                                                 # same offer: update latest generation
+                    existing = (g_tid,)
             # De-dup the same offer re-reported under a NEW id (plugin restart lost its slot->id memory).
             if existing is None:
                 # Match the same offer regardless of PRICE — a buy's price changes between the offer

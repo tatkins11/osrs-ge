@@ -189,6 +189,15 @@ export function Planner({
         {plan.n_stale > 0 && (
           <> · <span className="neg">♻ recycling <b>{plan.n_stale}</b> stale hold{plan.n_stale > 1 ? "s" : ""} ({gpShort(plan.stale_capital)}) — parked too long with no progress, cut to redeploy</span></>
         )}
+        {(plan.spike_skipped ?? 0) > 0 && (
+          <> · <span className="dim">skipped <b>{plan.spike_skipped}</b> blowoff top{(plan.spike_skipped ?? 0) > 1 ? "s" : ""} (+2σ or +25%/24h pumps — they mean-revert on you)</span></>
+        )}
+        {(plan.knife_skipped ?? 0) > 0 && (
+          <> · <span className="dim">skipped <b>{plan.knife_skipped}</b> falling knife{(plan.knife_skipped ?? 0) > 1 ? "s" : ""} (down &gt;5%/24h, no alch-floor support)</span></>
+        )}
+        {plan.cash_clamped && (
+          <> · <span className="neg">⚠ Free gp ({gpShort(plan.free_gp)}) looks inflated vs recent history — buys are sized off {gpShort(plan.sizing_cash ?? 0)} instead. If your real cash IS this high, re-set Free gp on the Portfolio page to re-baseline.</span></>
+        )}
       </div>
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>

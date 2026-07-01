@@ -25,7 +25,7 @@ import pandas as pd
 
 from . import portfolio as pf
 from . import tax as taxmod
-from .db import connect, get_free_gp, get_orders_df
+from .db import connect, connect_trades, get_free_gp, get_orders_df
 from .liquidity import fill_uptime, market_clock, peak_hours
 from .signals import KNIFE_SLOPE_PER_DAY, Thresholds, market_signals, overnight_table
 
@@ -76,6 +76,20 @@ LIQ_SANITY_MULT = 12.0     # a PROVEN-liquid item (trades both sides) whose marg
                            # (>12x median). Raised 6->12 to stop dropping big, tight-spread, heavily-traded
                            # flips (Berserker necklace etc.) that were leaving bankroll idle. Non-proven
                            # items keep the strict MARGIN_SANITY_MULT=3x (the illiquid-ghost guard).
+# Post-mortem guards (2026-07-01). Four days of live losses traced to three failure modes:
+# (a) corrupted free_gp (343M vs ~77M real) oversized single-item bets (8x Dinh's bulwark = 107M rec, -9.5M);
+# (b) the proven-liquidity waiver passed a 32.8% "margin" mirage on a 6.4M item (Blood moon chestplate, -5.7M);
+# (c) flip-buys at the top of a +77%/2d spike and into intraday knives (Searing page, Seeking dragon arrow).
+# Live scoreboard: <6h flips = 94% win, 1.27M gp/slot-day; >5M items = net NEGATIVE; >1d holds = 6-13% win.
+TRUST_MULT = 1.5         # sizing cash <= this x median of the last 5 daily bankroll snapshots (corruption clamp;
+                         # snapshots record the RAW value, so genuine growth keeps raising the ceiling)
+MAX_ITEM_FRAC = 0.20     # hard cap: ONE item <= this fraction of net worth, whatever the slot cap says
+BIG_TICKET = 5_000_000   # >= this price, the proven-liquidity waiver does NOT apply — the >5M band is net-
+                         # negative live; thin books at high prices fool the uptime proof
+MAX_MARGIN_FRAC = 0.15   # modeled margin > 15% of price on a >=100K item = too-good-to-be-true -> mirage
+Z_SPIKE_MAX = 2.0        # don't flip-buy a blowoff top (price > +2 sigma vs its own 7d)
+CHG24_SPIKE = 0.25       # don't chase a +25%/24h pump (it mean-reverts on you)
+CHG24_KNIFE = -0.05      # don't flip-buy an intraday knife (-5%/24h) — unless it sits on the alch floor
 # Items the GE restricts to ONE per slot per offer (you can't stack the offer). Only bonds.
 ONE_PER_SLOT = {"old school bond"}
 # Items that are NEVER worth flipping regardless of margin/liquidity — keep them out of BUY recs.
@@ -92,6 +106,28 @@ def offer_cap(name) -> float:
 
 def _f(x):
     return float(x) if x is not None and pd.notna(x) else None
+
+
+def _trusted_cash(free_gp: float) -> tuple[float, bool]:
+    """Clamp the SIZING cash against recent history. free_gp is dead-reckoned from streamed offer
+    events, so one accounting slip can inflate it wildly (343M vs ~77M real on 6/30 — every buy that
+    day was oversized off the fake number). Median-of-5 daily snapshots is robust to a couple of
+    poisoned rows; the snapshots store the RAW value, so genuine growth raises the ceiling itself."""
+    try:
+        con = connect_trades(read_only=True)
+        try:
+            rows = con.execute(
+                "SELECT bankroll FROM net_worth_log WHERE bankroll IS NOT NULL AND bankroll > 0 ORDER BY day DESC LIMIT 5"
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception:
+        return free_gp, False
+    vals = sorted(float(r[0]) for r in rows)
+    if len(vals) < 3:
+        return free_gp, False
+    cap = TRUST_MULT * vals[len(vals) // 2]
+    return (min(free_gp, cap), free_gp > cap)
 
 
 def competitive(bid, ask, edge: float = PRICE_EDGE):
@@ -282,11 +318,14 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
 
     # ---- 2) capital picture + split holdings on/off slot + reconcile live orders ------------
     _fg = get_free_gp()                                          # server-persisted free gp (source of truth)
-    free_gp = max(0.0, float(_fg if _fg is not None else th.bankroll))  # fall back to the filter until set
+    free_gp_raw = max(0.0, float(_fg if _fg is not None else th.bankroll))  # fall back to the filter until set
+    free_gp, cash_clamped = _trusted_cash(free_gp_raw)           # corruption guard: never SIZE off an inflated number
     holdings_value = float(port.get("invested") or 0.0) + float(port.get("unrealized_total") or 0.0)
-    net_worth = free_gp + committed + holdings_value             # cash + open buys + inventory at live value
+    net_worth_raw = free_gp_raw + committed + holdings_value     # honest picture (reported + growth snapshots)
+    net_worth = free_gp + committed + holdings_value             # sizing picture (clamped cash)
     cap0 = free_gp                                               # capital available for NEW buys right now
     per_slot_cap = (float(th.max_alloc_frac or 0) * net_worth) if net_worth > 0 else 0.0  # diversify vs TOTAL worth
+    item_cap_gp = MAX_ITEM_FRAC * net_worth                      # hard single-item ceiling (the 107M-Dinh's guard)
     active_sells = [s for s in sells if s["action"] in ("SELL", "CUT")]  # need a slot now
     holding = [s for s in sells if s["action"] == "HOLD"]                # held OFF-MARKET, no slot
     active_sell_ids = {s["item_id"] for s in active_sells}
@@ -310,7 +349,7 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         s["days_to_liquidate"] = round((s["qty"] / (CAPTURE * sud)), 1) if (sud > 0 and s.get("qty")) else None
 
     cand_rows: dict[int, tuple] = {}
-    mirage = 0
+    mirage = spikes = knives = 0
     for r in cands.itertuples(index=False):
         iid = int(r.item_id)
         if str(getattr(r, "name", "")).strip().lower() in EXCLUDE_FLIP:  # bonds etc. — never a real flip
@@ -325,8 +364,11 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         # mirage guard: drop stale/illiquid ghost spreads (one side hasn't traded). But if fill-freq
         # PROVES the item trades on both sides, trust that over the spread/margin-persistence proxies
         # (a wide spread on a 90%-fill item is a real edge); keep only a loosened glitch backstop.
+        # EXCEPT on big-ticket items: the uptime proof is fooled by thin books at high prices (the
+        # >5M band is net-negative live; Blood moon chestplate passed here with a 32.8% "margin").
         pr = prof.get(iid, {})
-        proven = pr.get("buy", 0.0) >= LIQ_PROOF_BUY and pr.get("sell", 0.0) >= LIQ_PROOF_SELL
+        proven = (buy_at < BIG_TICKET
+                  and pr.get("buy", 0.0) >= LIQ_PROOF_BUY and pr.get("sell", 0.0) >= LIQ_PROOF_SELL)
         mid = _f(getattr(r, "mid", None)) or 0.0
         raw_spread = (_f(r.sell_price) or 0.0) - (_f(r.buy_price) or 0.0)
         up = _f(getattr(r, "margin_uptime", None))
@@ -334,8 +376,21 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         spread_bad = (not proven) and mid > 0 and raw_spread / mid > MAX_SPREAD_FRAC
         uptime_bad = (not proven) and up is not None and up < MIN_MARGIN_UPTIME
         sanity_bad = med and med > 0 and mgn > (LIQ_SANITY_MULT if proven else MARGIN_SANITY_MULT) * med
-        if spread_bad or uptime_bad or sanity_bad:
+        toogood_bad = buy_at >= 100_000 and (mgn / buy_at) > MAX_MARGIN_FRAC   # 30%+ "margins" are mirages
+        if spread_bad or uptime_bad or sanity_bad or toogood_bad:
             mirage += 1
+            continue
+        # momentum gates: don't buy blowoff tops (Searing page: rec'd at the top of +77%/2d, -4.9M
+        # unrealized) and don't catch intraday knives the 7d-slope guard is too slow to see.
+        z = _f(getattr(r, "z_7d", None))
+        c24 = _f(getattr(r, "chg_24h", None))
+        af = _f(getattr(r, "alch_floor", None))
+        at_floor = af is not None and buy_at <= af * 1.10        # alch floor = 92% historical recovery
+        if (z is not None and z > Z_SPIKE_MAX) or (c24 is not None and c24 > CHG24_SPIKE):
+            spikes += 1
+            continue
+        if c24 is not None and c24 < CHG24_KNIFE and not at_floor:
+            knives += 1
             continue
         vol_day = _f(r.vol_daily_7d) or 0.0
         limit = _f(r.buy_limit) or (vol_day / 12.0)
@@ -412,7 +467,8 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             iid_, (mgn, buy_at, sell_at, ex, vol_day, limit, r) = kv
             up = prof.get(iid_, {}).get("buy", 0.0)                         # buy-side trade frequency
             liq = 0.25 + 0.75 * min(1.0, up / 0.5)                          # full liquidity credit at >=50% uptime
-            pcap = (per_slot_cap // buy_at) if (per_slot_cap > 0 and buy_at > 0) else float("inf")
+            gp_cap = min(per_slot_cap, item_cap_gp) if per_slot_cap > 0 else item_cap_gp
+            pcap = (gp_cap // buy_at) if (gp_cap > 0 and buy_at > 0) else float("inf")
             units = max(1.0, min(size_for_timeline(vol_day), limit, pcap, offer_cap(r.name)))
             daily_units = timeline(units, vol_day, limit)[2]               # units realistically cycled per day
             return mgn * daily_units * liq * _fair_tilt(r)                 # gp/day, tilted toward below-fair flips
@@ -448,7 +504,8 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
             sell_ud = pr.get("sell_units_day", 0.0)
             exit_cap = (CAPTURE * sell_ud * MAX_UNWIND_DAYS) if sell_ud > 0 else 0  # size so you can SELL it back out
             cap_units = (per_slot_cap // buy_at) if per_slot_cap > 0 else size_for_timeline(vol_day)
-            units = int(min(size_for_timeline(vol_day), limit, cap_units, remaining // buy_at, offer_cap(r.name), exit_cap))
+            icap = (item_cap_gp // buy_at) if (item_cap_gp > 0 and buy_at > 0) else float("inf")  # one item <= 20% of NW
+            units = int(min(size_for_timeline(vol_day), limit, cap_units, remaining // buy_at, offer_cap(r.name), exit_cap, icap))
             if units < 1:
                 continue
             if timeline(units, vol_day, limit)[0] > MAX_FILL_H:             # too illiquid -> would sit unfilled
@@ -549,8 +606,11 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
     n_stale = sum(1 for s in sells if s.get("stale"))
     stale_capital = sum((s.get("avg_cost") or 0) * (s.get("qty") or 0) for s in sells if s.get("stale"))
     return {
-        "free_gp": round(free_gp), "committed_capital": round(committed),
-        "holdings_value": round(holdings_value), "net_worth": round(net_worth),
+        # report the RAW cash picture (the growth snapshot must stay honest so the trusted-cash
+        # median self-heals); sizing above used the clamped value when the two disagree.
+        "free_gp": round(free_gp_raw), "committed_capital": round(committed),
+        "holdings_value": round(holdings_value), "net_worth": round(net_worth_raw),
+        "cash_clamped": bool(cash_clamped), "sizing_cash": round(free_gp),
         "capital_in": round(cap0),
         # portfolio totals (so the API can auto-snapshot the growth curve on every plan view)
         "realized_total": round(float(port.get("realized_total") or 0.0)),
@@ -560,7 +620,8 @@ def build_plan(th: Thresholds | None = None, con=None) -> dict:
         "n_positions": len(positions), "n_active_sells": len(active_sells),
         "n_holding": len(holding), "n_buys": len(buys), "n_listed": len(listed),
         "mirage_skipped": int(mirage), "slow_skipped": int(slow_skip), "thin_skipped": int(thin_skip),
-        "exit_skipped": int(exit_skip), "n_stale": int(n_stale), "stale_capital": round(stale_capital),
+        "exit_skipped": int(exit_skip), "spike_skipped": int(spikes), "knife_skipped": int(knives),
+        "n_stale": int(n_stale), "stale_capital": round(stale_capital),
         "liquidity_clock": market_clock(), "overnight": overnight,
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
