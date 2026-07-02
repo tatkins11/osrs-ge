@@ -510,7 +510,8 @@ export interface SetArbRow {
   instant_roi: number | null;  // crossing the whole spread both ways (fire-now arb if > 0)
   set_sell_uptime: number; // how often a set BUYER is present (5-min windows, last 7d)
   sets_per_day: number;    // the capacity constraint
-  verified: boolean;       // clerk exchange confirmed for this family; else verify in-game first
+  verified: boolean;       // conversion mechanic confirmed; else verify in-game first
+  kind?: string;           // 'set' (GE clerk) | 'decant' (Bob Barter)
 }
 export const getSetArb = () => get<{ rows: SetArbRow[] }>("/api/setarb");
 

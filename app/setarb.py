@@ -44,6 +44,20 @@ SETS: dict[str, list[str]] = {
 VERIFIED = {k for k in SETS if any(t in k for t in ("Torag", "Guthan", "Karil", "Verac", "Dharok",
                                                     "Ahrim", "Dagon", "Obsidian", "Dragon"))}
 
+# Potion DECANT routes (Bob Barter at the GE decants ANY potion for free — mechanic is certain).
+# Validated 365d, execution-realistic (buy form at bid -> decant -> sell form at ask, net of tax):
+# Super attack (3)->(4) +4.1% median (87% of days >2%), Ancient brew +9.9%/85%, Superantipoison
+# +9.2%/94%, Antifire +7.8%/86%, Super energy +3.1%/72%, Super strength +2.9%/80%, Super defence
+# +2.8%/79%, Ranging +3.1%/74%, Prayer regeneration +2.8%/67%. The two famous routes (Prayer
+# potion, Saradomin brew ~+1.1%) are already competed away — the edge lives in the second tier.
+DECANTS: list[tuple[str, int, int]] = [
+    ("Super attack", 3, 4), ("Super strength", 3, 4), ("Super defence", 3, 4),
+    ("Super energy", 3, 4), ("Ranging potion", 3, 4), ("Ancient brew", 3, 4),
+    ("Antifire potion", 3, 4), ("Superantipoison", 3, 4), ("Prayer regeneration potion", 3, 4),
+    ("Prayer potion", 3, 4), ("Saradomin brew", 3, 4), ("Super restore", 3, 4),
+    ("Stamina potion", 3, 4), ("Super combat potion", 4, 1), ("Divine super combat potion", 3, 4),
+]
+
 
 def scan(con=None) -> list[dict]:
     """Live combine-arb scan: patient piece lowballs (at the bid) -> clerk -> list the set at the
@@ -60,7 +74,12 @@ def scan(con=None) -> list[dict]:
 
     resolved = {s: (int(byname[s]), [int(byname[c]) for c in comps])
                 for s, comps in SETS.items() if s in byname and all(c in byname for c in comps)}
-    prof = fill_uptime([sid for sid, _ in resolved.values()])
+    dec = []
+    for fam, bd, sd in DECANTS:
+        bi, si = byname.get(f"{fam}({bd})"), byname.get(f"{fam}({sd})")
+        if bi is not None and si is not None:
+            dec.append((fam, bd, sd, int(bi), int(si)))
+    prof = fill_uptime([sid for sid, _ in resolved.values()] + [si for *_x, si in dec])
 
     def px(iid: int, col: str):
         try:
@@ -91,7 +110,30 @@ def scan(con=None) -> list[dict]:
             "instant_roi": round(instant, 4) if instant is not None else None,
             "set_sell_uptime": round(pr.get("sell", 0.0), 3),
             "sets_per_day": round(pr.get("sell_units_day", 0.0), 1),
-            "verified": s in VERIFIED,
+            "verified": s in VERIFIED, "kind": "set",
+        })
+
+    # potion decants: normalize per SELL-form unit (buying sd/bd of the buy form makes one sell unit)
+    for fam, bd, sd, bi, si in dec:
+        b_bid, s_ask, s_bid, b_ask = px(bi, "instasell"), px(si, "instabuy"), px(si, "instasell"), px(bi, "instabuy")
+        if b_bid is None or s_ask is None or not b_bid > 0 or not s_ask > 0:
+            continue
+        cost = b_bid * sd / bd
+        net = taxmod.net_sell(int(round(s_ask)), False) - cost
+        roi = net / cost if cost > 0 else 0.0
+        instant = None
+        if b_ask and s_bid:
+            icost = b_ask * sd / bd
+            instant = (taxmod.net_sell(int(round(s_bid)), False) - icost) / icost if icost > 0 else None
+        pr = prof.get(si, {})
+        rows.append({
+            "set_id": si, "name": f"{fam} ({bd})→({sd})", "pieces": [f"{fam}({bd})"],
+            "pieces_cost": round(cost), "set_sell": round(s_ask),
+            "net_per_set": round(net), "roi": round(roi, 4),
+            "instant_roi": round(instant, 4) if instant is not None else None,
+            "set_sell_uptime": round(pr.get("sell", 0.0), 3),
+            "sets_per_day": round(pr.get("sell_units_day", 0.0), 1),
+            "verified": True, "kind": "decant",   # Bob Barter decants any potion — mechanic certain
         })
     rows.sort(key=lambda r: r["roi"], reverse=True)
     return rows

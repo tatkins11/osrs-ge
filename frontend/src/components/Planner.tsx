@@ -361,8 +361,8 @@ export function Planner({
       {mode === "2touch" && setArb.filter((r) => r.roi > 0.02).length > 0 && (
         <>
           <div className="slot-head" style={{ marginTop: 16 }}>
-            🧩 Set arbitrage — lowball the pieces, combine at the GE clerk (free), list the set{" "}
-            <span className="dim">· Barrows-family sets trade at a persistent +4-10% premium over their pieces (365d validated) · fits the 2-touch rhythm: pieces fill overnight, combine + list in the morning</span>
+            🧩 Conversion arbitrage — sets (GE clerk) &amp; potion decants (Bob Barter), both free{" "}
+            <span className="dim">· sets carry a +4-10% premium over their pieces; second-tier decant routes pay +3-10% (365d validated) · pieces/forms fill overnight, convert + list in the morning</span>
           </div>
           <table className="tbl">
             <thead>
