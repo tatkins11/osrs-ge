@@ -11,9 +11,11 @@ while outfit buyers pay a convenience premium for the one-click set. Harvesting 
 two-sided execution + clerk trips - unattractive to 5-minute margin flippers, PERFECT for the
 2-touch rhythm: lowball the pieces overnight, combine at the clerk in the morning, list the set.
 
-CAUTION: the Moons sets (Blood/Eclipse/Blue) show a persistent +9%..+40% basis that is TOO wide -
-strong suspicion they are NOT exchangeable at the clerk (verify the clerk's Sets tab in-game
-before trading them). Classic sets (Barrows, Dagon'hai, Obsidian, Dragon, gilded) are.
+The Moons sets (Blood/Eclipse/Blue; armour-only sets: helm + chestplate + tassets) were verified
+exchangeable in-game 2026-07-02 — their persistent +16..+33% basis is the widest on the board.
+Why it survives: piece supply pours in from Moons of Peril (a popular mid-game grind) while the
+set is the convenience form; combining takes clerk trips nobody automates. Still: the numbers are
+extreme, so scale in with ONE test cycle per set first.
 """
 from __future__ import annotations
 
@@ -39,10 +41,11 @@ SETS: dict[str, list[str]] = {
     "Eclipse moon armour set": ["Eclipse moon helm", "Eclipse moon chestplate", "Eclipse moon tassets"],
     "Blue moon armour set": ["Blue moon helm", "Blue moon chestplate", "Blue moon tassets"],
 }
-# clerk exchange confirmed for the classic families; the newer ones must be VERIFIED IN-GAME
-# (GE clerk -> Sets tab) before any capital touches them.
+# clerk exchange confirmed for the classic families; Moons sets (Blood/Eclipse/Blue — armour-only:
+# helm + chestplate + tassets, no weapon) verified IN-GAME by Tristan 2026-07-02. Sunfire remains
+# unverified. Standing rule for any newly-verified set: run ONE cheap test cycle before scaling.
 VERIFIED = {k for k in SETS if any(t in k for t in ("Torag", "Guthan", "Karil", "Verac", "Dharok",
-                                                    "Ahrim", "Dagon", "Obsidian", "Dragon"))}
+                                                    "Ahrim", "Dagon", "Obsidian", "Dragon", "moon"))}
 
 # Potion DECANT routes (Bob Barter at the GE decants ANY potion for free — mechanic is certain).
 # Validated 365d, execution-realistic (buy form at bid -> decant -> sell form at ask, net of tax):

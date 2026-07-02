@@ -358,12 +358,16 @@ export function Planner({
         </>
       )}
 
-      {mode === "2touch" && setArb.filter((r) => r.roi > 0.02).length > 0 && (
+      {setArb.length > 0 && (
         <>
           <div className="slot-head" style={{ marginTop: 16 }}>
             🧩 Conversion arbitrage — sets (GE clerk) &amp; potion decants (Bob Barter), both free{" "}
             <span className="dim">· sets carry a +4-10% premium over their pieces; second-tier decant routes pay +3-10% (365d validated) · pieces/forms fill overnight, convert + list in the morning</span>
           </div>
+          {setArb.filter((r) => r.roi > 0.02).length === 0 && (
+            <div className="muted" style={{ padding: "6px 2px 10px" }}>No conversion route clears +2% right now — the basis breathes; check back at your evening session.</div>
+          )}
+          {setArb.filter((r) => r.roi > 0.02).length > 0 && (
           <table className="tbl">
             <thead>
               <tr>
@@ -395,6 +399,7 @@ export function Planner({
               ))}
             </tbody>
           </table>
+          )}
         </>
       )}
 
