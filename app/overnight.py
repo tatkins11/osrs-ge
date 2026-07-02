@@ -214,6 +214,10 @@ DISC_GRID = (0.04, 0.06, 0.08, 0.10, 0.12, 0.15)
 SWEEP_LOOKBACK_DAYS = 180   # recent regime; also keeps the per-plan sweep affordable on 1 vCPU
 _SWEEP_CACHE: dict[int, tuple[float, dict]] = {}   # item_id -> (expiry_epoch, result)
 _SWEEP_TTL = 3600.0         # fill odds move nightly, not per page view
+DEPTH_SHARE = 0.5           # share of the printed at/below-offer depth we expect to capture.
+                            # Live calibration (2026-07-02, 16 touched orders): our share of printed
+                            # depth median 100% / mean 73% (evening placement = early queue), but the
+                            # hourly-bar depth proxy is noisy — 0.5 is the conservative planning number.
 
 
 def sweep_fill_stats(item_ids, con, grid=DISC_GRID, buy_hour: int = 2, sell_hour: int = 14,
@@ -266,16 +270,21 @@ def sweep_fill_stats(item_ids, con, grid=DISC_GRID, buy_hour: int = 2, sell_hour
         fills = [0] * G
         wins = [0] * G
         margins: list[list[float]] = [[] for _ in range(G)]
+        depths: list[list[float]] = [[] for _ in range(G)]   # units printed at/below the offer on filled nights
         for i in range(n):
             if hr[i] != buy_hour or np.isnan(lo[i]):
                 continue
             nights += 1
-            # deepest TRADED dip within the overnight window (time-indexed, not row-indexed)
+            # deepest TRADED dip within the overnight window (time-indexed, not row-indexed),
+            # plus the window's bars for per-disc DEPTH (how many units actually trade through)
             j = i + 1
             deep = np.inf
+            wbars: list[int] = []
             while j < n and eh[j] - eh[i] <= window_h:
-                if lv[j] > 0 and lo[j] < deep:
-                    deep = lo[j]
+                if lv[j] > 0:
+                    wbars.append(j)
+                    if lo[j] < deep:
+                        deep = lo[j]
                 j += 1
             if not np.isfinite(deep):
                 continue
@@ -286,6 +295,7 @@ def sweep_fill_stats(item_ids, con, grid=DISC_GRID, buy_hour: int = 2, sell_hour
                 if deep > offer:
                     continue
                 fills[d_idx] += 1
+                depths[d_idx].append(float(sum(lv[k] for k in wbars if lo[k] <= offer)))
                 if sell_px is not None:
                     m = taxmod.net_sell(int(round(sell_px)), ex) - offer
                     margins[d_idx].append(m)
@@ -302,17 +312,19 @@ def sweep_fill_stats(item_ids, con, grid=DISC_GRID, buy_hour: int = 2, sell_hour
             cal = min(0.95, max(0.05, ONFILL_A + ONFILL_B * raw))
             wr = wins[d_idx] / fills[d_idx]
             med = float(np.median(margins[d_idx])) if margins[d_idx] else 0.0
-            evs.append((cal * wr * max(med, 0.0), disc, cal, raw, wr, med))
+            dep = float(np.median(depths[d_idx])) if depths[d_idx] else 0.0
+            evs.append((cal * wr * max(med, 0.0), disc, cal, raw, wr, med, dep))
         valid = [e for e in evs if e is not None and e[0] > 0]
         if not valid:
             continue
         best_ev = max(e[0] for e in valid)
         # shallowest discount within 10% of the best EV (grid is ascending)
         pick = next(e for e in valid if e[0] >= 0.9 * best_ev)
-        ev, disc, cal, raw, wr, med = pick
+        ev, disc, cal, raw, wr, med, dep = pick
         res = {
             "disc": float(disc), "fill_prob": float(cal), "fill_prob_raw": float(raw),
             "win_rate": float(wr), "exp_margin": med, "nights": int(nights), "ev_unit": float(ev),
+            "depth": dep,   # median units printed at/below the offer on the nights it filled
         }
         out[int(iid)] = res
         _SWEEP_CACHE[int(iid)] = (now + _SWEEP_TTL, res)

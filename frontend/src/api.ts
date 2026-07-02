@@ -436,6 +436,7 @@ export interface PlanSlot {
   fill_freq?: number;          // 0-1: fraction of 5-min windows the item actually trades on this side
   best_hours?: number[];       // UTC hours when this item's side of the book is busiest (best to place)
   overnight?: boolean;         // 2-touch mode: overnight lowball (place in the evening, sell next day)
+  exp_units?: number;          // expected units to FILL on a dip night (printed-depth model) — units is what you PLACE
   tag?: string;                // "range" (📐 band play) | "crash" (🔪 recovery play)
   reason: string;
   live: boolean;               // a matching open order already exists on the GE

@@ -29,6 +29,7 @@ from . import portfolio as pf
 from . import tax as taxmod
 from .db import connect, connect_trades, get_free_gp, get_orders_df, get_signal_outcomes_df, utcnow
 from .liquidity import fill_uptime, market_clock, peak_hours
+from .overnight import DEPTH_SHARE as on_depth_share
 from .signals import KNIFE_SLOPE_PER_DAY, Thresholds, market_signals, overnight_table
 
 CAPTURE = 0.08           # share of an item's daily volume you transact per leg. Raised 0.04->0.06->0.08 to
@@ -577,8 +578,11 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
             units_max = min(float(o.get("on_units") or 0), icap, pcap, exit_cap, offer_cap(o.get("name")))
             if units_max < 1:
                 continue
+            # rank on EXPECTED-fill units (printed depth caps what a dip can deliver), not placed
+            dep_ = _f(o.get("on_depth")) or 0.0
+            eff_units = units_max if dep_ <= 0 else max(1.0, min(units_max, on_depth_share * dep_))
             ev_unit = float(o.get("on_ev") or 0)           # margin x fill-prob x win-rate, per unit
-            scored.append((ev_unit * boost * units_max, boost, units_max, o, pr, n_gr, win_gr))
+            scored.append((ev_unit * boost * eff_units, boost, units_max, o, pr, n_gr, win_gr))
         scored.sort(key=lambda x: x[0], reverse=True)
         for _exp, boost, units_max, o, pr, n_gr, win_gr in scored:
             if len(new_buys) >= free_slots or remaining <= 0:
@@ -591,16 +595,24 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
             margin = float(o.get("on_margin") or 0)
             fp = float(o.get("on_fill_prob") or 0)
             wr = float(o.get("on_win_rate") or 0)
-            # per-SLOT profit bar (same bar as the fast-flip loop): a filled night must pay at
-            # least min_rt_profit, or the pick is a scrap that wastes one of 8 slots — an EMPTY
-            # slot (capital free in the morning) beats a 15K/night position. Thin-sell items
-            # size down to a handful of units via exit_cap and die here; that's the point.
-            if margin * units < float(th.min_rt_profit or 0):
+            # FILL DEPTH: a dip "touching" the offer doesn't fill the whole order — only the
+            # units that actually PRINT at/below the level (live 7/02: 748-unit order filled 81;
+            # 67-unit order filled 5 — the printed depth was the constraint). Expected fill =
+            # DEPTH_SHARE x the median printed depth on historical filled nights; place up to 2x
+            # that (fat-dip headroom) instead of reserving cash the dip can't consume.
+            depth = _f(o.get("on_depth")) or 0.0
+            exp_units = units if depth <= 0 else max(1, int(min(units, on_depth_share * depth)))
+            place_units = units if depth <= 0 else max(exp_units, min(units, int(exp_units * 2 + 1)))
+            # per-SLOT profit bar on EXPECTED-fill profit (was placed-units profit, which
+            # overstated a partial fill's night by 5-10x)
+            if margin * exp_units < float(th.min_rt_profit or 0):
                 small_skip += 1
                 continue
             odisc = _f(o.get("on_disc"))
             why = (f"overnight lowball {odisc:.0%} below bid — " if odisc else "overnight lowball — ") \
                 + f"fills {fp:.0%} of nights, wins {wr:.0%} when filled"
+            if depth > 0:
+                why += f"; expect ~{exp_units:,} of {place_units:,} to fill on a dip"
             if boost > 1.0:
                 why += f"; PROVEN roster ({n_gr} graded, {win_gr:.0%} win)"
             elif boost < 1.0:
@@ -609,14 +621,15 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
             new_buys.append({
                 "action": "BUY", "item_id": iid, "name": o.get("name"),
                 "price": round(on_buy), "sell_target": round(float(o.get("on_target") or 0)),
-                "units": units, "capital": round(units * on_buy), "margin": round(margin),
-                "gp_day": round(margin * units * fp * wr),   # per-NIGHT expected gp, odds included
+                "units": place_units, "capital": round(place_units * on_buy), "margin": round(margin),
+                "exp_units": exp_units,
+                "gp_day": round(margin * exp_units * fp * wr),   # per-NIGHT expected gp, depth-honest
                 "buy_h": None, "roundtrip_h": None,
                 "reason": why, "live": False, "overnight": True,
                 "fill_freq": round(fp, 3), "sell_freq": round(pr.get("sell", 0.0), 3),
-                "days_to_liquidate": round(units / (CAPTURE * sud), 1) if sud > 0 else None,
+                "days_to_liquidate": round(exp_units / (CAPTURE * sud), 1) if sud > 0 else None,
             })
-            remaining -= units * on_buy
+            remaining -= place_units * on_buy
 
         # ---- pattern plays fill the REMAINING free slots (slower holds, bigger swings) -------
         # Range plays: buy the item's own trailing-60d P20, sell its P70 (OOS +7.7%/cycle, 80%

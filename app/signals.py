@@ -507,6 +507,7 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100, d=
     cand["on_win_rate"] = _st("win_rate")
     cand["on_exp_margin"] = _st("exp_margin")
     cand["on_nights"] = _st("nights")
+    cand["on_depth"] = _st("depth")   # median units printed at/below the offer on filled nights
     # rank by per-ITEM expected gp (margin × odds) — surfaces high-value lowballs, not high-qty junk
     cand["on_ev"] = cand["on_margin"].fillna(0) * cand["on_fill_prob"].fillna(0) * cand["on_win_rate"].fillna(0)
     # keep only realistic, positive-edge setups that still clear the margin gates at the CHOSEN
@@ -524,7 +525,7 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100, d=
     cand = cand.sort_values("on_ev", ascending=False).head(limit)   # expected gp/night, not just fill odds
     return _records(cand, TABLE_COLS + ["on_buy", "on_target", "on_margin", "on_roi", "on_disc",
                                         "on_fill_prob", "on_win_rate", "on_exp_margin", "on_nights",
-                                        "on_units", "on_exp_profit", "on_ev"])
+                                        "on_units", "on_exp_profit", "on_ev", "on_depth"])
 
 
 def slot_allocator(th: Thresholds | None = None, con=None, free_slots: int = 8,
