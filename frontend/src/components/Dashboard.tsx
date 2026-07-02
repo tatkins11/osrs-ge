@@ -125,7 +125,7 @@ export function Dashboard({
           </h3>
           {actions.map((s) => (
             <div key={`${s.action}-${s.item_id}`} className="act-row" onClick={() => onSelect(s.item_id)}>
-              <span className={`badge ${ACT_BADGE[s.action]}`}>{s.overnight ? "🌙 " : ""}{s.action}</span>
+              <span className={`badge ${ACT_BADGE[s.action]}`}>{s.tag === "range" ? "📐 " : s.tag === "crash" ? "🔪 " : s.overnight ? "🌙 " : ""}{s.action}</span>
               <span className="nm">{s.name}</span>
               <span className="qp">{slotQP(s)}</span>
               <span className="why">{s.reason}</span>

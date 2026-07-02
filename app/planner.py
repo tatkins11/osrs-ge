@@ -617,6 +617,77 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
                 "days_to_liquidate": round(units / (CAPTURE * sud), 1) if sud > 0 else None,
             })
             remaining -= units * on_buy
+
+        # ---- pattern plays fill the REMAINING free slots (slower holds, bigger swings) -------
+        # Range plays: buy the item's own trailing-60d P20, sell its P70 (OOS +7.7%/cycle, 80%
+        # win, ~2-4wk). Crash plays: repeat-recoverers in a live -20..-45% crash (pooled +17.2%
+        # med, 72% win — tail is real, so <=15% NW and max 2 at once). Both compete AFTER the
+        # overnight picks (the graded daily engine) and clear the same per-slot profit bar.
+        if len(new_buys) < free_slots and remaining > 0:
+            try:
+                from .patterns import rosters as _pattern_rosters
+                pat = _pattern_rosters(cached_only=True)   # never block a plan on the ~45s cold build
+            except Exception:  # noqa: BLE001
+                pat = None
+            if pat:
+                plays = []
+                for pr_ in pat.get("range", []):
+                    if pr_.get("at_band") and not pr_.get("broken"):
+                        plays.append(("range", pr_, float(pr_["med_ret"]) / max(float(pr_["avg_days"]), 7.0)))
+                for pr_ in pat.get("crash", []):
+                    if pr_.get("crashing_now") and not pr_.get("broken"):
+                        plays.append(("crash", pr_, 0.15 / 12.0))          # +15% target over ~12d
+                plays.sort(key=lambda x: x[2], reverse=True)
+                pids = [int(p[1]["item_id"]) for p in plays]
+                pprof = fill_uptime([i for i in pids if i not in excl]) if pids else {}
+                added_crash = 0
+                for kind_, r_, evd in plays:
+                    if len(new_buys) >= free_slots or remaining <= 0:
+                        break
+                    iid = int(r_["item_id"])
+                    if iid in excl or any(b["item_id"] == iid for b in new_buys):
+                        continue
+                    if kind_ == "crash" and added_crash >= 2:
+                        continue
+                    s_r = sig.get(iid, {})
+                    entry = _f(s_r.get("buy_price")) or 0.0                # patient bid join
+                    if entry <= 0:
+                        continue
+                    pu = pprof.get(iid, {})
+                    if pu.get("sell", 0.0) < MIN_SELL_UPTIME:              # must be exitable
+                        exit_skip += 1
+                        continue
+                    sell_ud = pu.get("sell_units_day", 0.0)
+                    exit_cap2 = (CAPTURE * sell_ud * MAX_UNWIND_DAYS) if sell_ud > 0 else 0.0
+                    frac = 0.15 if kind_ == "crash" else MAX_ITEM_FRAC
+                    icap2 = (frac * net_worth // entry) if entry > 0 else 0.0
+                    tgt = float(r_["p70"]) if kind_ == "range" else entry * 1.15 / 0.98
+                    mgn2 = taxmod.net_sell(int(round(tgt)), bool(s_r.get("exempt"))) - entry
+                    units2 = int(min(icap2, exit_cap2, remaining // entry, offer_cap(s_r.get("name"))))
+                    if units2 < 1 or mgn2 <= 0:
+                        continue
+                    if mgn2 * units2 < float(th.min_rt_profit or 0):
+                        small_skip += 1
+                        continue
+                    if kind_ == "range":
+                        why2 = (f"range play — at its own buy band; {r_['cycles']} cycles med "
+                                f"{r_['med_ret']*100:+.0f}%, win {r_['win']*100:.0f}%, ~{r_['avg_days']:.0f}d hold")
+                    else:
+                        why2 = (f"crash play — 5d {r_['r5_now']*100:+.0f}%; recovered {r_['win']*100:.0f}% of "
+                                f"{r_['crashes']} crashes, med {r_['med_ret']*100:+.0f}% — sized ≤15% NW")
+                    new_buys.append({
+                        "action": "BUY", "item_id": iid, "name": r_["name"],
+                        "price": round(entry), "sell_target": round(tgt), "units": units2,
+                        "capital": round(units2 * entry), "margin": round(mgn2),
+                        "gp_day": round(units2 * entry * evd),             # capital × med-return/day
+                        "buy_h": None, "roundtrip_h": None,
+                        "reason": why2, "live": False, "overnight": False, "tag": kind_,
+                        "fill_freq": round(pu.get("buy", 0.0), 3), "sell_freq": round(pu.get("sell", 0.0), 3),
+                        "days_to_liquidate": round(units2 / (CAPTURE * sell_ud), 1) if sell_ud > 0 else None,
+                    })
+                    remaining -= units2 * entry
+                    if kind_ == "crash":
+                        added_crash += 1
     elif free_slots > 0 and good_buy_ids:
         # Rank by modeled gp PER DAY (margin x the units you actually CYCLE per day), tilted by liquidity.
         # This is the true profit-rate objective: it rewards both deploying capital AND recycling it fast,

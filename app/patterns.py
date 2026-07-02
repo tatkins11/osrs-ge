@@ -89,11 +89,15 @@ def _sim_crash(g: pd.DataFrame) -> list[float]:
     return ev
 
 
-def rosters(con=None) -> dict:
-    """Build (or serve cached) pattern rosters joined to live band positions."""
+def rosters(con=None, cached_only: bool = False) -> dict | None:
+    """Build (or serve cached) pattern rosters joined to live band positions. cached_only=True
+    returns None instead of building (the planner must never block ~45s on a cold cache; the
+    /api/patterns endpoint and the Proven tab are the warmers)."""
     now = time.time()
     if _CACHE["out"] is not None and now - _CACHE["ts"] < _TTL:
         return _CACHE["out"]
+    if cached_only:
+        return None
     own = con is None
     con = con or connect(read_only=True)
     try:

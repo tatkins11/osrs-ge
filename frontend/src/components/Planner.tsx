@@ -303,7 +303,7 @@ export function Planner({
         <tbody>
           {buys.map((b) => (
             <tr key={b.item_id} className={b.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(b.item_id)}>
-              <td className="left"><span className={`badge ${ACT_BADGE[b.action]}`}>{liveDot(b)}{b.overnight ? "🌙 " : ""}{b.action}</span></td>
+              <td className="left"><span className={`badge ${ACT_BADGE[b.action]}`}>{liveDot(b)}{b.tag === "range" ? "📐 " : b.tag === "crash" ? "🔪 " : b.overnight ? "🌙 " : ""}{b.action}</span></td>
               <td className="name left">{b.name}</td>
               <td>{(b.units ?? 0).toLocaleString()}</td>
               <td>{gp(b.price)}</td>
