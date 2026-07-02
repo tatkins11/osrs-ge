@@ -16,6 +16,10 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GrandExchangeOffer;
 import net.runelite.api.GrandExchangeOfferState;
+import net.runelite.api.InventoryID;
+import net.runelite.api.Item;
+import net.runelite.api.ItemContainer;
+import net.runelite.api.ItemID;
 import net.runelite.api.Player;
 import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.client.config.ConfigManager;
@@ -139,7 +143,33 @@ public class GeExportPlugin extends Plugin
 		offers.add(o);
 		final JsonObject body = new JsonObject();
 		body.add("offers", offers);
+		// ground-truth cash observation (read-only): coins visible in the inventory right now.
+		// The server uses it as a drift detector for its dead-reckoned free-gp accounting
+		// (a LOWER bound only — banked gp is invisible here, so it never auto-overwrites).
+		final long coins = inventoryCoins();
+		if (coins >= 0)
+		{
+			body.addProperty("coins", coins);
+		}
 		post(body);
+	}
+
+	private long inventoryCoins()
+	{
+		final ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
+		if (inv == null)
+		{
+			return -1;
+		}
+		long c = 0;
+		for (Item it : inv.getItems())
+		{
+			if (it != null && it.getId() == ItemID.COINS_995)
+			{
+				c += it.getQuantity();
+			}
+		}
+		return c;
 	}
 
 	private void post(JsonObject body)

@@ -90,6 +90,19 @@ export function Dashboard({
           If your cash really is that high, re-set Free gp on the Portfolio page.
         </div>
       )}
+      {plan.cash_drift_pct != null && (
+        <div className="exp-banner" style={{ margin: "0 0 12px" }}>
+          ⚠ Accounting drifted {gpShort(Math.abs(plan.cash_drift ?? 0))} on {plan.cash_drift_day} ({(Math.abs(plan.cash_drift_pct) * 100).toFixed(1)}% of
+          net worth) — the day's net-worth change doesn't reconcile with realized+unrealized P&L. Usually a missed plugin
+          event: re-set Free gp on the Portfolio page to re-baseline.
+        </div>
+      )}
+      {plan.coins_observed != null && (
+        <div className="exp-banner" style={{ margin: "0 0 12px" }}>
+          ⚠ The plugin saw <b>{gpShort(plan.coins_observed)}</b> coins in your pouch — more than the booked {gpShort(plan.free_gp)} free gp.
+          The books are undercounting your cash: re-set Free gp on the Portfolio page.
+        </div>
+      )}
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)", marginBottom: 12 }}>
         <div className="tile" title={`Free ${gp(plan.free_gp)} + open buys ${gp(plan.committed_capital)} + holdings ${gp(plan.holdings_value)}`}>

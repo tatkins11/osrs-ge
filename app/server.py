@@ -326,12 +326,15 @@ class GeOffer(BaseModel):
 
 class GeOffersIn(BaseModel):
     offers: list[GeOffer]
+    coins: int | None = None    # ground-truth observation: coins in the player's inventory right now
 
 
 @app.post("/api/ge-offers")
 def ge_offers(body: GeOffersIn, _=Depends(require_ingest_token)) -> dict:
-    """Ingest a batch of live GE offers from the RuneLite plugin (read-only tracking)."""
-    return {"ok": True, **ingest_offers([o.model_dump() for o in body.offers])}
+    """Ingest a batch of live GE offers from the RuneLite plugin (read-only tracking).
+    The optional coins observation feeds the accounting drift detector (a LOWER bound —
+    banked gp is invisible to it, so it flags undercounts but never auto-overwrites)."""
+    return {"ok": True, **ingest_offers([o.model_dump() for o in body.offers], coins_observed=body.coins)}
 
 
 @app.get("/api/orders")
@@ -398,6 +401,7 @@ class AddOrderIn(BaseModel):
     total_qty: int
     filled_qty: int = 0
     slot: int | None = None
+    tag: str | None = None   # originating engine (overnight/range/crash/flip) for P&L attribution
 
 
 @app.post("/api/orders/manual")
@@ -408,7 +412,7 @@ def add_manual_order(o: AddOrderIn) -> dict:
         raise HTTPException(status_code=400, detail="side must be 'buy' or 'sell'")
     if o.price <= 0 or o.total_qty <= 0:
         raise HTTPException(status_code=400, detail="price and total_qty must be positive")
-    oid = add_order(o.item_id, o.side, o.price, o.total_qty, max(0, o.filled_qty), o.slot)
+    oid = add_order(o.item_id, o.side, o.price, o.total_qty, max(0, o.filled_qty), o.slot, tag=o.tag)
     return {"ok": True, "order_id": oid}
 
 

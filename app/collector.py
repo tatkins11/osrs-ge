@@ -233,6 +233,29 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
                         log.info("signal grading: %d matured graded", _grade_signals())
                     except Exception:
                         log.exception("signal grading failed")
+                    # nightly auto-calibration: these used to be manual research runs that only
+                    # happened when someone remembered — now they publish to study_results daily.
+                    try:  # accounting drift detector (dNW must reconcile with dP&L)
+                        from . import research
+                        research.cashcheck()
+                    except Exception:
+                        log.exception("cashcheck failed")
+                    try:  # re-mint ghost-trade auditor (advisory)
+                        from . import research
+                        research.dupescan()
+                    except Exception:
+                        log.exception("dupescan failed")
+                    try:  # fill-odds calibration vs realized (drifts as market regime shifts)
+                        from . import research
+                        research.onfill()
+                    except Exception:
+                        log.exception("onfill failed")
+                    try:  # warm the chart-pattern rosters so the planner never sees a cold cache
+                        from .patterns import rosters as _pattern_rosters
+                        _pattern_rosters()
+                        log.info("pattern rosters warmed")
+                    except Exception:
+                        log.exception("pattern roster warm failed")
                     current_day = day
             except Exception:
                 log.exception("catalog refresh failed")

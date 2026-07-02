@@ -376,7 +376,8 @@ CREATE TABLE IF NOT EXISTS orders (   -- live GE offers streamed from the RuneLi
     trade_id     BIGINT,              -- first linked trade (NULL until a fill is logged)
     cash_done    BIGINT DEFAULT 0,    -- cash impact already applied to free_gp for this order (idempotent delta)
     logged_qty   BIGINT DEFAULT 0,    -- filled qty already written to the trade log (for incremental partial fills)
-    logged_spent BIGINT DEFAULT 0     -- gp already accounted for those logged fills
+    logged_spent BIGINT DEFAULT 0,    -- gp already accounted for those logged fills
+    tag          VARCHAR              -- originating engine (overnight/range/crash/flip/...) for P&L attribution
 );
 CREATE TABLE IF NOT EXISTS settings (   -- small key/value store (free_gp baseline, etc.)
     key   VARCHAR PRIMARY KEY,
@@ -446,7 +447,8 @@ def connect_trades(read_only: bool = False, retries: int = 12, retry_wait: float
 def _ensure_schema(con) -> None:
     """Create the trades schema + run lightweight migrations (idempotent)."""
     con.execute(_TRADES_SCHEMA)
-    for col in ("cash_done BIGINT DEFAULT 0", "logged_qty BIGINT DEFAULT 0", "logged_spent BIGINT DEFAULT 0"):
+    for col in ("cash_done BIGINT DEFAULT 0", "logged_qty BIGINT DEFAULT 0", "logged_spent BIGINT DEFAULT 0",
+                "tag VARCHAR"):   # tag = originating engine (overnight/range/crash/flip/...) for P&L attribution
         try:  # add columns to orders tables created before these features
             con.execute(f"ALTER TABLE orders ADD COLUMN IF NOT EXISTS {col}")
         except duckdb.Error:
@@ -505,13 +507,17 @@ def _reconcile_order_cash(con, oid: str) -> None:
 
 def _log_fill_delta(con, oid: str, ts=None, note: str = "GE fill") -> int:
     """Log a trade for any newly-filled quantity since the last log, so the portfolio + P&L update
-    on PARTIAL fills (not just at order close). Tracks logged_qty/logged_spent for idempotency."""
+    on PARTIAL fills (not just at order close). Tracks logged_qty/logged_spent for idempotency.
+    The order's engine tag (if any) is stamped into the trade note as ``[tag:xxx]`` so round-trip
+    P&L can be attributed per engine downstream."""
     r = con.execute(
-        "SELECT item_id, side, price, filled_qty, spent, logged_qty, logged_spent FROM orders WHERE order_id=?", [oid]
+        "SELECT item_id, side, price, filled_qty, spent, logged_qty, logged_spent, tag FROM orders WHERE order_id=?", [oid]
     ).fetchone()
     if not r:
         return 0
-    item_id, side, price, filled, spent, logged_qty, logged_spent = r
+    item_id, side, price, filled, spent, logged_qty, logged_spent, tag = r
+    if tag:
+        note = f"{note} [tag:{tag}]"
     dq = int(filled or 0) - int(logged_qty or 0)
     if dq <= 0:
         return 0
@@ -642,16 +648,23 @@ def _to_naive_utc(v):
 
 
 @_locked_write
-def ingest_offers(events: list[dict]) -> dict:
+def ingest_offers(events: list[dict], coins_observed: int | None = None) -> dict:
     """Upsert live GE offers from the RuneLite plugin. When an offer reaches a terminal
     state with a real fill, finalize it into a trade exactly once (so the portfolio /
     round-trip P&L update automatically). Buys record the real average fill price
-    (spent/filled); sells record the gross offer price (the tax engine takes the 2%)."""
-    if not events:
+    (spent/filled); sells record the gross offer price (the tax engine takes the 2%).
+    ``coins_observed`` (inventory coins seen in-game) is stored as a ground-truth marker
+    for the accounting drift detector — a lower bound, never auto-applied to free_gp."""
+    if not events and coins_observed is None:
         return {"orders": 0, "trades_created": 0}
     con = connect_trades()
     try:
         _ensure_schema(con)
+        if coins_observed is not None and coins_observed >= 0:
+            _set_setting(con, "coins_observed", float(coins_observed))
+            _set_setting(con, "coins_observed_ts", time.time())
+        if not events:
+            return {"orders": 0, "trades_created": 0}
         n = made = 0
         for e in events:
             oid = str(e.get("order_id") or "").strip()
@@ -802,8 +815,9 @@ def delete_order(order_id: str) -> None:
 
 @_locked_write
 def add_order(item_id: int, side: str, price: int, total_qty: int, filled_qty: int = 0,
-              slot: int | None = None, login: str = "manual") -> str:
-    """Create an order manually (for phone play without the RuneLite plugin). Returns the order_id."""
+              slot: int | None = None, login: str = "manual", tag: str | None = None) -> str:
+    """Create an order manually (for phone play without the RuneLite plugin). Returns the order_id.
+    ``tag`` records which ENGINE recommended it (overnight/range/crash/flip) for P&L attribution."""
     oid = "m-" + uuid.uuid4().hex[:14]
     now = utcnow()
     state = "BUYING" if side == "buy" else "SELLING"
@@ -811,10 +825,11 @@ def add_order(item_id: int, side: str, price: int, total_qty: int, filled_qty: i
     try:
         _ensure_schema(con)
         con.execute(
-            "INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty, filled_qty, spent, state, opened_ts, updated_ts) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty, filled_qty, spent, state, opened_ts, updated_ts, tag) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [oid, login, (int(slot) if slot is not None else None), int(item_id), side, int(price),
-             int(total_qty), int(filled_qty), int(filled_qty) * int(price), state, now, now],
+             int(total_qty), int(filled_qty), int(filled_qty) * int(price), state, now, now,
+             (str(tag)[:24] if tag else None)],
         )
         _reconcile_order_cash(con, oid)   # placing a buy reserves gp out of free_gp; a pre-filled sell credits proceeds
         _log_fill_delta(con, oid, now, "manual order")  # log any qty entered as already filled

@@ -7,6 +7,7 @@ current insta-buy price (where you'd realistically place a sell offer), net of t
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict, deque
 
 import pandas as pd
@@ -55,17 +56,24 @@ def compute(con=None) -> dict:
     trip_events: list[tuple] = []   # (sell_ts, net) for the equity curve
     trade_log: list[dict] = []
 
+    tag_re = re.compile(r"\[tag:([\w-]+)\]")
+
+    def tag_of(note) -> str | None:
+        m = tag_re.search(str(note or ""))
+        return m.group(1) if m else None
+
     for t in trades.itertuples():
         iid = int(t.item_id)
         qty = int(t.qty)
         price = float(t.price)
         ts = pd.Timestamp(t.ts)
         if t.side == "buy":
-            lots[iid].append([float(qty), price, ts])
+            lots[iid].append([float(qty), price, ts, tag_of(getattr(t, "note", None))])
         else:  # sell -> match against oldest buy lots (FIFO), net of 2% tax
             net_unit = float(taxmod.net_sell(int(price), exempt_of(iid)))
             remaining = float(qty)
             matched = cost_sum = wts_sum = 0.0
+            tag_qty: dict = {}                            # engine attribution: qty consumed per buy-tag
             dq = lots[iid]
             while remaining > 1e-9 and dq:
                 lot = dq[0]
@@ -73,6 +81,7 @@ def compute(con=None) -> dict:
                 matched += take
                 cost_sum += take * lot[1]
                 wts_sum += take * lot[2].value           # ns, qty-weighted entry time
+                tag_qty[lot[3]] = tag_qty.get(lot[3], 0.0) + take
                 lot[0] -= take
                 remaining -= take
                 if lot[0] <= 1e-9:
@@ -84,6 +93,7 @@ def compute(con=None) -> dict:
                 hold_days = max(0.0, (ts - buy_ts).total_seconds() / 86400.0)
                 realized_by_item[iid] += net
                 trip_events.append((ts, net))
+                trip_tag = max(tag_qty, key=tag_qty.get) if tag_qty else None  # dominant buy-engine
                 closed_trips.append({
                     "item_id": iid, "name": name_of(iid), "qty": int(round(matched)),
                     "buy_avg": round(buy_avg), "sell_price": int(price),
@@ -93,6 +103,7 @@ def compute(con=None) -> dict:
                     "roi": (net / (matched * buy_avg)) if buy_avg > 0 else None,
                     "buy_ts": str(buy_ts), "sell_ts": str(ts), "hold_days": round(hold_days, 1),
                     "sector": classify_one(name_of(iid)),
+                    "tag": trip_tag,
                 })
         trade_log.append({
             "id": int(t.id), "ts": str(t.ts), "item_id": iid, "name": name_of(iid),
@@ -170,6 +181,22 @@ def compute(con=None) -> dict:
         ({"item_id": iid, "name": name_of(iid), "net": round(v)} for iid, v in realized_by_item.items()),
         key=lambda x: -x["net"],
     )
+    # per-ENGINE attribution: which strategy actually makes the money. gp per MILLION-gp-day of
+    # deployed capital is the fair comparator across 12h lowballs and 3-week range holds.
+    eng: dict[str, dict] = {}
+    for tr in closed_trips:
+        k = tr.get("tag") or "untagged"
+        e = eng.setdefault(k, {"n": 0, "net": 0.0, "wins": 0, "capital_days": 0.0})
+        e["n"] += 1
+        e["net"] += tr["net"]
+        e["wins"] += 1 if tr["net"] > 0 else 0
+        e["capital_days"] += tr["qty"] * tr["buy_avg"] * max(tr["hold_days"], 0.05)
+    engines = sorted(
+        ({"engine": k, "n": v["n"], "net": round(v["net"]), "win_rate": v["wins"] / v["n"],
+          "gp_per_mday": round(v["net"] / v["capital_days"] * 1e6) if v["capital_days"] > 0 else None}
+         for k, v in eng.items()),
+        key=lambda x: -x["net"],
+    )
     # cumulative realized over time (equity curve)
     cum = 0.0
     equity_curve = []
@@ -204,4 +231,5 @@ def compute(con=None) -> dict:
         "n_open": len(open_positions),
         "sector_exposure": sector_exposure,
         "n_alerts": n_alerts,
+        "engines": engines,
     }

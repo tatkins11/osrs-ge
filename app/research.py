@@ -587,8 +587,74 @@ def onfill():
     _persist("onfill", out)
 
 
+def cashcheck():
+    """Accounting drift detector. In OSRS there are no deposits/withdrawals, so day-over-day
+    net worth must obey conservation: dNW = d(realized) + d(unrealized). Any residual is CASH
+    ACCOUNTING DRIFT — missed plugin events or re-mint double-credits (the 343M corruption of
+    6/30 would have printed here as a one-day residual). Persists recent days to study_results
+    (study='cashcheck'); the plan surfaces the latest as a banner when material."""
+    from .db import connect_trades
+    con = connect_trades(read_only=True)
+    try:
+        nw = con.execute(
+            "SELECT day, net_worth, realized_total, unrealized_total FROM net_worth_log ORDER BY day"
+        ).df()
+    finally:
+        con.close()
+    if len(nw) < 2:
+        print("cashcheck: need >=2 daily snapshots")
+        return
+    print("== cashcheck: dNW vs d(P&L) — residual = accounting drift ==")
+    rows = []
+    for i in range(1, len(nw)):
+        a, b = nw.iloc[i - 1], nw.iloc[i]
+        gap_days = (pd.Timestamp(b["day"]) - pd.Timestamp(a["day"])).days
+        if gap_days < 1 or gap_days > 3:      # only adjacent-ish snapshots are comparable
+            continue
+        dnw = float(b.net_worth - a.net_worth)
+        dpl = float((b.realized_total - a.realized_total) + (b.unrealized_total - a.unrealized_total))
+        drift = dnw - dpl
+        pctd = drift / max(float(a.net_worth), 1.0)
+        flag = "  <-- DRIFT" if abs(pctd) > 0.02 else ""
+        print(f"  {b.day}: dNW {dnw:+,.0f}  P&L {dpl:+,.0f}  residual {drift:+,.0f} ({pctd * 100:+.1f}%){flag}")
+        rows.append({"kind": "daily", "bucket": str(b.day), "n": int(gap_days),
+                     "win_rate": None, "mean_ret": drift, "median_ret": pctd,
+                     "reached_target": bool(abs(pctd) <= 0.02)})
+    if rows:
+        _persist("cashcheck", rows[-3:])      # keep the last few days queryable
+
+
+def dupescan():
+    """Re-mint ghost auditor: trades with identical item/side/qty/price within 10 minutes are
+    suspected duplicate logs from plugin re-reports (the pre-fix ingest dedup created these).
+    ADVISORY ONLY — legit rapid partial fills can look similar; delete by hand in Portfolio."""
+    from .db import get_trades_df
+    t = get_trades_df()
+    if t.empty:
+        print("dupescan: no trades")
+        return
+    t["ts"] = pd.to_datetime(t["ts"])
+    t = t.sort_values(["item_id", "side", "qty", "price", "ts"])
+    dupes = []
+    prev = None
+    for r in t.itertuples():
+        if (prev is not None and r.item_id == prev.item_id and r.side == prev.side
+                and r.qty == prev.qty and r.price == prev.price
+                and (r.ts - prev.ts).total_seconds() <= 600):
+            dupes.append((int(prev.id), int(r.id), int(r.item_id), str(r.side), int(r.qty), int(r.price), str(r.ts)))
+        prev = r
+    print(f"== dupescan: {len(dupes)} suspected duplicate trade log(s) ==")
+    for d in dupes[:20]:
+        print(f"  ids {d[0]}/{d[1]}: item {d[2]} {d[3]} {d[4]:,} @ {d[5]:,} ({d[6]})")
+    _persist("dupescan", [{"kind": "trades", "bucket": "all", "n": len(dupes),
+                           "win_rate": None, "mean_ret": None, "median_ret": None,
+                           "reached_target": bool(len(dupes) == 0)}])
+
+
 def main():
     which = sys.argv[1:] or ["calib", "trades", "decay", "grade", "rotation"]
+    if "cashcheck" in which: cashcheck()
+    if "dupescan" in which: dupescan()
     if "calib" in which: calib()
     if "trades" in which: trades()
     if "decay" in which: decay()

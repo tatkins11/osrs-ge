@@ -110,9 +110,9 @@ export default function App() {
 
   // quick-add an order from the 8-Slot Plan (or Orders form): place it; the server reconciles free gp
   const onAddOrder = useCallback(
-    async (o: { item_id: number; side: "buy" | "sell"; price: number; qty: number }) => {
+    async (o: { item_id: number; side: "buy" | "sell"; price: number; qty: number; tag?: string }) => {
       try {
-        await addOrder({ item_id: o.item_id, side: o.side, price: o.price, total_qty: o.qty });
+        await addOrder({ item_id: o.item_id, side: o.side, price: o.price, total_qty: o.qty, tag: o.tag });
         setNonce((n) => n + 1); // refresh pulls the server-adjusted free gp + the new order
       } catch { /* surfaced by the next refresh */ }
     },

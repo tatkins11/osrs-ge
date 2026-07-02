@@ -27,7 +27,7 @@ import pandas as pd
 
 from . import portfolio as pf
 from . import tax as taxmod
-from .db import connect, connect_trades, get_free_gp, get_orders_df, get_signal_outcomes_df, utcnow
+from .db import connect, connect_trades, get_free_gp, get_orders_df, get_signal_outcomes_df, get_study_results_df, utcnow
 from .liquidity import fill_uptime, market_clock, peak_hours
 from .overnight import DEPTH_SHARE as on_depth_share
 from .signals import KNIFE_SLOPE_PER_DAY, Thresholds, market_signals, overnight_table
@@ -111,11 +111,14 @@ def _f(x):
     return float(x) if x is not None and pd.notna(x) else None
 
 
-def _trusted_cash(free_gp: float) -> tuple[float, bool]:
+def _trusted_cash(free_gp: float) -> tuple[float, bool, float | None]:
     """Clamp the SIZING cash against recent history. free_gp is dead-reckoned from streamed offer
     events, so one accounting slip can inflate it wildly (343M vs ~77M real on 6/30 — every buy that
     day was oversized off the fake number). Median-of-5 daily snapshots is robust to a couple of
-    poisoned rows; the snapshots store the RAW value, so genuine growth raises the ceiling itself."""
+    poisoned rows; the snapshots store the RAW value, so genuine growth raises the ceiling itself.
+    Also returns the plugin's ground-truth inventory-coins observation (fresh <24h) so the plan can
+    flag when booked cash UNDERCOUNTS what's visibly in the coin pouch."""
+    obs = None
     try:
         con = connect_trades(read_only=True)
         try:
@@ -124,19 +127,23 @@ def _trusted_cash(free_gp: float) -> tuple[float, bool]:
             ).fetchall()
             man = con.execute("SELECT value FROM settings WHERE key = 'free_gp_manual'").fetchone()
             mts = con.execute("SELECT value FROM settings WHERE key = 'free_gp_manual_ts'").fetchone()
+            co = con.execute("SELECT value FROM settings WHERE key = 'coins_observed'").fetchone()
+            cots = con.execute("SELECT value FROM settings WHERE key = 'coins_observed_ts'").fetchone()
         finally:
             con.close()
     except Exception:
-        return free_gp, False
+        return free_gp, False, None
+    if co and co[0] is not None and cots and cots[0] is not None and (time.time() - float(cots[0])) < 86400:
+        obs = float(co[0])
     vals = sorted(float(r[0]) for r in rows)
     if len(vals) < 3:
-        return free_gp, False
+        return free_gp, False, obs
     cap = TRUST_MULT * vals[len(vals) // 2]
     # a RECENT manual re-baseline is the user stating ground truth — trust it over the trailing
     # median (which lags several days behind a deliberate correction).
     if man and man[0] is not None and mts and mts[0] is not None and (time.time() - float(mts[0])) < 3 * 86400:
         cap = max(cap, float(man[0]))
-    return (min(free_gp, cap), free_gp > cap)
+    return (min(free_gp, cap), free_gp > cap, obs)
 
 
 def competitive(bid, ask, edge: float = PRICE_EDGE):
@@ -354,7 +361,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
     # ---- 2) capital picture + split holdings on/off slot + reconcile live orders ------------
     _fg = get_free_gp()                                          # server-persisted free gp (source of truth)
     free_gp_raw = max(0.0, float(_fg if _fg is not None else th.bankroll))  # fall back to the filter until set
-    free_gp, cash_clamped = _trusted_cash(free_gp_raw)           # corruption guard: never SIZE off an inflated number
+    free_gp, cash_clamped, coins_observed = _trusted_cash(free_gp_raw)   # corruption guard + plugin coins ground truth
     holdings_value = float(port.get("invested") or 0.0) + float(port.get("unrealized_total") or 0.0)
     net_worth_raw = free_gp_raw + committed + holdings_value     # honest picture (reported + growth snapshots)
     net_worth = free_gp + committed + holdings_value             # sizing picture (clamped cash)
@@ -894,6 +901,22 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
     except Exception:  # noqa: BLE001 — never let the overnight add-on break the core plan
         overnight = []
 
+    # latest accounting-drift reading (nightly research.cashcheck): surfaced as a banner when the
+    # day's net-worth change doesn't reconcile with realized+unrealized P&L (>2% of net worth)
+    cash_drift = cash_drift_pct = cash_drift_day = None
+    try:
+        sr = get_study_results_df()
+        if sr is not None and not sr.empty:
+            cc = sr[sr["study"] == "cashcheck"].sort_values("ts").tail(1)
+            if len(cc):
+                p_ = float(cc.iloc[0].get("median_ret") or 0.0)
+                if abs(p_) > 0.02:
+                    cash_drift = float(cc.iloc[0].get("mean_ret") or 0.0)
+                    cash_drift_pct = p_
+                    cash_drift_day = str(cc.iloc[0].get("bucket") or "")
+    except Exception:  # noqa: BLE001 — diagnostics must never break the plan
+        pass
+
     expected_realized = sum(s["expected_net"] for s in active_sells if s["expected_net"])
     plan_gp_day = sum(b.get("gp_day") or 0 for b in buys)
     n_stale = sum(1 for s in sells if s.get("stale"))
@@ -904,6 +927,9 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         "free_gp": round(free_gp_raw), "committed_capital": round(committed),
         "holdings_value": round(holdings_value), "net_worth": round(net_worth_raw),
         "cash_clamped": bool(cash_clamped), "sizing_cash": round(free_gp),
+        "cash_drift": cash_drift, "cash_drift_pct": cash_drift_pct, "cash_drift_day": cash_drift_day,
+        # plugin's inventory-coins observation (lower bound; only meaningful when it EXCEEDS booked cash)
+        "coins_observed": (round(coins_observed) if coins_observed is not None and coins_observed > free_gp_raw * 1.05 else None),
         "capital_in": round(cap0),
         # portfolio totals (so the API can auto-snapshot the growth curve on every plan view)
         "realized_total": round(float(port.get("realized_total") or 0.0)),

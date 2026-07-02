@@ -141,6 +141,37 @@ export function GrowthTracker({ filters, refreshNonce }: { filters: Filters; ref
         <GrowthChart g={g} />
       </div>
 
+      {g.engines && g.engines.length > 0 && (
+        <>
+          <div className="slot-head" style={{ marginTop: 16 }}>
+            Which engine makes the money — realized P&L by strategy{" "}
+            <span className="dim">· from tagged ＋order buys · gp/M·day = net gp per million-gp-day of capital (the fair cross-engine comparator) · older untagged history pools under "untagged"</span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="left">Engine</th>
+                <th title="Closed round-trips attributed to this engine (by the buy order's tag)">Trips</th>
+                <th>Win rate</th>
+                <th title="Realized net gp, after tax">Net P&L</th>
+                <th title="Net gp per million-gp-day of deployed capital — compares a 12h flip fairly against a 3-week hold">gp / M·day</th>
+              </tr>
+            </thead>
+            <tbody>
+              {g.engines.map((e) => (
+                <tr key={e.engine}>
+                  <td className="name left">{e.engine === "overnight" ? "🌙 overnight" : e.engine === "range" ? "📐 range" : e.engine === "crash" ? "🔪 crash" : e.engine === "flip" ? "⚡ flip" : e.engine}</td>
+                  <td className="dim">{e.n}</td>
+                  <td className={e.win_rate >= 0.6 ? "pos" : ""}>{pct(e.win_rate, 0)}</td>
+                  <td className={e.net >= 0 ? "pos" : "neg"}>{gp(e.net)}</td>
+                  <td className={e.gp_per_mday != null && e.gp_per_mday >= 0 ? "pos" : "neg"}>{e.gp_per_mday == null ? "–" : e.gp_per_mday.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
       <div className="slot-head" style={{ marginTop: 16 }}>Road to billions — projected dates</div>
       <table className="tbl">
         <thead>

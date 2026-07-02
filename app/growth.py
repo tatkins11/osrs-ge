@@ -105,6 +105,7 @@ def compute_growth(th: Thresholds | None = None, con=None) -> dict:
     } for val, label in TARGETS]
 
     return {
+        "engines": port.get("engines") or [],   # per-engine P&L attribution (tagged round-trips)
         "bankroll": round(bankroll), "committed": round(committed),
         "holdings_value": round(holdings_value), "net_worth": round(net_worth),
         "realized_total": round(realized_total), "unrealized_total": round(unreal),

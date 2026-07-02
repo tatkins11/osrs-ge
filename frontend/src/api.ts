@@ -355,7 +355,7 @@ export interface Order {
   open: boolean;
 }
 export const getOrders = () => get<Order[]>("/api/orders");
-export const addOrder = (o: { item_id: number; side: "buy" | "sell"; price: number; total_qty: number; filled_qty?: number; slot?: number | null }) =>
+export const addOrder = (o: { item_id: number; side: "buy" | "sell"; price: number; total_qty: number; filled_qty?: number; slot?: number | null; tag?: string }) =>
   fetch("/api/orders/manual", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(o) }).then((r) => {
     if (!r.ok) throw new Error(`add order -> ${r.status}`);
     return r.json();
@@ -473,6 +473,10 @@ export interface PlanResponse {
   net_worth: number;          // free_gp + committed + holdings
   cash_clamped?: boolean;     // free_gp looked inflated vs recent history — sizing used sizing_cash instead
   sizing_cash?: number;       // the (possibly clamped) cash the plan actually sized buys from
+  cash_drift?: number | null;      // latest nightly cashcheck residual in gp (only set when material)
+  cash_drift_pct?: number | null;  // residual as a fraction of net worth (>2% = accounting drifted)
+  cash_drift_day?: string | null;
+  coins_observed?: number | null;  // plugin saw MORE coins in the pouch than booked free gp (undercount)
   capital_in: number;         // = sizing cash for new buys
   free_slots: number;
   slots_used: number;
@@ -551,7 +555,15 @@ export interface GrowthTarget {
   days_realized: number | null; // days to reach it at the realized rate (null = never at current rate)
   days_modeled: number | null;  // days to reach it at the plan's modeled rate
 }
+export interface EngineStat {
+  engine: string;          // overnight | range | crash | flip | untagged
+  n: number;               // closed round-trips attributed to it
+  net: number;             // realized net gp
+  win_rate: number;
+  gp_per_mday: number | null;  // net gp per MILLION-gp-DAY of capital deployed — the fair cross-engine comparator
+}
 export interface GrowthResponse {
+  engines: EngineStat[];   // per-engine P&L attribution (from [tag:x] on order fills)
   bankroll: number;        // free/cash component
   committed: number;       // gp in open buy offers
   holdings_value: number;

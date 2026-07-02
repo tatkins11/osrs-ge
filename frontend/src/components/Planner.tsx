@@ -95,7 +95,7 @@ export function Planner({
   refreshNonce: number;
   selectedId: number | null;
   onSelect: (id: number) => void;
-  onAddOrder: (o: { item_id: number; side: "buy" | "sell"; price: number; qty: number }) => void | Promise<void>;
+  onAddOrder: (o: { item_id: number; side: "buy" | "sell"; price: number; qty: number; tag?: string }) => void | Promise<void>;
 }) {
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -142,7 +142,7 @@ export function Planner({
   const buys = plan.slots.filter((s) => s.action === "BUY");
   const SLOTS = 8;
   const liveDot = (s: { live?: boolean }) => (s.live ? <span className="pos" title="Already live on the GE">● </span> : null);
-  const addBtn = (o: { item_id: number; side: "buy" | "sell"; price?: number | null; qty?: number | null; live?: boolean }) =>
+  const addBtn = (o: { item_id: number; side: "buy" | "sell"; price?: number | null; qty?: number | null; live?: boolean; tag?: string }) =>
     o.live ? (
       <span className="dim" title="already on the GE">live</span>
     ) : (
@@ -151,7 +151,7 @@ export function Planner({
         title="Add this as an open order to track it (and adjust your free gp)"
         onClick={(e) => {
           e.stopPropagation();
-          if (o.price && o.qty) onAddOrder({ item_id: o.item_id, side: o.side, price: o.price, qty: o.qty });
+          if (o.price && o.qty) onAddOrder({ item_id: o.item_id, side: o.side, price: o.price, qty: o.qty, tag: o.tag });
         }}
       >
         ＋ order
@@ -236,6 +236,9 @@ export function Planner({
         {plan.cash_clamped && (
           <> · <span className="neg">⚠ Free gp ({gpShort(plan.free_gp)}) looks inflated vs recent history — buys are sized off {gpShort(plan.sizing_cash ?? 0)} instead. If your real cash IS this high, re-set Free gp on the Portfolio page to re-baseline.</span></>
         )}
+        {plan.cash_drift_pct != null && (
+          <> · <span className="neg">⚠ accounting drifted {gpShort(Math.abs(plan.cash_drift ?? 0))} on {plan.cash_drift_day} ({(Math.abs(plan.cash_drift_pct) * 100).toFixed(1)}% of net worth) — the day's net-worth change doesn't reconcile with P&L. Re-set Free gp on Portfolio to re-baseline.</span></>
+        )}
       </div>
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
@@ -305,7 +308,10 @@ export function Planner({
             <tr key={b.item_id} className={b.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(b.item_id)}>
               <td className="left"><span className={`badge ${ACT_BADGE[b.action]}`}>{liveDot(b)}{b.tag === "range" ? "📐 " : b.tag === "crash" ? "🔪 " : b.overnight ? "🌙 " : ""}{b.action}</span></td>
               <td className="name left">{b.name}</td>
-              <td>{(b.units ?? 0).toLocaleString()}</td>
+              <td title={b.exp_units != null && b.exp_units < (b.units ?? 0) ? `Place ${b.units?.toLocaleString()}; the printed-depth model expects ~${b.exp_units.toLocaleString()} to actually fill on a dip night` : undefined}>
+                {(b.units ?? 0).toLocaleString()}
+                {b.exp_units != null && b.exp_units < (b.units ?? 0) && <span className="dim"> ≈{b.exp_units.toLocaleString()}</span>}
+              </td>
               <td>{gp(b.price)}</td>
               <td>{gp(b.sell_target)}</td>
               <td className="dim">{gpShort(b.capital)}</td>
@@ -314,7 +320,7 @@ export function Planner({
               {fillCell(b)}
               <td className="dim">{hrs(b.roundtrip_h)}</td>
               <td className="left dim" title={b.reason}>{b.reason}</td>
-              <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: b.item_id, side: "buy", price: b.price, qty: b.units, live: b.live })}</td>
+              <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: b.item_id, side: "buy", price: b.price, qty: b.units, live: b.live, tag: b.tag ?? (b.overnight ? "overnight" : "flip") })}</td>
             </tr>
           ))}
           {buys.length === 0 && <tr><td colSpan={12} className="left muted">{plan.free_slots === 0 ? "All 8 slots are taken." : plan.mode === "2touch" ? "No overnight setups qualify tonight (fill odds ≥30% + win ≥55% + exitable next day + a filled night pays your Min profit/RT). Some nights are thin — don't force it; lower Min profit/RT to surface smaller setups." : "No buys clear the bar (your Min profit/round-trip + filters). Lower it on the toolbar to surface smaller flips."}</td></tr>}
@@ -350,7 +356,7 @@ export function Planner({
                   <td className="dim">{o.fill_prob == null ? "–" : `${Math.round(o.fill_prob * 100)}%`}</td>
                   <td className={(o.win_rate ?? 0) >= 0.6 ? "pos" : "dim"}>{o.win_rate == null ? "–" : `${Math.round(o.win_rate * 100)}%`}</td>
                   <td className="pos">{gpShort(o.ev)}</td>
-                  <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: o.item_id, side: "buy", price: o.buy, qty: o.units })}</td>
+                  <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: o.item_id, side: "buy", price: o.buy, qty: o.units, tag: "overnight" })}</td>
                 </tr>
               ))}
             </tbody>
