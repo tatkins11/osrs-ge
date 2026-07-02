@@ -643,12 +643,20 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
             except Exception:  # noqa: BLE001
                 pat = None
             if pat:
+                # League/seasonal-reward items pass the statistical gates right up until their
+                # event cycle breaks the regime (-44..-79% collapses live on 7/02). Blunt name
+                # filter: their history can't be trusted to repeat — keep them out of auto-slots.
+                EVENT_WORDS = ("trailblazer", "league", "shattered relics", "raging echoes",
+                               "twisted teleport", "contract of", "echo ")
+                def _eventy(nm) -> bool:
+                    s = str(nm or "").lower()
+                    return any(w in s for w in EVENT_WORDS)
                 plays = []
                 for pr_ in pat.get("range", []):
-                    if pr_.get("at_band") and not pr_.get("broken"):
+                    if pr_.get("at_band") and not pr_.get("broken") and not _eventy(pr_.get("name")):
                         plays.append(("range", pr_, float(pr_["med_ret"]) / max(float(pr_["avg_days"]), 7.0)))
                 for pr_ in pat.get("crash", []):
-                    if pr_.get("crashing_now") and not pr_.get("broken"):
+                    if pr_.get("crashing_now") and not pr_.get("broken") and not _eventy(pr_.get("name")):
                         plays.append(("crash", pr_, 0.15 / 12.0))          # +15% target over ~12d
                 plays.sort(key=lambda x: x[2], reverse=True)
                 pids = [int(p[1]["item_id"]) for p in plays]
