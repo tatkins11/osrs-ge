@@ -11,11 +11,11 @@ while outfit buyers pay a convenience premium for the one-click set. Harvesting 
 two-sided execution + clerk trips - unattractive to 5-minute margin flippers, PERFECT for the
 2-touch rhythm: lowball the pieces overnight, combine at the clerk in the morning, list the set.
 
-The Moons sets (Blood/Eclipse/Blue; armour-only sets: helm + chestplate + tassets) were verified
-exchangeable in-game 2026-07-02 — their persistent +16..+33% basis is the widest on the board.
-Why it survives: piece supply pours in from Moons of Peril (a popular mid-game grind) while the
-set is the convenience form; combining takes clerk trips nobody automates. Still: the numbers are
-extreme, so scale in with ONE test cycle per set first.
+The Moons sets are clerk-exchangeable (verified in-game 2026-07-02) and contain FOUR pieces —
+helm + chestplate + tassets + the WEAPON. The earlier "+33% persistent basis" was a mapping
+artifact (armour-only components, omitting the weapon's cost); with the correct mapping their
+basis is ordinary. The too-good-to-be-true rule caught its own bug. Standing rule stays: one
+cheap test cycle before scaling any newly-verified set.
 """
 from __future__ import annotations
 
@@ -37,9 +37,11 @@ SETS: dict[str, list[str]] = {
     "Sunfire fanatic armour set": ["Sunfire fanatic helm", "Sunfire fanatic cuirass", "Sunfire fanatic chausses"],
     "Obsidian armour set": ["Obsidian helmet", "Obsidian platebody", "Obsidian platelegs"],
     "Dragon armour set (lg)": ["Dragon full helm", "Dragon platebody", "Dragon platelegs", "Dragon kiteshield"],
-    "Blood moon armour set": ["Blood moon helm", "Blood moon chestplate", "Blood moon tassets"],
-    "Eclipse moon armour set": ["Eclipse moon helm", "Eclipse moon chestplate", "Eclipse moon tassets"],
-    "Blue moon armour set": ["Blue moon helm", "Blue moon chestplate", "Blue moon tassets"],
+    # Moons sets INCLUDE the weapon (Tristan verified in-game 2026-07-02) — the armour-only mapping
+    # printed a fake +33% basis by omitting a quarter of the cost.
+    "Blood moon armour set": ["Blood moon helm", "Blood moon chestplate", "Blood moon tassets", "Dual macuahuitl"],
+    "Eclipse moon armour set": ["Eclipse moon helm", "Eclipse moon chestplate", "Eclipse moon tassets", "Eclipse atlatl"],
+    "Blue moon armour set": ["Blue moon helm", "Blue moon chestplate", "Blue moon tassets", "Blue moon spear"],
 }
 # clerk exchange confirmed for the classic families; Moons sets (Blood/Eclipse/Blue — armour-only:
 # helm + chestplate + tassets, no weapon) verified IN-GAME by Tristan 2026-07-02. Sunfire remains
