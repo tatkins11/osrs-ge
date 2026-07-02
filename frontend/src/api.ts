@@ -498,6 +498,22 @@ export interface PlanResponse {
 export const getPlan = (f: Filters, mode: string = "active") =>
   get<PlanResponse>(`/api/plan?${qs(f)}&mode=${encodeURIComponent(mode)}`);
 
+// --- set <-> components conversion arb (GE clerk packs/unpacks for free) ----
+export interface SetArbRow {
+  set_id: number;
+  name: string;
+  pieces: string[];
+  pieces_cost: number;     // sum of piece bids (patient lowball fills land ~here)
+  set_sell: number;        // the set's ask (list here)
+  net_per_set: number;     // after 2% tax
+  roi: number;
+  instant_roi: number | null;  // crossing the whole spread both ways (fire-now arb if > 0)
+  set_sell_uptime: number; // how often a set BUYER is present (5-min windows, last 7d)
+  sets_per_day: number;    // the capacity constraint
+  verified: boolean;       // clerk exchange confirmed for this family; else verify in-game first
+}
+export const getSetArb = () => get<{ rows: SetArbRow[] }>("/api/setarb");
+
 // --- bankroll growth tracker -----------------------------------------------
 export interface GrowthTarget {
   label: string;

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { getPlan, type ClockHour, type Filters, type PlanResponse, type PlanSlot } from "../api";
+import { getPlan, getSetArb, type ClockHour, type Filters, type PlanResponse, type PlanSlot, type SetArbRow } from "../api";
 import { centralHourNow, centralTimeNow, gp, gpShort, hour12, utcHourToCentral, utcOffsetFromCentral } from "../format";
 
 function Tile({ k, v, cls = "", title }: { k: string; v: ReactNode; cls?: string; title?: string }) {
@@ -103,10 +103,17 @@ export function Planner({
   // 2touch = overnight-first (the OOS-proven edge; two sessions/day) — the default for a
   // couple-hours-a-day schedule. active = presence-required fast flips for keyboard sessions.
   const [mode, setMode] = useState<string>(() => localStorage.getItem("ge.plan.mode") ?? "2touch");
+  const [setArb, setSetArb] = useState<SetArbRow[]>([]);
   const pickMode = (m: string) => {
     setMode(m);
     localStorage.setItem("ge.plan.mode", m);
   };
+
+  // set<->components conversion arb (slow-moving; refresh with the plan)
+  useEffect(() => {
+    if (mode !== "2touch") return;
+    getSetArb().then((d) => setSetArb(d.rows)).catch(() => setSetArb([]));
+  }, [refreshNonce, mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,6 +351,46 @@ export function Planner({
                   <td className={(o.win_rate ?? 0) >= 0.6 ? "pos" : "dim"}>{o.win_rate == null ? "–" : `${Math.round(o.win_rate * 100)}%`}</td>
                   <td className="pos">{gpShort(o.ev)}</td>
                   <td className="left ord-actions" onClick={(e) => e.stopPropagation()}>{addBtn({ item_id: o.item_id, side: "buy", price: o.buy, qty: o.units })}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {mode === "2touch" && setArb.filter((r) => r.roi > 0.02).length > 0 && (
+        <>
+          <div className="slot-head" style={{ marginTop: 16 }}>
+            🧩 Set arbitrage — lowball the pieces, combine at the GE clerk (free), list the set{" "}
+            <span className="dim">· Barrows-family sets trade at a persistent +4-10% premium over their pieces (365d validated) · fits the 2-touch rhythm: pieces fill overnight, combine + list in the morning</span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="left">Set</th>
+                <th title="Sum of the piece bids — patient lowball fills land about here">Pieces cost</th>
+                <th title="List the combined set at the ask">Set sell</th>
+                <th title="After the 2% sell tax">Net/set</th>
+                <th>ROI</th>
+                <th title="Crossing the full spread both ways RIGHT NOW — if positive, it pays even without patience">Instant</th>
+                <th title="How often a set BUYER is present (5-min windows, last 7d)">Sell uptime</th>
+                <th title="Sets traded per day — the capacity constraint">Sets/day</th>
+              </tr>
+            </thead>
+            <tbody>
+              {setArb.filter((r) => r.roi > 0.02).map((r) => (
+                <tr key={r.set_id} className={r.set_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.set_id)}>
+                  <td className="name left" title={`Pieces: ${r.pieces.join(", ")}`}>
+                    {r.name}
+                    {!r.verified && <span className="neg" title="Clerk exchange NOT yet confirmed for this set — check the GE clerk's Sets tab in-game before trading it"> ⚠ verify</span>}
+                  </td>
+                  <td>{gp(r.pieces_cost)}</td>
+                  <td>{gp(r.set_sell)}</td>
+                  <td className="pos">{gp(r.net_per_set)}</td>
+                  <td className="pos">{(r.roi * 100).toFixed(1)}%</td>
+                  <td className={r.instant_roi != null && r.instant_roi > 0 ? "pos" : "dim"}>{r.instant_roi == null ? "–" : `${(r.instant_roi * 100).toFixed(1)}%`}</td>
+                  <td className={fillCls(r.set_sell_uptime)}>{Math.round(r.set_sell_uptime * 100)}%</td>
+                  <td className="dim">{r.sets_per_day.toFixed(0)}</td>
                 </tr>
               ))}
             </tbody>

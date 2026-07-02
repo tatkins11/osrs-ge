@@ -463,6 +463,15 @@ def allocator(th: Thresholds = Depends(get_thresholds)) -> dict:
     return res
 
 
+@app.get("/api/setarb")
+def setarb() -> dict:
+    """Set<->components conversion arb scan (GE clerk packs/unpacks sets for free). Validated
+    edge: Barrows-family sets carry a persistent +4-10% premium over their pieces. Recommender
+    only — lowball the pieces, combine at the clerk, list the set."""
+    from .setarb import scan
+    return {"rows": scan()}
+
+
 @app.get("/api/plan")
 def plan(th: Thresholds = Depends(get_thresholds),
          mode: str = Query("active", pattern="^(active|2touch)$")) -> dict:
