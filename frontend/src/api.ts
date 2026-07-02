@@ -498,6 +498,31 @@ export interface PlanResponse {
 export const getPlan = (f: Filters, mode: string = "active") =>
   get<PlanResponse>(`/api/plan?${qs(f)}&mode=${encodeURIComponent(mode)}`);
 
+// --- per-item chart-pattern rosters (range plays + crash-recovery plays) ----
+export interface RangePlay {
+  item_id: number;
+  name: string;
+  cycles: number;
+  med_ret: number;     // median per completed cycle (net of tax)
+  win: number;
+  avg_days: number;
+  p20: number;         // the item's own trailing-60d buy band
+  p70: number;         // the sell band
+  cur: number;
+  at_band: boolean;    // price is at/below its buy band RIGHT NOW
+}
+export interface CrashPlay {
+  item_id: number;
+  name: string;
+  crashes: number;
+  med_ret: number;     // median recovery per historical crash (net of tax)
+  win: number;
+  worst: number;       // the worst historical outcome — size for this
+  r5_now: number;      // current 5d return
+  crashing_now: boolean;
+}
+export const getPatterns = () => get<{ range: RangePlay[]; crash: CrashPlay[]; built_at: string }>("/api/patterns");
+
 // --- set <-> components conversion arb (GE clerk packs/unpacks for free) ----
 export interface SetArbRow {
   set_id: number;

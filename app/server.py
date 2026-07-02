@@ -463,6 +463,15 @@ def allocator(th: Thresholds = Depends(get_thresholds)) -> dict:
     return res
 
 
+@app.get("/api/patterns")
+def patterns() -> dict:
+    """Per-item chart-pattern rosters (range plays + repeat-crash-recovery plays) joined to live
+    prices with actionable-now flags. First call after startup builds the rosters (~1 min on the
+    droplet); cached 12h after. Recommender only."""
+    from .patterns import rosters
+    return rosters()
+
+
 @app.get("/api/setarb")
 def setarb() -> dict:
     """Set<->components conversion arb scan (GE clerk packs/unpacks sets for free). Validated

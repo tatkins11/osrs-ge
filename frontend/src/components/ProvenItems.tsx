@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { getProvenItems, type ProvenItem } from "../api";
-import { pct, spct } from "../format";
+import { getPatterns, getProvenItems, type CrashPlay, type ProvenItem, type RangePlay } from "../api";
+import { gp, pct, spct } from "../format";
 
 const KINDS = ["all", "overnight", "crash", "value", "flip"] as const;
 const KIND_CLS: Record<string, string> = {
@@ -21,6 +21,7 @@ export function ProvenItems({
   const [kind, setKind] = useState<string>("all");
   const [rows, setRows] = useState<ProvenItem[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [pat, setPat] = useState<{ range: RangePlay[]; crash: CrashPlay[] } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +34,13 @@ export function ProvenItems({
       cancelled = true;
     };
   }, [kind, refreshNonce]);
+
+  // pattern rosters rebuild at most every 12h server-side; the first call after a deploy is slow
+  useEffect(() => {
+    let cancelled = false;
+    getPatterns().then((p) => !cancelled && setPat(p)).catch(() => {});
+    return () => { cancelled = true; };
+  }, [refreshNonce]);
 
   if (err) return <div className="empty">Proven-items error: {err}</div>;
 
@@ -82,6 +90,76 @@ export function ProvenItems({
             ))}
           </tbody>
         </table>
+      )}
+
+      {pat && pat.range.length > 0 && (
+        <>
+          <div className="slot-head" style={{ marginTop: 18 }}>
+            📐 Range plays — items that reliably oscillate in their own band{" "}
+            <span className="dim">· buy the item's OWN trailing-60d P20, sell its P70 · OOS-validated +7.7% median/cycle at 80% win, ~2-4 week holds · <b className="pos">AT BAND</b> = buyable now</span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="left">Item</th><th className="left">Status</th>
+                <th title="Completed simulated cycles in the last year (walk-forward bands, execution-honest)">Cycles</th>
+                <th title="Median net return per completed cycle, after tax">Med/cycle</th>
+                <th>Win</th><th title="Average days per cycle">~Hold</th>
+                <th title="The item's own buy band (trailing-60d 20th percentile)">Buy ≤</th>
+                <th title="The sell band (trailing-60d 70th percentile)">Sell ≥</th><th>Now</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pat.range.slice(0, 14).map((r) => (
+                <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
+                  <td className="name left">{r.name}</td>
+                  <td className="left">{r.at_band ? <span className="badge badge-STRONG_BUY">AT BAND</span> : <span className="dim">wait</span>}</td>
+                  <td className="dim">{r.cycles}</td>
+                  <td className="pos">{spct(r.med_ret)}</td>
+                  <td className={r.win >= 0.8 ? "pos" : ""}>{pct(r.win, 0)}</td>
+                  <td className="dim">{r.avg_days.toFixed(0)}d</td>
+                  <td>{gp(r.p20)}</td>
+                  <td>{gp(r.p70)}</td>
+                  <td className={r.cur <= r.p20 ? "pos" : "dim"}>{gp(r.cur)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {pat && pat.crash.length > 0 && (
+        <>
+          <div className="slot-head" style={{ marginTop: 18 }}>
+            🔪 Crash plays — items that have ALWAYS bounced{" "}
+            <span className="dim">· 5d drop ≤−20% → buy next day, target +15%, 30d cap · pooled +17.2% median at 72% win, worst tails −28% (size ≤15% of net worth) · <b className="neg">CRASHING NOW</b> = the setup is live</span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="left">Item</th><th className="left">Status</th>
+                <th title="Historical crash events (>=20% in 5d) in the last year">Crashes</th>
+                <th title="Median net recovery per historical crash">Med bounce</th>
+                <th>Win</th>
+                <th title="Worst historical outcome — this is the risk you size for">Worst</th>
+                <th title="Current 5-day return">5d now</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pat.crash.slice(0, 14).map((r) => (
+                <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
+                  <td className="name left">{r.name}</td>
+                  <td className="left">{r.crashing_now ? <span className="badge badge-STRONG_SELL">CRASHING NOW</span> : <span className="dim">quiet</span>}</td>
+                  <td className="dim">{r.crashes}</td>
+                  <td className="pos">{spct(r.med_ret)}</td>
+                  <td className={r.win >= 0.85 ? "pos" : ""}>{pct(r.win, 0)}</td>
+                  <td className="neg">{spct(r.worst)}</td>
+                  <td className={r.r5_now <= -0.2 ? "neg" : "dim"}>{spct(r.r5_now)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );
