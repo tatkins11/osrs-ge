@@ -27,7 +27,7 @@ import pandas as pd
 
 from . import portfolio as pf
 from . import tax as taxmod
-from .db import connect, connect_trades, get_free_gp, get_orders_df, get_signal_outcomes_df
+from .db import connect, connect_trades, get_free_gp, get_orders_df, get_signal_outcomes_df, utcnow
 from .liquidity import fill_uptime, market_clock, peak_hours
 from .signals import KNIFE_SLOPE_PER_DAY, Thresholds, market_signals, overnight_table
 
@@ -444,10 +444,22 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         cand_rows[iid] = (mgn, buy_at, sell_at, ex, vol_day, limit, r)
     good_buy_ids = set(cand_rows)
 
+    # tonight's overnight candidates — needed DURING reconcile (a live lowball must be judged as
+    # an overnight order, not a fast flip) and reused by the 2-touch allocator below.
+    omap: dict[int, dict] = {}
+    if mode == "2touch":
+        try:
+            omap = {int(oc.get("item_id") or 0): oc for oc in overnight_table(th, d=ms, limit=40)}
+        except Exception:  # noqa: BLE001
+            omap = {}
+
     # reconcile each live order against the plan: keep / reprice / cancel
     reconcile = []
     kept_buy_ids = set()
     kept_buy_info: dict[int, tuple] = {}   # iid -> (price, total_qty, filled_qty) of the actual order
+    kept_on_ids = set()                    # live OVERNIGHT lowballs we're keeping (occupy slots too)
+    kept_on_info: dict[int, tuple] = {}    # iid -> (price, total, filled, tonight's candidate row or None)
+    now_ts = pd.Timestamp(utcnow())
     if not open_orders.empty:
         for o in open_orders.itertuples():
             iid, side = int(o.item_id), str(o.side)
@@ -467,6 +479,43 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
                     status, note = "keep", "sell offer (no tracked holding)"
             else:  # buy
                 bu = prof.get(iid, {}).get("buy", 0.0)
+                bid_now = _f(sig.get(iid, {}).get("buy_price")) or 0.0
+                opened = getattr(o, "opened_ts", None)
+                age_h = ((now_ts - pd.Timestamp(opened)).total_seconds() / 3600.0) if opened is not None and pd.notna(opened) else None
+                oc = omap.get(iid)
+                # A LOWBALL (priced at/below the current bid) in 2-touch mode is the overnight
+                # strategy working as designed — it's SUPPOSED to sit unfilled unless a dip hits
+                # it. Judging it with fast-flip logic created a place -> "cancel" -> re-recommend
+                # loop. Lifecycle instead: keep overnight; reprice if tonight's optimal lowball
+                # moved; cancel only once the overnight window has passed without a fill.
+                # market slid BELOW the lowball: the offer is now at/above the bid and would fill
+                # at a stale (no-longer-discounted) price — reprice down to tonight's lowball
+                if mode == "2touch" and price > 0 and bid_now > 0 and price > bid_now * 1.005 and oc:
+                    ob2 = _f(oc.get("on_buy"))
+                    if ob2:
+                        reconcile.append({"order_id": getattr(o, "order_id", None), "item_id": iid, "name": nm,
+                                          "side": side, "price": price, "progress": prog, "status": "reprice",
+                                          "note": f"market moved below your offer — reprice to tonight's lowball ~{ob2:,.0f}"})
+                        kept_on_ids.add(iid)
+                        kept_on_info[iid] = (price, int(o.total_qty or 0), int(o.filled_qty or 0), oc)
+                        continue
+                # 0.5% tolerance: the bid drifts tick-to-tick after placement; in 2-touch there are
+                # no fast-flip BUY recs, so anything at/near the bid is a lowball by construction
+                if mode == "2touch" and price > 0 and bid_now > 0 and price <= bid_now * 1.005:
+                    ob = _f(oc.get("on_buy")) if oc else None
+                    if age_h is not None and age_h > 14:
+                        status, note = "cancel", f"lowball didn't fill overnight ({prog} after {age_h:.0f}h) — cancel & redeploy the cash"
+                    elif ob and abs(price - ob) / max(ob, 1.0) > 0.03:
+                        status, note = "reprice", f"reprice to ~{ob:,.0f} — tonight's optimal lowball moved with the bid"
+                        kept_on_ids.add(iid)
+                        kept_on_info[iid] = (price, int(o.total_qty or 0), int(o.filled_qty or 0), oc)
+                    else:
+                        status, note = "keep", "overnight lowball working — fills only if price dips; check it at your morning session"
+                        kept_on_ids.add(iid)
+                        kept_on_info[iid] = (price, int(o.total_qty or 0), int(o.filled_qty or 0), oc)
+                    reconcile.append({"order_id": getattr(o, "order_id", None), "item_id": iid, "name": nm,
+                                      "side": side, "price": price, "progress": prog, "status": status, "note": note})
+                    continue
                 # the item being a good buy at the COMPETITIVE price isn't enough — the margin must
                 # also survive at YOUR standing order's price, or "keep filling" locks in a loss
                 # (the flaw showed as a negative Buys-gp/day tile on a kept order).
@@ -488,7 +537,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
                               "side": side, "price": price, "progress": prog, "status": status, "note": note})
 
     # ---- 3) fill the free slots with new buys ----------------------------------------------
-    slots_used_existing = len(active_sells) + len(kept_buy_ids)
+    slots_used_existing = len(active_sells) + len(kept_buy_ids) + len(kept_on_ids)
     free_slots = max(0, 8 - slots_used_existing)
     excl = held_ids | live_buy_ids   # don't re-recommend held items or items already on a live buy
     new_buys = []
@@ -505,10 +554,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         # the overnight premium exists BECAUSE you're asleep — actives can't harvest it without
         # also sleeping on inventory. Evening: place these before bed. Morning: collect + list.
         roster = _overnight_roster()
-        try:
-            ocands = overnight_table(th, d=ms, limit=40)   # deep pool — the per-slot profit bar below culls it
-        except Exception:  # noqa: BLE001
-            ocands = []
+        ocands = list(omap.values())   # computed above (deep pool; the per-slot profit bar culls it)
         oids = [int(o.get("item_id") or 0) for o in ocands]
         oprof = fill_uptime([i for i in oids if i and i not in excl]) if oids else {}
         scored = []
@@ -668,6 +714,29 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         sud = pr.get("sell_units_day", 0.0)
         row["days_to_liquidate"] = round(rem_units / (CAPTURE * sud), 1) if sud > 0 else None
         kept_buy_rows.append(row)
+
+    # live overnight lowballs we're keeping: show them as 🌙 BUY rows at their ACTUAL order price
+    # (they occupy slots; the allocator's excl already stops re-recommending the same item)
+    for iid, (o_price, o_total, o_filled, oc) in kept_on_info.items():
+        rem_units = max(1, o_total - o_filled)
+        s_info = sig.get(iid, {})
+        tgt = (_f(oc.get("on_target")) if oc else None) or _f(s_info.get("established"))
+        ex = bool(s_info.get("exempt"))
+        mgn = (taxmod.net_sell(int(round(tgt)), ex) - o_price) if tgt else None
+        fp = _f(oc.get("on_fill_prob")) if oc else None
+        wr = _f(oc.get("on_win_rate")) if oc else None
+        kept_buy_rows.append({
+            "action": "BUY", "item_id": iid,
+            "name": (oc or {}).get("name") or s_info.get("name") or str(iid),
+            "price": round(o_price), "sell_target": round(tgt) if tgt else None,
+            "units": int(rem_units), "capital": round(rem_units * o_price),
+            "margin": round(mgn) if mgn is not None else None,
+            "gp_day": round(mgn * rem_units * fp * wr) if (mgn and fp and wr) else None,
+            "buy_h": None, "roundtrip_h": None, "live": True, "overnight": True,
+            "reason": f"live overnight lowball — leave it working ({o_filled:,}/{o_total:,} filled)",
+            "fill_freq": round(fp, 3) if fp is not None else None,
+            "sell_freq": None, "days_to_liquidate": None,
+        })
 
     # ---- 4) assemble ------------------------------------------------------------------------
     active_sells.sort(key=lambda s: ({"CUT": 0, "SELL": 1}.get(s["action"], 2), -(s.get("expected_net") or 0)))
