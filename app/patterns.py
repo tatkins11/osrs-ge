@@ -117,12 +117,17 @@ def rosters(con=None) -> dict:
                 p20 = float(gg.mid.tail(60).quantile(0.20))
                 p70 = float(gg.mid.tail(60).quantile(0.70))
                 cur = float(gg.mid.iloc[-1])
+                # AT BAND means at/just under the band — a price 25%+ BELOW the band isn't an
+                # oscillation entry, it's the range breaking down (League/event items collapsing
+                # showed up here). Those get flagged broken, never buyable.
+                broken = cur < p20 * 0.75
                 rng_rows.append({
                     "item_id": int(iid), "name": name_of.get(iid, str(iid)),
                     "cycles": len(tr), "med_ret": round(float(r.median()), 4),
                     "win": round(float((r > 0).mean()), 3), "avg_days": round(held, 1),
                     "p20": round(p20), "p70": round(p70), "cur": round(cur),
-                    "at_band": bool(cur <= p20 * 1.01),
+                    "at_band": bool(cur <= p20 * 1.01 and not broken),
+                    "broken": bool(broken),
                 })
         ev = _sim_crash(g)
         if len(ev) >= 3:
@@ -130,11 +135,15 @@ def rosters(con=None) -> dict:
             if e.median() >= 0.10 and (e > 0).mean() >= 0.80:
                 gg = g.reset_index(drop=True)
                 r5_now = float(gg.mid.iloc[-1] / gg.mid.iloc[-6] - 1) if len(gg) > 6 else 0.0
+                # the roster validated ~-20..-45% dips. A -50%+ collapse is OUTSIDE the historical
+                # envelope (a regime break — event/League items dying), not the validated setup.
                 crash_rows.append({
                     "item_id": int(iid), "name": name_of.get(iid, str(iid)),
                     "crashes": len(ev), "med_ret": round(float(e.median()), 4),
                     "win": round(float((e > 0).mean()), 3), "worst": round(float(e.min()), 4),
-                    "r5_now": round(r5_now, 4), "crashing_now": bool(r5_now <= -0.20),
+                    "r5_now": round(r5_now, 4),
+                    "crashing_now": bool(-0.45 <= r5_now <= -0.20),
+                    "broken": bool(r5_now < -0.45),
                 })
     rng_rows.sort(key=lambda x: (not x["at_band"], -x["med_ret"]))
     crash_rows.sort(key=lambda x: (not x["crashing_now"], -x["med_ret"]))

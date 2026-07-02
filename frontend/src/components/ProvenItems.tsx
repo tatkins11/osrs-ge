@@ -113,7 +113,7 @@ export function ProvenItems({
               {pat.range.slice(0, 14).map((r) => (
                 <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
                   <td className="name left">{r.name}</td>
-                  <td className="left">{r.at_band ? <span className="badge badge-STRONG_BUY">AT BAND</span> : <span className="dim">wait</span>}</td>
+                  <td className="left">{r.broken ? <span className="badge badge-ILLIQUID" title="Price collapsed far below the band — the range is breaking down; do NOT buy this as an oscillation">⚠ broken</span> : r.at_band ? <span className="badge badge-STRONG_BUY">AT BAND</span> : <span className="dim">wait</span>}</td>
                   <td className="dim">{r.cycles}</td>
                   <td className="pos">{spct(r.med_ret)}</td>
                   <td className={r.win >= 0.8 ? "pos" : ""}>{pct(r.win, 0)}</td>
@@ -149,7 +149,7 @@ export function ProvenItems({
               {pat.crash.slice(0, 14).map((r) => (
                 <tr key={r.item_id} className={r.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(r.item_id)}>
                   <td className="name left">{r.name}</td>
-                  <td className="left">{r.crashing_now ? <span className="badge badge-STRONG_SELL">CRASHING NOW</span> : <span className="dim">quiet</span>}</td>
+                  <td className="left">{r.broken ? <span className="badge badge-ILLIQUID" title="Collapse deeper than anything this item historically recovered from — a regime break, not the validated setup">⚠ regime break</span> : r.crashing_now ? <span className="badge badge-STRONG_SELL">CRASHING NOW</span> : <span className="dim">quiet</span>}</td>
                   <td className="dim">{r.crashes}</td>
                   <td className="pos">{spct(r.med_ret)}</td>
                   <td className={r.win >= 0.85 ? "pos" : ""}>{pct(r.win, 0)}</td>

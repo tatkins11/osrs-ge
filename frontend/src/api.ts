@@ -509,7 +509,8 @@ export interface RangePlay {
   p20: number;         // the item's own trailing-60d buy band
   p70: number;         // the sell band
   cur: number;
-  at_band: boolean;    // price is at/below its buy band RIGHT NOW
+  at_band: boolean;    // price is at/just under its buy band RIGHT NOW (buyable)
+  broken?: boolean;    // price 25%+ BELOW the band — the range is breaking down, not an entry
 }
 export interface CrashPlay {
   item_id: number;
@@ -519,7 +520,8 @@ export interface CrashPlay {
   win: number;
   worst: number;       // the worst historical outcome — size for this
   r5_now: number;      // current 5d return
-  crashing_now: boolean;
+  crashing_now: boolean;  // -20..-45%: inside the validated envelope — the setup is live
+  broken?: boolean;       // deeper than -45%: a regime break (event items dying), NOT the setup
 }
 export const getPatterns = () => get<{ range: RangePlay[]; crash: CrashPlay[]; built_at: string }>("/api/patterns");
 
