@@ -739,6 +739,21 @@ def ingest_offers(events: list[dict], coins_observed: int | None = None) -> dict
                            ORDER BY (slot=?) DESC, updated_ts DESC LIMIT 1""",
                         [item_id, total, side, ts - timedelta(hours=1), slot, slot],
                     ).fetchone()
+                    if m is None:
+                        # EXACT-duplicate long window: an uncollected completed offer re-reported hours
+                        # later (plugin restart) is byte-identical — same price, fill, spend AND state.
+                        # A genuinely new flip of the same item can't collide (its spent/fill history
+                        # differs and it passes through an OPEN state first). Live incident 2026-07-04:
+                        # a SOLD re-report 2.5h later slipped past the 1h window and double-credited
+                        # +8.64M cash + a duplicate trade. Merging makes the re-report a true no-op.
+                        m = con.execute(
+                            """SELECT order_id, trade_id FROM orders
+                               WHERE item_id=? AND total_qty=? AND side=? AND price=?
+                                 AND filled_qty=? AND spent=? AND state=?
+                                 AND updated_ts >= ?
+                               ORDER BY updated_ts DESC LIMIT 1""",
+                            [item_id, total, side, price, filled, spent, state, ts - timedelta(hours=48)],
+                        ).fetchone()
                 if m:
                     oid, existing = m[0], (m[1],)
             if existing is None:
