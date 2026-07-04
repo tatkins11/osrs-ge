@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getGrowth, getPlan, type Filters, type GrowthResponse, type PlanResponse, type PlanSlot } from "../api";
+import { getGrowth, getPlan, getSetArb, type Filters, type GrowthResponse, type PlanResponse, type PlanSlot, type SetArbRow } from "../api";
 import { centralHourNow, centralTimeNow, gp, gpShort, pct } from "../format";
 import { GrowthChart } from "./GrowthTracker";
 import { LiquidityClock } from "./Planner";
@@ -30,6 +30,13 @@ export function Dashboard({
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [g, setG] = useState<GrowthResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [arb, setArb] = useState<SetArbRow[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSetArb().then((d) => !cancelled && setArb(d.rows)).catch(() => {});
+    return () => { cancelled = true; };
+  }, [refreshNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,7 +151,17 @@ export function Dashboard({
               <span className="why">{s.reason}</span>
             </div>
           ))}
-          {actions.length === 0 && (
+          {arb.filter((r) => r.verified && r.roi > 0.04).slice(0, 2).map((r) => (
+            <div key={`arb-${r.set_id}`} className="act-row" onClick={() => goTo("allocate")}>
+              <span className="badge badge-ILLIQUID">🧩 CONVERT</span>
+              <span className="nm">{r.name}</span>
+              <span className="qp">{gpShort(r.net_per_set)}/cycle</span>
+              <span className="why">
+                {(r.roi * 100).toFixed(1)}% patient{r.instant_roi != null && r.instant_roi > 0 ? ` · +${(r.instant_roi * 100).toFixed(1)}% instant` : ""} · idle cash sink — details on the 8-Slot Plan tab
+              </span>
+            </div>
+          ))}
+          {actions.length === 0 && arb.filter((r) => r.verified && r.roi > 0.04).length === 0 && (
             <div className="muted" style={{ padding: "10px 4px" }}>
               Nothing needs your hands right now — offers are working. Check back at the next session.
             </div>

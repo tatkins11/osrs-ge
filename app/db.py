@@ -772,12 +772,28 @@ def ingest_offers(events: list[dict], coins_observed: int | None = None) -> dict
                         con.execute("UPDATE orders SET state=?, completed_ts=? WHERE order_id=?", [s_state, ts, s_oid])
                         made += _log_fill_delta(con, s_oid, ts, "GE auto · slot reused")  # log its unlogged fills
                         _reconcile_order_cash(con, s_oid)   # displaced order finalized -> settle its cash
+                # AUTO-TAG: he places orders in-game (never through the +order buttons), so match
+                # this new buy against the plan's recent BUY recs — same item, price within 5%,
+                # rec'd in the last 24h — and inherit its engine tag for P&L attribution.
+                auto_tag = None
+                if side == "buy":
+                    try:
+                        tg = con.execute(
+                            """SELECT tag FROM plan_log
+                               WHERE action = 'BUY' AND item_id = ? AND tag IS NOT NULL
+                                 AND ts >= ? AND price BETWEEN ? AND ?
+                               ORDER BY ts DESC LIMIT 1""",
+                            [item_id, ts - timedelta(hours=24), int(price * 0.95), int(price * 1.05)],
+                        ).fetchone()
+                        auto_tag = tg[0] if tg else None
+                    except duckdb.Error:
+                        auto_tag = None
                 con.execute(
                     """INSERT INTO orders (order_id, login, slot, item_id, side, price, total_qty,
-                           filled_qty, spent, state, opened_ts, updated_ts, completed_ts, trade_id)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)""",
+                           filled_qty, spent, state, opened_ts, updated_ts, completed_ts, trade_id, tag)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)""",
                     [oid, e.get("login"), slot,
-                     item_id, side, price, total, filled, spent, state, ts, ts, (ts if terminal else None)],
+                     item_id, side, price, total, filled, spent, state, ts, ts, (ts if terminal else None), auto_tag],
                 )
                 trade_id = None
             else:
@@ -1012,6 +1028,7 @@ def insert_plan_log(plan: dict, ts=None) -> int:
     try:
         _ensure_schema(con)
         con.execute("ALTER TABLE plan_log ADD COLUMN IF NOT EXISTS ev_score DOUBLE")  # migrate pre-existing tables
+        con.execute("ALTER TABLE plan_log ADD COLUMN IF NOT EXISTS tag VARCHAR")      # engine tag for auto-attribution
         last = con.execute("SELECT max(ts) FROM plan_log").fetchone()
         if last and last[0] is not None and (ts - last[0]).total_seconds() < 3300:  # ~55 min dedup
             return 0
@@ -1021,10 +1038,11 @@ def insert_plan_log(plan: dict, ts=None) -> int:
             int(s.get("margin") or 0), int(s.get("gp_day") or 0), int(s.get("expected_net") or 0),
             int(s.get("recovery_score") or 0), int(s.get("target") or s.get("sell_target") or 0),
             int(s.get("cur_price") or s.get("price") or 0), _num_or_none(s.get("ev_score")),
+            (str(s.get("tag")) if s.get("tag") else ("overnight" if s.get("overnight") else None)),
         ] for s in recs]
         con.executemany(
-            "INSERT INTO plan_log (ts, action, item_id, name, price, qty, margin, gp_day, exp_net, recovery, target, cur_price, ev_score) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "INSERT INTO plan_log (ts, action, item_id, name, price, qty, margin, gp_day, exp_net, recovery, target, cur_price, ev_score, tag) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         return len(rows)
     except duckdb.Error:
         return 0

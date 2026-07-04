@@ -476,7 +476,7 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100, d=
             & (spread_pct <= 0.05)                             # tight spread -> can realistically sell back near the ask
             & vol.between(0.02, 0.8)
             & (d["on_margin"] > 0) & (d["on_roi"] >= th.min_roi)
-            & (gpv >= 25_000_000)
+            & (gpv >= 15_000_000)   # was 25M — the 3-day review found the pool too thin to absorb capital
             & (d["on_margin"].fillna(0) >= th.overnight_min_margin)   # meaningful gp PER ITEM -> value over quantity
         )
         cand = d[elig].copy()

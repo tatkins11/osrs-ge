@@ -487,7 +487,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
     omap: dict[int, dict] = {}
     if mode == "2touch":
         try:
-            omap = {int(oc.get("item_id") or 0): oc for oc in overnight_table(th, d=ms, limit=40)}
+            omap = {int(oc.get("item_id") or 0): oc for oc in overnight_table(th, d=ms, limit=60)}
         except Exception:  # noqa: BLE001
             omap = {}
 
@@ -600,6 +600,13 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         # also sleeping on inventory. Evening: place these before bed. Morning: collect + list.
         roster = _overnight_roster()
         ocands = list(omap.values())   # computed above (deep pool; the per-slot profit bar culls it)
+        # DEPLOYMENT-ADAPTIVE profit bar: the 3-day review showed 98% win but 84% of the bankroll
+        # idle — the engine wins what it plays and plays far too little. When more than half the
+        # bankroll sits idle, accept setups at HALF the usual per-slot bar: a 175K+ filled night
+        # on otherwise-dead capital compounds; an empty slot earns zero.
+        slot_bar = float(th.min_rt_profit or 0)
+        if net_worth > 0 and free_gp > 0.5 * net_worth:
+            slot_bar *= 0.5
         oids = [int(o.get("item_id") or 0) for o in ocands]
         oprof = fill_uptime([i for i in oids if i and i not in excl]) if oids else {}
         scored = []
@@ -649,7 +656,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
             place_units = units if depth <= 0 else max(exp_units, min(units, int(exp_units * 2 + 1)))
             # per-SLOT profit bar on EXPECTED-fill profit (was placed-units profit, which
             # overstated a partial fill's night by 5-10x)
-            if margin * exp_units < float(th.min_rt_profit or 0):
+            if margin * exp_units < slot_bar:
                 small_skip += 1
                 continue
             odisc = _f(o.get("on_disc"))
@@ -731,7 +738,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
                     units2 = int(min(icap2, exit_cap2, remaining // entry, offer_cap(s_r.get("name"))))
                     if units2 < 1 or mgn2 <= 0:
                         continue
-                    if mgn2 * units2 < float(th.min_rt_profit or 0):
+                    if mgn2 * units2 < slot_bar:
                         small_skip += 1
                         continue
                     if kind_ == "range":
