@@ -266,6 +266,13 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         for r in ms[have].itertuples(index=False):
             sig[int(r.item_id)] = {c: getattr(r, c) for c in have}
 
+    # potion dose-form map: decants at Bob Barter are FREE, so a held (3) and a listed (4) are the
+    # same stock in different wrappers — verdicts, reconcile and P&L must all see through that.
+    try:
+        pot_of, pot_members = pf.potion_forms(ms[["item_id", "name"]]) if not ms.empty else ({}, {})
+    except Exception:  # noqa: BLE001
+        pot_of, pot_members = {}, {}
+
     positions = port.get("open_positions", [])
     odf = get_orders_df()
     open_orders = odf[odf["state"].isin(["BUYING", "SELLING"])] if not odf.empty else odf.iloc[0:0]
@@ -342,6 +349,29 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         if stale:
             action, list_at = "CUT", sell_at
             reason = f"stale capital — held {held_days:.0f}d with no progress; cut & redeploy into a faster flip"
+
+        # DECANT AWARENESS (Bob Barter converts dose forms for free):
+        # (a) if this potion's stock is already LIVE on the GE as another dose form, it's covered —
+        #     don't ask for a second sell of the same goods; (b) if another form pays >2% more per
+        #     dose, say so — the sell should happen in the best wrapper.
+        pfam = pot_of.get(iid)
+        if pfam:
+            fam_, dx_ = pfam
+            mates = [(pid, dy_) for pid, dy_ in pot_members.get(fam_, []) if pid != iid]
+            if action in ("SELL", "CUT") and any(pid in live_sell_ids for pid, _ in mates):
+                action, list_at = "HOLD", None
+                reason = "stock is live on the GE as another dose form (decanted) — covered, leave it"
+            elif sell_at and action in ("SELL", "CUT", "HOLD"):
+                own_pd = taxmod.net_sell(int(round(sell_at)), exempt) / dx_
+                best = None
+                for pid, dy_ in mates:
+                    ask_p = _f(sig.get(pid, {}).get("sell_price"))
+                    if ask_p and ask_p > 0:
+                        cand_pd = taxmod.net_sell(int(round(ask_p)), exempt) / dy_
+                        if best is None or cand_pd > best[1]:
+                            best = (dy_, cand_pd)
+                if best and own_pd > 0 and best[1] > own_pd * 1.02:
+                    reason += f" · decant to ({best[0]}) at Bob Barter first — pays {best[1] / own_pd - 1:.0%} more per dose"
 
         net_list = taxmod.net_sell(int(round(list_at)), exempt) if list_at else None
         expected_net = round((net_list - avg_cost) * qty) if net_list is not None else None
@@ -484,7 +514,14 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
                 elif iid in holding_ids:
                     status, note = "cancel", "hold off-market for a better price"
                 else:
-                    status, note = "keep", "sell offer (no tracked holding)"
+                    pfam_ = pot_of.get(iid)
+                    mate_held = bool(pfam_) and any(
+                        pid in held_ids for pid, _ in pot_members.get(pfam_[0], []) if pid != iid
+                    )
+                    if mate_held:
+                        status, note = "keep", "covers your decanted stock (same potion, another dose form) — leave it working"
+                    else:
+                        status, note = "keep", "sell offer (no tracked holding)"
             else:  # buy
                 bu = prof.get(iid, {}).get("buy", 0.0)
                 bid_now = _f(sig.get(iid, {}).get("buy_price")) or 0.0

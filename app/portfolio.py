@@ -18,6 +18,31 @@ from .sectors import SECTOR_META, classify_one
 from .signals import Thresholds, market_signals
 
 
+_POT_RE = re.compile(r"^(.*)\((\d)\)$")
+
+
+def potion_forms(items: pd.DataFrame) -> tuple[dict[int, tuple[str, int]], dict[str, list[tuple[int, int]]]]:
+    """Map potion dose-forms so conversions (Bob Barter decants for FREE) are first-class:
+    returns (item_id -> (family, doses), family -> [(item_id, doses), ...]). A sell of
+    'Super restore(4)' can then consume basis from 'Super restore(3)' lots at per-dose parity —
+    which is exactly what happened in the user's inventory at the decanter."""
+    fam_of: dict[int, tuple[str, int]] = {}
+    members: dict[str, list[tuple[int, int]]] = {}
+    it = items.reset_index() if "item_id" not in items.columns else items
+    for r in it.itertuples():
+        m = _POT_RE.match(str(r.name or "").strip())
+        if not m:
+            continue
+        fam, doses = m.group(1).strip(), int(m.group(2))
+        iid = int(r.item_id)
+        fam_of[iid] = (fam, doses)
+        members.setdefault(fam, []).append((iid, doses))
+    # only families with 2+ tradeable forms can convert
+    members = {k: v for k, v in members.items() if len(v) >= 2}
+    fam_of = {i: fd for i, fd in fam_of.items() if fd[0] in members}
+    return fam_of, members
+
+
 def compute(con=None) -> dict:
     own = con is None
     con = con or connect(read_only=True)
@@ -62,6 +87,8 @@ def compute(con=None) -> dict:
         m = tag_re.search(str(note or ""))
         return m.group(1) if m else None
 
+    pot_of, pot_members = potion_forms(items)   # dose-form conversion map (decants are free)
+
     for t in trades.itertuples():
         iid = int(t.item_id)
         qty = int(t.qty)
@@ -86,6 +113,30 @@ def compute(con=None) -> dict:
                 remaining -= take
                 if lot[0] <= 1e-9:
                     dq.popleft()
+            # DECANT-AWARE cascade: selling a potion form with no (or not enough) same-form lots
+            # consumes basis from the family's OTHER dose forms at per-dose parity — you bought
+            # (3)s, decanted at Bob Barter (free), and sold (4)s; the P&L must book, not vanish
+            # into an "oversell", and the (3)s must not linger as phantom holdings.
+            if remaining > 1e-9 and iid in pot_of:
+                _fam, dx = pot_of[iid]
+                peers = [(pid, pdo) for pid, pdo in pot_members.get(_fam, []) if pid != iid and lots[pid]]
+                # oldest basis first across the family (true FIFO in dose-space)
+                peers.sort(key=lambda p: lots[p[0]][0][2].value)
+                for pid, dy in peers:
+                    pq = lots[pid]
+                    while remaining > 1e-9 and pq:
+                        lot = pq[0]
+                        want_y = remaining * dx / dy                 # peer units to cover the remaining sell units
+                        take_y = min(want_y, lot[0])
+                        eq_x = take_y * dy / dx                      # sold-form units this basis covers
+                        matched += eq_x
+                        cost_sum += take_y * lot[1]                  # gp is gp — cost carries over 1:1
+                        wts_sum += eq_x * lot[2].value
+                        tag_qty[lot[3]] = tag_qty.get(lot[3], 0.0) + eq_x
+                        lot[0] -= take_y
+                        remaining -= eq_x
+                        if lot[0] <= 1e-9:
+                            pq.popleft()
             if matched > 1e-9:                            # ignore oversells with no basis to match
                 buy_avg = cost_sum / matched
                 buy_ts = pd.Timestamp(int(wts_sum / matched))
