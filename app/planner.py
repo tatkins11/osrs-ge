@@ -685,11 +685,13 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                             remaining -= cap_s
                             surge_event = str(r_s["name"])
         # ---- DAY LANES (the day window's own engine, 2026-07-05): per-item hour-pair
-        # seasonality, OOS-validated. During the day window, lanes whose personal buy-hour is
-        # now/next get FIRST claim on slots+cash — their sells land at 1pm/7pm lifts, handing the
-        # cash back before the evening acquisition touch. Two shifts on the same 8 slots.
+        # seasonality, OOS-validated. During the day window, EVERY lane whose buy-hour hasn't
+        # already passed gets a claim — a standing bid at an afternoon lane's cheap-hour price
+        # placed at the morning touch just WAITS for that hour (filling early means the same
+        # price arrived sooner). Their sells land at the 1pm/7pm lifts, handing cash back
+        # before the evening acquisition touch. Two shifts on the same 8 slots.
         now_ct = (pd.Timestamp(utcnow()).hour - 5) % 24
-        if pat and 8 <= now_ct <= 16 and len(new_buys) < free_slots and remaining > 0:
+        if pat and 7 <= now_ct <= 16 and len(new_buys) < free_slots and remaining > 0:
             for dl in (pat.get("day") or []):
                 if len(new_buys) >= free_slots or remaining <= 0:
                     break
@@ -697,7 +699,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                 bh = int(dl.get("buy_hr") or 0)
                 if not iid or iid in excl or any(b["item_id"] == iid for b in new_buys) or _eventy(dl.get("name")):
                     continue
-                if not (bh - 1 <= now_ct <= bh + 3):       # this lane's buy window is now/next
+                if bh < now_ct - 1:                        # this lane's cheap hour already passed today
                     continue
                 entry = _f(dl.get("entry_px")) or 0.0
                 tgt = _f(dl.get("target_px")) or 0.0

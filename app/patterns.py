@@ -289,7 +289,7 @@ def _day_scan(con) -> list[dict]:
             "entry_px": round(entry_px), "target_px": round(target_px),
         })
     out.sort(key=lambda r: -r["gp_day"])
-    return out[:20]
+    return out[:30]
 
 
 def rosters(con=None, cached_only: bool = False) -> dict | None:
