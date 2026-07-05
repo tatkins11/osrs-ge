@@ -609,7 +609,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
             slot_bar *= 0.5
         oids = [int(o.get("item_id") or 0) for o in ocands]
         oprof = fill_uptime([i for i in oids if i and i not in excl]) if oids else {}
-        scored = []
+        cands2 = []
         for o in ocands:
             iid = int(o.get("item_id") or 0)
             on_buy = float(o.get("on_buy") or 0)
@@ -626,61 +626,83 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
             exit_cap = (CAPTURE * sell_ud * 2.0) if sell_ud > 0 else 0.0
             icap = (item_cap_gp // on_buy) if item_cap_gp > 0 else float("inf")
             pcap = (per_slot_cap // on_buy) if per_slot_cap > 0 else float("inf")
-            units_max = min(float(o.get("on_units") or 0), icap, pcap, exit_cap, offer_cap(o.get("name")))
+            units_max = int(min(float(o.get("on_units") or 0), icap, pcap, exit_cap, offer_cap(o.get("name"))))
             if units_max < 1:
-                continue
-            # rank on EXPECTED-fill units (printed depth caps what a dip can deliver), not placed
-            dep_ = _f(o.get("on_depth")) or 0.0
-            eff_units = units_max if dep_ <= 0 else max(1.0, min(units_max, on_depth_share * dep_))
-            ev_unit = float(o.get("on_ev") or 0)           # margin x fill-prob x win-rate, per unit
-            scored.append((ev_unit * boost * eff_units, boost, units_max, o, pr, n_gr, win_gr))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        for _exp, boost, units_max, o, pr, n_gr, win_gr in scored:
-            if len(new_buys) >= free_slots or remaining <= 0:
-                break
-            iid = int(o["item_id"])
-            on_buy = float(o.get("on_buy") or 0)
-            units = int(min(units_max, remaining // on_buy))
-            if units < 1:
                 continue
             margin = float(o.get("on_margin") or 0)
             fp = float(o.get("on_fill_prob") or 0)
             wr = float(o.get("on_win_rate") or 0)
-            # FILL DEPTH: a dip "touching" the offer doesn't fill the whole order — only the
-            # units that actually PRINT at/below the level (live 7/02: 748-unit order filled 81;
-            # 67-unit order filled 5 — the printed depth was the constraint). Expected fill =
-            # DEPTH_SHARE x the median printed depth on historical filled nights; place up to 2x
-            # that (fat-dip headroom) instead of reserving cash the dip can't consume.
             depth = _f(o.get("on_depth")) or 0.0
-            exp_units = units if depth <= 0 else max(1, int(min(units, on_depth_share * depth)))
-            place_units = units if depth <= 0 else max(exp_units, min(units, int(exp_units * 2 + 1)))
-            # per-SLOT profit bar on EXPECTED-fill profit (was placed-units profit, which
-            # overstated a partial fill's night by 5-10x)
-            if margin * exp_units < slot_bar:
+            exp_units = units_max if depth <= 0 else max(1, int(min(units_max, on_depth_share * depth)))
+            if margin * exp_units < slot_bar:              # per-slot bar on EXPECTED-fill profit
                 small_skip += 1
                 continue
+            ev_unit = float(o.get("on_ev") or 0)           # margin x fill-prob x win-rate, per unit
+            ev_slot = ev_unit * boost * exp_units          # expected gp/night if this takes a slot
+            core_units = exp_units if depth <= 0 else max(exp_units, min(units_max, int(exp_units * 2 + 1)))
+            cands2.append({
+                "o": o, "iid": iid, "price": on_buy, "pr": pr, "n_gr": n_gr, "win_gr": win_gr,
+                "boost": boost, "units_max": units_max, "exp_units": exp_units, "core_units": core_units,
+                "margin": margin, "fp": fp, "wr": wr, "depth": depth,
+                "ev_slot": ev_slot, "ev_per_gp": ev_slot / max(exp_units * on_buy, 1.0),
+            })
+        # MAX-TOTAL-PROFIT slate, two regimes: when cash is plentiful the SLOTS bind -> the best
+        # combination is simply the top-EV picks per slot; when the core slate would exceed the
+        # budget, CASH binds -> greedy by EV-per-gp packs the most total profit into the budget.
+        cands2.sort(key=lambda c: c["ev_slot"], reverse=True)
+        slots_avail = free_slots - len(new_buys)
+        core_cost = sum(c["core_units"] * c["price"] for c in cands2[:slots_avail])
+        if core_cost > remaining:
+            cands2.sort(key=lambda c: c["ev_per_gp"], reverse=True)
+        slate = []
+        for c in cands2:
+            if len(slate) >= slots_avail or remaining <= 0:
+                break
+            units = int(min(c["core_units"], remaining // c["price"]))
+            if units < 1:
+                continue
+            c["place_units"] = units
+            remaining -= units * c["price"]
+            slate.append(c)
+        # DEEP-DIP RESERVE SOAK ("always use all available cash"): reserved gp does NOTHING else
+        # overnight, so leftover budget raises the slate's placements toward each item's exit-
+        # liquidity ceiling, best-edge items first. EV stays quoted on expected fills only — the
+        # reserve tranche costs nothing if untouched and buys a fat panic-dump at -4%+ if it hits.
+        # Tail stays bounded: units_max already caps by exit-liquidity + the 20%-of-NW item cap.
+        for c in sorted(slate, key=lambda c: c["ev_slot"] * c["boost"], reverse=True):
+            if remaining <= c["price"]:
+                continue
+            extra = int(min(c["units_max"] - c["place_units"], remaining // c["price"]))
+            if extra > 0:
+                c["place_units"] += extra
+                remaining -= extra * c["price"]
+        for c in slate:
+            o, pr = c["o"], c["pr"]
+            place_units, exp_units = c["place_units"], min(c["exp_units"], c["place_units"])
+            margin, fp, wr = c["margin"], c["fp"], c["wr"]
             odisc = _f(o.get("on_disc"))
             why = (f"overnight lowball {odisc:.0%} below bid — " if odisc else "overnight lowball — ") \
                 + f"fills {fp:.0%} of nights, wins {wr:.0%} when filled"
-            if depth > 0:
-                why += f"; expect ~{exp_units:,} of {place_units:,} to fill on a dip"
-            if boost > 1.0:
-                why += f"; PROVEN roster ({n_gr} graded, {win_gr:.0%} win)"
-            elif boost < 1.0:
-                why += f"; caution: graded {win_gr:.0%} win over {n_gr}"
+            if c["depth"] > 0:
+                why += f"; expect ~{exp_units:,} of {place_units:,} to fill"
+                if place_units > c["core_units"]:
+                    why += f" ({place_units - c['core_units']:,} = deep-dip reserve soaking idle cash)"
+            if c["boost"] > 1.0:
+                why += f"; PROVEN roster ({c['n_gr']} graded, {c['win_gr']:.0%} win)"
+            elif c["boost"] < 1.0:
+                why += f"; caution: graded {c['win_gr']:.0%} win over {c['n_gr']}"
             sud = pr.get("sell_units_day", 0.0)
             new_buys.append({
-                "action": "BUY", "item_id": iid, "name": o.get("name"),
-                "price": round(on_buy), "sell_target": round(float(o.get("on_target") or 0)),
-                "units": place_units, "capital": round(place_units * on_buy), "margin": round(margin),
+                "action": "BUY", "item_id": c["iid"], "name": o.get("name"),
+                "price": round(c["price"]), "sell_target": round(float(o.get("on_target") or 0)),
+                "units": place_units, "capital": round(place_units * c["price"]), "margin": round(margin),
                 "exp_units": exp_units,
                 "gp_day": round(margin * exp_units * fp * wr),   # per-NIGHT expected gp, depth-honest
                 "buy_h": None, "roundtrip_h": None,
                 "reason": why, "live": False, "overnight": True,
                 "fill_freq": round(fp, 3), "sell_freq": round(pr.get("sell", 0.0), 3),
-                "days_to_liquidate": round(exp_units / (CAPTURE * sud), 1) if sud > 0 else None,
+                "days_to_liquidate": round(place_units / (CAPTURE * sud), 1) if sud > 0 else None,
             })
-            remaining -= place_units * on_buy
 
         # ---- pattern plays fill the REMAINING free slots (slower holds, bigger swings) -------
         # Range plays: buy the item's own trailing-60d P20, sell its P70 (OOS +7.7%/cycle, 80%
