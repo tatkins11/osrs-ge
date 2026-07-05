@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getPatterns, getProvenItems, type CrashPlay, type ProvenItem, type RangePlay } from "../api";
+import { getPatterns, getProvenItems, type CrashPlay, type ProvenItem, type RangePlay, type SwingLane } from "../api";
 import { gp, pct, spct } from "../format";
 
 const KINDS = ["all", "overnight", "crash", "value", "flip"] as const;
@@ -21,7 +21,7 @@ export function ProvenItems({
   const [kind, setKind] = useState<string>("all");
   const [rows, setRows] = useState<ProvenItem[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [pat, setPat] = useState<{ range: RangePlay[]; crash: CrashPlay[] } | null>(null);
+  const [pat, setPat] = useState<{ range: RangePlay[]; crash: CrashPlay[]; swing?: SwingLane[] } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,6 +121,43 @@ export function ProvenItems({
                   <td>{gp(r.p20)}</td>
                   <td>{gp(r.p70)}</td>
                   <td className={r.cur <= r.p20 ? "pos" : "dim"}>{gp(r.cur)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {pat && (pat.swing?.length ?? 0) > 0 && (
+        <>
+          <div className="slot-head" style={{ marginTop: 18 }}>
+            🌊 Swing lanes — items that oscillate WITHIN the day{" "}
+            <span className="dim">· stand a bid at the item's own 24h P20, the ask at its P80 · 16d backtest, depth-aware, tax-net, 80-100% win · small capital each, extreme efficiency — set both orders at your sessions and let them cycle</span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="left">Item</th>
+                <th title="Stand your buy offer here (trailing-24h 20th percentile of real bid-side prints)">Bid ≤</th>
+                <th title="Stand your sell offer here (80th percentile of real ask-side prints)">Ask ≥</th>
+                <th title="Per-cycle size (max 5% of daily flow / one buy-limit window)">Units</th>
+                <th title="Completed cycles per day in the backtest">Cyc/day</th>
+                <th>Win</th>
+                <th title="Net gp/day at the sized units">gp/day</th>
+                <th title="gp/day as % of the lane's capital — the compounding metric">Eff/day</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(pat.swing ?? []).slice(0, 14).map((s) => (
+                <tr key={s.item_id} className={s.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(s.item_id)}>
+                  <td className="name left">{s.name}</td>
+                  <td>{s.buy_band == null ? "–" : gp(s.buy_band)}</td>
+                  <td>{s.sell_band == null ? "–" : gp(s.sell_band)}</td>
+                  <td className="dim">{s.units.toLocaleString()}</td>
+                  <td className="dim">{s.cyc_day.toFixed(1)}</td>
+                  <td className={s.win >= 0.9 ? "pos" : ""}>{pct(s.win, 0)}</td>
+                  <td className="pos">{gp(s.gp_day)}</td>
+                  <td className="pos">{s.eff_pct_day == null ? "–" : `${s.eff_pct_day.toFixed(1)}%`}</td>
                 </tr>
               ))}
             </tbody>

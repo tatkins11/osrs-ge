@@ -89,6 +89,100 @@ def _sim_crash(g: pd.DataFrame) -> list[float]:
     return ev
 
 
+def _swing_scan(con) -> list[dict]:
+    """INTRADAY SWING LANES (discovered 2026-07-05 in the 5-min archive): items that reliably
+    oscillate WITHIN the day. Standing bid at the item's own trailing-24h P20 (bid-side prints),
+    standing ask at its P80 — ~0.5-3 cycles/day, backtested win 75-100% net of tax with
+    depth-aware fills and a 48h stop. Per-lane capital is small (0.3-5M) but efficiency is
+    extreme (5-50%/day on lane capital) and TOTAL capacity ~16M/day across stable lanes —
+    the engine that scales with bankroll. Bonds excluded always (10% re-trade fee)."""
+    items = con.execute("SELECT item_id, name, buy_limit FROM items").df()
+    name_of = dict(zip(items.item_id, items["name"]))
+    limit_of = dict(zip(items.item_id, items["buy_limit"]))
+    uni = con.execute(
+        """SELECT item_id, median(high_vol+low_vol) AS units_day, median((avg_high+avg_low)/2.0) AS mid
+           FROM history WHERE timestep='24h' AND ts >= now() - INTERVAL 30 DAY
+           GROUP BY item_id
+           HAVING avg((avg_high+avg_low)/2.0*(high_vol+low_vol)) >= 25000000
+              AND median((avg_high+avg_low)/2.0) BETWEEN 2000 AND 60000000
+           ORDER BY avg((avg_high+avg_low)/2.0*(high_vol+low_vol)) DESC LIMIT 250"""
+    ).df()
+    uni = uni[~uni.item_id.map(name_of).str.lower().str.contains("bond", na=False)]
+    if uni.empty:
+        return []
+    ids = ",".join(str(int(i)) for i in uni.item_id)
+    sn = con.execute(
+        f"""SELECT item_id, ts, avg_high, avg_low, high_vol, low_vol
+            FROM snapshots WHERE item_id IN ({ids}) AND ts >= now() - INTERVAL 16 DAY
+            ORDER BY item_id, ts"""
+    ).df()
+    sn["ts"] = pd.to_datetime(sn["ts"])
+    W, share = 288, 0.5
+    umeta = uni.set_index("item_id").to_dict("index")
+    out = []
+    for iid, g in sn.groupby("item_id"):
+        g = g.reset_index(drop=True)
+        if len(g) < W * 6:
+            continue
+        lo = g.avg_low.to_numpy("float64")
+        hi = g.avg_high.to_numpy("float64")
+        lv = g.low_vol.fillna(0).to_numpy("float64")
+        hv = g.high_vol.fillna(0).to_numpy("float64")
+        ts = g.ts.to_numpy()
+        qb = pd.Series(lo).where(pd.Series(lv) > 0).rolling(W, min_periods=W // 2).quantile(0.20).shift(1).to_numpy()
+        qs = pd.Series(hi).where(pd.Series(hv) > 0).rolling(W, min_periods=W // 2).quantile(0.80).shift(1).to_numpy()
+        lim = limit_of.get(int(iid))
+        lim = float(lim) if lim is not None and not pd.isna(lim) and lim > 0 else 100.0
+        m = umeta[int(iid)]
+        units = max(1.0, min(lim, 0.05 * float(m["units_day"])))
+        state, buy_px, acc, t_in = 0, 0.0, 0.0, None
+        cycles = []
+        for i in range(W, len(g)):
+            if np.isnan(qb[i]) or np.isnan(qs[i]):
+                continue
+            if state == 0:
+                state, acc = 1, 0.0
+            if state == 1:
+                if lv[i] > 0 and lo[i] <= qb[i]:
+                    acc += share * lv[i]
+                    buy_px = qb[i]
+                if acc >= units:
+                    state, t_in = 2, ts[i]
+            elif state == 2:
+                if hv[i] > 0 and hi[i] >= qs[i]:
+                    cycles.append(taxmod.net_sell(int(qs[i]), False) - buy_px)
+                    state = 0
+                elif t_in is not None and (ts[i] - t_in) / np.timedelta64(1, "h") > 48:
+                    cycles.append((taxmod.net_sell(int(lo[i]), False) - buy_px) if lo[i] > 0 else -0.02 * buy_px)
+                    state = 0
+        if len(cycles) < 8:
+            continue
+        pnl = np.array(cycles) * units
+        win = float((pnl > 0).mean())
+        if win < 0.80:
+            continue
+        days = (ts[-1] - ts[W]) / np.timedelta64(1, "D")
+        gpd = float(pnl.sum() / days)
+        if gpd <= 0:
+            continue
+        capital = units * float(m["mid"])
+        # live bands right now (last 24h of prints)
+        tail = g.tail(W)
+        b_now = tail.avg_low.where(tail.low_vol > 0).quantile(0.20)
+        s_now = tail.avg_high.where(tail.high_vol > 0).quantile(0.80)
+        out.append({
+            "item_id": int(iid), "name": name_of.get(int(iid), str(iid)),
+            "cycles": len(cycles), "cyc_day": round(len(cycles) / days, 2),
+            "gp_day": round(gpd), "win": round(win, 3),
+            "units": int(units), "capital": round(capital),
+            "eff_pct_day": round(gpd / capital * 100, 2) if capital > 0 else None,
+            "buy_band": round(float(b_now)) if pd.notna(b_now) else None,
+            "sell_band": round(float(s_now)) if pd.notna(s_now) else None,
+        })
+    out.sort(key=lambda r: -(r["eff_pct_day"] or 0))
+    return out[:20]
+
+
 def rosters(con=None, cached_only: bool = False) -> dict | None:
     """Build (or serve cached) pattern rosters joined to live band positions. cached_only=True
     returns None instead of building (the planner must never block ~45s on a cold cache; the
@@ -151,6 +245,15 @@ def rosters(con=None, cached_only: bool = False) -> dict | None:
                 })
     rng_rows.sort(key=lambda x: (not x["at_band"], -x["med_ret"]))
     crash_rows.sort(key=lambda x: (not x["crashing_now"], -x["med_ret"]))
-    out = {"range": rng_rows, "crash": crash_rows, "built_at": pd.Timestamp.utcnow().isoformat()}
+    try:
+        con2 = connect(read_only=True)
+        try:
+            swing_rows = _swing_scan(con2)
+        finally:
+            con2.close()
+    except Exception:  # noqa: BLE001 — the swing scan must never break the roster build
+        swing_rows = []
+    out = {"range": rng_rows, "crash": crash_rows, "swing": swing_rows,
+           "built_at": pd.Timestamp.utcnow().isoformat()}
     _CACHE["ts"], _CACHE["out"] = now, out
     return out

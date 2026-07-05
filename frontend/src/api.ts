@@ -529,7 +529,20 @@ export interface CrashPlay {
   crashing_now: boolean;  // -20..-45%: inside the validated envelope — the setup is live
   broken?: boolean;       // deeper than -45%: a regime break (event items dying), NOT the setup
 }
-export const getPatterns = () => get<{ range: RangePlay[]; crash: CrashPlay[]; built_at: string }>("/api/patterns");
+export interface SwingLane {
+  item_id: number;
+  name: string;
+  cycles: number;       // completed simulated cycles over the 16d window
+  cyc_day: number;      // cycles per day
+  gp_day: number;       // net gp/day at the sized units (depth-aware, tax-net)
+  win: number;
+  units: number;        // per-cycle size (<=5% of daily flow, <=1 buy-limit window)
+  capital: number;      // gp the lane cycles
+  eff_pct_day: number | null;  // gp/day as % of lane capital — the scaling metric
+  buy_band: number | null;     // stand a bid here (own trailing-24h P20 of real prints)
+  sell_band: number | null;    // stand the ask here (P80)
+}
+export const getPatterns = () => get<{ range: RangePlay[]; crash: CrashPlay[]; swing?: SwingLane[]; built_at: string }>("/api/patterns");
 
 // --- daily income plan (two-shift method: conversions by day, lowballs by night) ---
 export interface IncomeRoute {
