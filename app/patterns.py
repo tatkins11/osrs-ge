@@ -183,6 +183,115 @@ def _swing_scan(con) -> list[dict]:
     return out[:20]
 
 
+def _day_scan(con) -> list[dict]:
+    """DAY LANES (per-item hour-of-day seasonality, OOS-validated 2026-07-05): each item has its
+    own intraday clock. For every liquid item, train the best (buy_hr, sell_hr) Central-time pair
+    on the FIRST half of the 16d 5-min archive, then VALIDATE on the second half; keep only lanes
+    surviving OOS at >=0.5% net/cycle and >=65% win (72 items passed; top-8 = 6.8M gp/day OOS at
+    85% win). Buys cluster 9-11am + 2pm CT (morning/lunch dips), sells at 1pm + 7pm (lift peaks).
+    Day lanes work the slots 10am-7pm while overnight works 9pm-9am: two shifts, no conflict."""
+    items = con.execute("SELECT item_id, name, buy_limit FROM items").df()
+    name_of = dict(zip(items.item_id, items["name"]))
+    limit_of = dict(zip(items.item_id, items["buy_limit"]))
+    uni = con.execute(
+        """SELECT item_id, median(high_vol+low_vol) AS units_day, median((avg_high+avg_low)/2.0) AS mid
+           FROM history WHERE timestep='24h' AND ts >= now() - INTERVAL 30 DAY
+           GROUP BY item_id
+           HAVING avg((avg_high+avg_low)/2.0*(high_vol+low_vol)) >= 25000000
+              AND median((avg_high+avg_low)/2.0) >= 2000
+           ORDER BY avg((avg_high+avg_low)/2.0*(high_vol+low_vol)) DESC LIMIT 300"""
+    ).df()
+    uni = uni[~uni.item_id.map(name_of).str.lower().str.contains("bond", na=False)]
+    if uni.empty:
+        return []
+    ids = ",".join(str(int(i)) for i in uni.item_id)
+    sn = con.execute(
+        f"""SELECT item_id, ts, avg_high, avg_low, high_vol, low_vol
+            FROM snapshots WHERE item_id IN ({ids}) AND ts >= now() - INTERVAL 16 DAY"""
+    ).df()
+    sn["ts"] = pd.to_datetime(sn["ts"])
+    for c in ("avg_high", "avg_low", "high_vol", "low_vol"):
+        sn[c] = sn[c].astype("float64")
+    sn["hr"] = (sn["ts"].dt.hour - 5) % 24        # Central (CDT; the nightly rebuild keeps it fresh)
+    sn["day"] = sn["ts"].dt.normalize()
+    mid_ts = sn["ts"].min() + (sn["ts"].max() - sn["ts"].min()) / 2
+    g = sn.groupby(["item_id", "day", "hr"]).agg(
+        lo_vwap=("avg_low", "mean"), lo_v=("low_vol", "sum"),
+        hi_vwap=("avg_high", "mean"), hi_v=("high_vol", "sum"),
+    ).reset_index()
+    ENTRY_HRS = (9, 10, 11, 12, 13, 14)
+    umeta = uni.set_index("item_id").to_dict("index")
+    out = []
+    for iid, gi in g.groupby("item_id"):
+        lim = limit_of.get(int(iid))
+        lim = float(lim) if lim is not None and not pd.isna(lim) and lim > 0 else 100.0
+        m = umeta[int(iid)]
+        units = max(1.0, min(lim, 0.10 * float(m["units_day"])))
+        piv_lo = gi.pivot_table(index="day", columns="hr", values="lo_vwap")
+        piv_hi = gi.pivot_table(index="day", columns="hr", values="hi_vwap")
+        piv_lv = gi.pivot_table(index="day", columns="hr", values="lo_v").fillna(0)
+        piv_hv = gi.pivot_table(index="day", columns="hr", values="hi_v").fillna(0)
+        if len(piv_lo) < 10:
+            continue
+        tr = piv_lo.index[piv_lo.index < mid_ts]
+        te = piv_lo.index[piv_lo.index >= mid_ts]
+        if len(tr) < 5 or len(te) < 5:
+            continue
+
+        def pair_net(days, eh, xh):
+            outn = []
+            for d in days:
+                try:
+                    b, s = piv_lo.loc[d, eh], piv_hi.loc[d, xh]
+                    if pd.isna(b) or pd.isna(s) or piv_lv.loc[d, eh] < units or piv_hv.loc[d, xh] < units:
+                        continue
+                    outn.append(taxmod.net_sell(int(s), False) - b)
+                except KeyError:
+                    continue
+            return outn
+
+        best = None
+        for eh in ENTRY_HRS:
+            if eh not in piv_lo.columns:
+                continue
+            for xh in range(eh + 2, 20):
+                if xh not in piv_hi.columns:
+                    continue
+                nets = pair_net(tr, eh, xh)
+                if len(nets) < 4:
+                    continue
+                med = float(np.median(nets))
+                if best is None or med > best[0]:
+                    best = (med, eh, xh)
+        if best is None or best[0] <= 0:
+            continue
+        _, eh, xh = best
+        nets_te = pair_net(te, eh, xh)
+        if len(nets_te) < 4:
+            continue
+        med_te = float(np.median(nets_te))
+        win_te = float((np.array(nets_te) > 0).mean())
+        px = float(m["mid"])
+        if px <= 0 or med_te / px < 0.005 or win_te < 0.65:
+            continue
+        # live placement guidance: the last 5 days' typical prices at the lane's hours
+        recent = piv_lo.index[-5:]
+        entry_px = float(piv_lo.loc[recent, eh].median()) if eh in piv_lo.columns else None
+        target_px = float(piv_hi.loc[recent, xh].median()) if xh in piv_hi.columns else None
+        if not entry_px or not target_px or target_px <= entry_px:
+            continue
+        out.append({
+            "item_id": int(iid), "name": name_of.get(int(iid), str(iid)),
+            "buy_hr": int(eh), "sell_hr": int(xh),
+            "oos_med_pct": round(med_te / px, 4), "win": round(win_te, 3),
+            "units": int(units), "gp_day": round(med_te * units),
+            "capital": round(units * entry_px),
+            "entry_px": round(entry_px), "target_px": round(target_px),
+        })
+    out.sort(key=lambda r: -r["gp_day"])
+    return out[:20]
+
+
 def rosters(con=None, cached_only: bool = False) -> dict | None:
     """Build (or serve cached) pattern rosters joined to live band positions. cached_only=True
     returns None instead of building (the planner must never block ~45s on a cold cache; the
@@ -253,7 +362,15 @@ def rosters(con=None, cached_only: bool = False) -> dict | None:
             con2.close()
     except Exception:  # noqa: BLE001 — the swing scan must never break the roster build
         swing_rows = []
-    out = {"range": rng_rows, "crash": crash_rows, "swing": swing_rows,
+    try:
+        con3 = connect(read_only=True)
+        try:
+            day_rows = _day_scan(con3)
+        finally:
+            con3.close()
+    except Exception:  # noqa: BLE001 — the day scan must never break the roster build
+        day_rows = []
+    out = {"range": rng_rows, "crash": crash_rows, "swing": swing_rows, "day": day_rows,
            "built_at": pd.Timestamp.utcnow().isoformat()}
     _CACHE["ts"], _CACHE["out"] = now, out
     return out

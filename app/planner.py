@@ -684,6 +684,49 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                             })
                             remaining -= cap_s
                             surge_event = str(r_s["name"])
+        # ---- DAY LANES (the day window's own engine, 2026-07-05): per-item hour-pair
+        # seasonality, OOS-validated. During the day window, lanes whose personal buy-hour is
+        # now/next get FIRST claim on slots+cash — their sells land at 1pm/7pm lifts, handing the
+        # cash back before the evening acquisition touch. Two shifts on the same 8 slots.
+        now_ct = (pd.Timestamp(utcnow()).hour - 5) % 24
+        if pat and 8 <= now_ct <= 16 and len(new_buys) < free_slots and remaining > 0:
+            for dl in (pat.get("day") or []):
+                if len(new_buys) >= free_slots or remaining <= 0:
+                    break
+                iid = int(dl.get("item_id") or 0)
+                bh = int(dl.get("buy_hr") or 0)
+                if not iid or iid in excl or any(b["item_id"] == iid for b in new_buys) or _eventy(dl.get("name")):
+                    continue
+                if not (bh - 1 <= now_ct <= bh + 3):       # this lane's buy window is now/next
+                    continue
+                entry = _f(dl.get("entry_px")) or 0.0
+                tgt = _f(dl.get("target_px")) or 0.0
+                if entry <= 0 or tgt <= entry:
+                    continue
+                units4 = int(min(float(dl.get("units") or 0), remaining // entry))
+                if units4 < 1:
+                    continue
+                mgn4 = taxmod.net_sell(int(tgt), False) - entry
+                if mgn4 <= 0:
+                    continue
+                gpd4 = float(dl.get("gp_day") or 0) * (units4 / max(float(dl.get("units") or 1), 1.0))
+                if gpd4 < slot_bar * 0.5:                  # per-DAY bar (lanes cycle daily)
+                    small_skip += 1
+                    continue
+                new_buys.append({
+                    "action": "BUY", "item_id": iid, "name": dl.get("name"),
+                    "price": round(entry), "sell_target": round(tgt), "units": units4,
+                    "capital": round(units4 * entry), "margin": round(mgn4),
+                    "gp_day": round(gpd4),
+                    "buy_h": None, "roundtrip_h": None, "live": False,
+                    "overnight": False, "tag": "day",
+                    "reason": (f"day lane — this item's own cheap hour is ~{bh}:00 CT; list at {int(tgt):,} "
+                               f"for its ~{int(dl.get('sell_hr') or 0)}:00 lift (OOS {float(dl.get('oos_med_pct') or 0)*100:+.1f}%/cycle, "
+                               f"win {float(dl.get('win') or 0)*100:.0f}%)"),
+                    "fill_freq": None, "sell_freq": None, "days_to_liquidate": None,
+                })
+                remaining -= units4 * entry
+
         oids = [int(o.get("item_id") or 0) for o in ocands]
         oprof = fill_uptime([i for i in oids if i and i not in excl]) if oids else {}
         cands2 = []

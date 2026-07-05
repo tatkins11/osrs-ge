@@ -22,6 +22,7 @@ const TOUCHES = [
     duties: [
       "Collect what the 12pm dip (the day's biggest) filled",
       "Re-list those as asks into the 1-4pm lift peak",
+      "Place the 🌞 day lanes whose buy-hour is now (each item's own cheap window)",
       "Refresh swing-lane bids — this touch buys the 2nd cycle on fast lanes",
     ],
   },
@@ -208,7 +209,7 @@ export function Dashboard({
           </h3>
           {actions.map((s) => (
             <div key={`${s.action}-${s.item_id}`} className="act-row" onClick={() => onSelect(s.item_id)}>
-              <span className={`badge ${s.tag === "surge" ? "badge-STRONG_SELL" : ACT_BADGE[s.action]}`}>{s.tag === "range" ? "📐 " : s.tag === "crash" ? "🔪 " : s.tag === "swing" ? "🌊 " : s.tag === "surge" ? "🚨 " : s.overnight ? "🌙 " : ""}{s.action}</span>
+              <span className={`badge ${s.tag === "surge" ? "badge-STRONG_SELL" : ACT_BADGE[s.action]}`}>{s.tag === "range" ? "📐 " : s.tag === "crash" ? "🔪 " : s.tag === "swing" ? "🌊 " : s.tag === "day" ? "🌞 " : s.tag === "surge" ? "🚨 " : s.overnight ? "🌙 " : ""}{s.action}</span>
               <span className="nm">{s.name}</span>
               <span className="qp">{slotQP(s)}</span>
               <span className="why">{s.reason}</span>

@@ -324,7 +324,7 @@ export function Planner({
         <tbody>
           {buys.map((b) => (
             <tr key={b.item_id} className={b.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(b.item_id)}>
-              <td className="left"><span className={`badge ${b.tag === "surge" ? "badge-STRONG_SELL" : ACT_BADGE[b.action]}`}>{liveDot(b)}{b.tag === "range" ? "📐 " : b.tag === "crash" ? "🔪 " : b.tag === "swing" ? "🌊 " : b.tag === "surge" ? "🚨 " : b.overnight ? "🌙 " : ""}{b.action}</span></td>
+              <td className="left"><span className={`badge ${b.tag === "surge" ? "badge-STRONG_SELL" : ACT_BADGE[b.action]}`}>{liveDot(b)}{b.tag === "range" ? "📐 " : b.tag === "crash" ? "🔪 " : b.tag === "swing" ? "🌊 " : b.tag === "day" ? "🌞 " : b.tag === "surge" ? "🚨 " : b.overnight ? "🌙 " : ""}{b.action}</span></td>
               <td className="name left">{b.name}</td>
               <td title={b.exp_units != null && b.exp_units < (b.units ?? 0) ? `Place ${b.units?.toLocaleString()}; the printed-depth model expects ~${b.exp_units.toLocaleString()} to actually fill on a dip night` : undefined}>
                 {(b.units ?? 0).toLocaleString()}
