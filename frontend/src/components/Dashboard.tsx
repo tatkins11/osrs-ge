@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getGrowth, getPlan, getSetArb, type Filters, type GrowthResponse, type PlanResponse, type PlanSlot, type SetArbRow } from "../api";
+import { getGrowth, getIncomePlan, getPlan, getSetArb, type Filters, type GrowthResponse, type IncomePlan, type PlanResponse, type PlanSlot, type SetArbRow } from "../api";
 import { centralHourNow, centralTimeNow, gp, gpShort, pct } from "../format";
 import { GrowthChart } from "./GrowthTracker";
 import { LiquidityClock } from "./Planner";
@@ -31,10 +31,12 @@ export function Dashboard({
   const [g, setG] = useState<GrowthResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [arb, setArb] = useState<SetArbRow[]>([]);
+  const [income, setIncome] = useState<IncomePlan | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     getSetArb().then((d) => !cancelled && setArb(d.rows)).catch(() => {});
+    getIncomePlan().then((d) => !cancelled && setIncome(d)).catch(() => {});
     return () => { cancelled = true; };
   }, [refreshNonce]);
 
@@ -189,6 +191,38 @@ export function Dashboard({
         </div>
 
         <div className="dash-card">
+          {income && income.routes.length > 0 && (
+            <>
+              <h3>
+                💰 Today's income plan — conversions {gpShort(income.conversions_projected)}
+                <span className="dim" style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                  + overnight/plays {gpShort(t.plan_gp_day)} EV + session flips
+                </span>
+              </h3>
+              <table className="tbl" style={{ marginBottom: 14 }}>
+                <thead>
+                  <tr>
+                    <th className="left">Route</th>
+                    <th title="Cycles the plan packs into today's budget (buy limits x 2 windows, 10% of both legs' flow)">Today</th>
+                    <th title="gp cycling through this route">Capital</th>
+                    <th>ROI</th>
+                    <th title="Projected gp from this route today">Projected</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {income.routes.slice(0, 6).map((r) => (
+                    <tr key={r.route}>
+                      <td className="name left">{r.kind === "set" ? "🧩 " : "🧪 "}{r.route}</td>
+                      <td className="dim">{r.units_today.toLocaleString()}</td>
+                      <td className="dim">{gpShort(r.capital)}</td>
+                      <td className="pos">{(r.roi * 100).toFixed(1)}%</td>
+                      <td className="pos">{gpShort(r.projected_gp)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
           <h3>
             Road to {headline?.label ?? "1B"} <span className="dim" style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>compounding {pct(g.daily_pct, 1)}/day</span>
             <button className="linklike" onClick={() => goTo("growth")}>growth detail →</button>

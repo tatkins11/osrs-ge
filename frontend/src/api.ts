@@ -531,6 +531,24 @@ export interface CrashPlay {
 }
 export const getPatterns = () => get<{ range: RangePlay[]; crash: CrashPlay[]; built_at: string }>("/api/patterns");
 
+// --- daily income plan (two-shift method: conversions by day, lowballs by night) ---
+export interface IncomeRoute {
+  route: string;
+  kind: string;            // set | decant
+  units_today: number;     // cycles the plan packs into today's budget
+  capital: number;         // gp this route cycles through
+  net_per_unit: number;
+  roi: number;
+  projected_gp: number;
+}
+export interface IncomePlan {
+  cash: number;
+  routes: IncomeRoute[];
+  conversions_projected: number;   // gp/day from the conversion engine alone
+  built_at: string;
+}
+export const getIncomePlan = () => get<IncomePlan>("/api/income-plan");
+
 // --- set <-> components conversion arb (GE clerk packs/unpacks for free) ----
 export interface SetArbRow {
   set_id: number;

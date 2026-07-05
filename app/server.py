@@ -476,6 +476,15 @@ def patterns() -> dict:
     return rosters()
 
 
+@app.get("/api/income-plan")
+def income_plan() -> dict:
+    """Today's income plan: capital-aware conversion-route packing (the validated ~8-15M/day
+    engine) for the two-shift method. Overnight + flip EV come from /api/plan. Recommender only."""
+    from .income import build
+    fg = get_free_gp()
+    return build(float(fg or 0))
+
+
 @app.get("/api/setarb")
 def setarb() -> dict:
     """Set<->components conversion arb scan (GE clerk packs/unpacks sets for free). Validated
