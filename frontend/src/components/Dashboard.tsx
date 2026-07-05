@@ -4,6 +4,38 @@ import { centralHourNow, centralTimeNow, gp, gpShort, pct } from "../format";
 import { GrowthChart } from "./GrowthTracker";
 import { LiquidityClock } from "./Planner";
 
+// The operating schedule, from the 16-day hourly study (3.5M five-minute bars, Central time):
+// sellers dump hardest at 12pm / 5-6pm / 9pm-2am (below-anchor volume peaks); buyers pay up
+// through the 10am-4pm lift belt (asks get taken). So: ACQUIRE at night, DISTRIBUTE by day.
+const TOUCHES = [
+  {
+    id: "morning", start: 8, end: 10, icon: "☀️", title: "8:00-10:00 AM · Distribution (~20 min)",
+    duties: [
+      "Collect overnight fills + the deep-dip reserve catches",
+      "Clerk run: combine sets, decant potions",
+      "List EVERYTHING at sell targets — the 10am-4pm lift belt takes them",
+      "Cancel lowballs >14h old; keep the rest standing",
+    ],
+  },
+  {
+    id: "midday", start: 12, end: 14, icon: "🕐", title: "12:30-2:00 PM · Top-up (optional, ~10 min)",
+    duties: [
+      "Collect what the 12pm dip (the day's biggest) filled",
+      "Re-list those as asks into the 1-4pm lift peak",
+      "Refresh swing-lane bids — this touch buys the 2nd cycle on fast lanes",
+    ],
+  },
+  {
+    id: "evening", start: 20, end: 23, icon: "🌙", title: "8:30-10:30 PM · Acquisition (~40 min, the big one)",
+    duties: [
+      "Collect the day's sells — cash comes home",
+      "Run the conversion cycles",
+      "Place the FULL overnight slate + deep-dip reserve",
+      "Stand swing bids through the 9pm + midnight dump windows",
+    ],
+  },
+];
+
 const ACT_BADGE: Record<string, string> = { CUT: "badge-STRONG_SELL", SELL: "badge-SELL", HOLD: "badge-HOLD", BUY: "badge-BUY", LIST: "badge-ILLIQUID" };
 const ACT_SLOT: Record<string, string> = { CUT: "sell", SELL: "sell", HOLD: "hold", BUY: "buy", LIST: "hold" };
 const DAY = 86400000;
@@ -92,6 +124,28 @@ export function Dashboard({
         <div>
           <b>{session.title}</b> · {centralTimeNow()} Central — {session.text}
         </div>
+      </div>
+
+      <div className="dash-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 12 }}>
+        {TOUCHES.map((t) => {
+          const active = ch >= t.start && ch < t.end;
+          const hrsUntil = (t.start - ch + 24) % 24;
+          return (
+            <div
+              key={t.id}
+              className="dash-card"
+              style={active ? { borderColor: "var(--accent)", boxShadow: "0 0 0 1px var(--accent), 0 0 18px rgba(77, 163, 255, 0.12)" } : { opacity: 0.85 }}
+            >
+              <h3>
+                {t.icon} {t.title}
+                {active ? <span className="pos">NOW</span> : <span className="dim" style={{ textTransform: "none", letterSpacing: 0 }}>in ~{Math.max(1, Math.round(hrsUntil))}h</span>}
+              </h3>
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.55 }} className="dim">
+                {t.duties.map((d, i) => <li key={i}>{d}</li>)}
+              </ul>
+            </div>
+          );
+        })}
       </div>
 
       {plan.cash_clamped && (
