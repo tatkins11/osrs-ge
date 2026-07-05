@@ -254,6 +254,9 @@ export function Planner({
         {plan.cash_drift_pct != null && (
           <> · <span className="neg">⚠ accounting drifted {gpShort(Math.abs(plan.cash_drift ?? 0))} on {plan.cash_drift_day} ({(Math.abs(plan.cash_drift_pct) * 100).toFixed(1)}% of net worth) — the day's net-worth change doesn't reconcile with P&L. Re-set Free gp on Portfolio to re-baseline.</span></>
         )}
+        {plan.recent_update && (
+          <> · <span className="neg">🛠 game update in the last 18h ("{plan.recent_update}") — patch notes reprice items faster than any anchor; skim them before placing this slate</span></>
+        )}
       </div>
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>

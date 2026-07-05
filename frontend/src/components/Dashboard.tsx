@@ -167,6 +167,12 @@ export function Dashboard({
           The books are undercounting your cash: re-set Free gp on the Portfolio page.
         </div>
       )}
+      {plan.recent_update && (
+        <div className="exp-banner" style={{ margin: "0 0 12px" }}>
+          🛠 <b>Game update in the last 18h:</b> "{plan.recent_update}" — patch notes reprice items faster than any
+          trailing anchor. Skim the notes before placing today's slate; skip anything the update touches.
+        </div>
+      )}
 
       <div className="tiles" style={{ gridTemplateColumns: "repeat(5, 1fr)", marginBottom: 12 }}>
         <div className="tile" title={`Free ${gp(plan.free_gp)} + open buys ${gp(plan.committed_capital)} + holdings ${gp(plan.holdings_value)}`}>

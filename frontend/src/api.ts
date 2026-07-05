@@ -498,6 +498,7 @@ export interface PlanResponse {
   mode?: string;               // 'active' (fast flips) | '2touch' (overnight-first)
   surge_armed?: boolean;       // Surge Mode toggle was on for this plan
   surge_event?: string | null; // the qualifying crash it deployed into (null = armed, no event)
+  recent_update?: string | null; // a game update landed in the last 18h — sanity-check recs vs patch notes
   slots: PlanSlot[];           // the active 8-slot config: SELL/CUT holdings + BUYS
   holding: PlanSlot[];         // held OFF-MARKET (no slot) — waiting for a better price
   reconcile: ReconcileItem[];  // what to do with each current live order

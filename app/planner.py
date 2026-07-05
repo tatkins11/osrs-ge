@@ -267,6 +267,16 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
     try:
         port = pf.compute(con)
         ms = market_signals(th, con)
+        # unattended-book guard: a game update in the last 18h can reprice items faster than any
+        # trailing anchor — surface it so recs get a patch-notes sanity check before listing
+        recent_update = None
+        try:
+            u = con.execute(
+                "SELECT title FROM updates WHERE category = 'update' AND ts >= now() - INTERVAL 18 HOUR ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+            recent_update = str(u[0]) if u and u[0] else None
+        except Exception:  # noqa: BLE001
+            recent_update = None
     finally:
         if own:
             con.close()
@@ -705,7 +715,12 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                 small_skip += 1
                 continue
             ev_unit = float(o.get("on_ev") or 0)           # margin x fill-prob x win-rate, per unit
-            ev_slot = ev_unit * boost * exp_units          # expected gp/night if this takes a slot
+            # FAIR-VALUE tilt (same graded evidence as the flip ranker: below-fair completes its
+            # sell 2x as often, 59% vs 37% win). Eligibility already bounds candidates to +/-6%
+            # of fair; within the band, prefer below-fair — reversion then works FOR the exit.
+            vd = _f(o.get("value_discount"))
+            fair_mult = 1.15 if (vd is not None and vd >= 0.0) else (0.85 if (vd is not None and vd < -0.03) else 1.0)
+            ev_slot = ev_unit * boost * exp_units * fair_mult   # expected gp/night if this takes a slot
             core_units = exp_units if depth <= 0 else max(exp_units, min(units_max, int(exp_units * 2 + 1)))
             cands2.append({
                 "o": o, "iid": iid, "price": on_buy, "pr": pr, "n_gr": n_gr, "win_gr": win_gr,
@@ -1103,6 +1118,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
         "n_stale": int(n_stale), "stale_capital": round(stale_capital),
         "liquidity_clock": market_clock(), "overnight": overnight, "mode": mode,
         "surge_armed": bool(surge), "surge_event": surge_event,
+        "recent_update": recent_update,
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
             "expected_realized": round(expected_realized),
