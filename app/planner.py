@@ -703,7 +703,8 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                 tgt = _f(dl.get("target_px")) or 0.0
                 if entry <= 0 or tgt <= entry:
                     continue
-                units4 = int(min(float(dl.get("units") or 0), remaining // entry))
+                icap4 = (item_cap_gp // entry) if item_cap_gp > 0 else float("inf")   # same 20%-NW cap as every engine
+                units4 = int(min(float(dl.get("units") or 0), icap4, remaining // entry))
                 if units4 < 1:
                     continue
                 mgn4 = taxmod.net_sell(int(tgt), False) - entry
