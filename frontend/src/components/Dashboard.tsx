@@ -45,7 +45,8 @@ export function Dashboard({
     setErr(null);
     const t = setTimeout(() => {   // same debounce rationale as the Planner (bankroll auto-sync bursts)
       const mode = localStorage.getItem("ge.plan.mode") ?? "2touch";
-      Promise.all([getPlan(filters, mode), getGrowth(filters)])
+      const surge = localStorage.getItem("ge.plan.surge") === "1";
+      Promise.all([getPlan(filters, mode, surge), getGrowth(filters)])
         .then(([p, gr]) => { if (!cancelled) { setPlan(p); setG(gr); } })
         .catch((e) => !cancelled && setErr(String(e)));
     }, 600);
@@ -147,7 +148,7 @@ export function Dashboard({
           </h3>
           {actions.map((s) => (
             <div key={`${s.action}-${s.item_id}`} className="act-row" onClick={() => onSelect(s.item_id)}>
-              <span className={`badge ${ACT_BADGE[s.action]}`}>{s.tag === "range" ? "📐 " : s.tag === "crash" ? "🔪 " : s.overnight ? "🌙 " : ""}{s.action}</span>
+              <span className={`badge ${s.tag === "surge" ? "badge-STRONG_SELL" : ACT_BADGE[s.action]}`}>{s.tag === "range" ? "📐 " : s.tag === "crash" ? "🔪 " : s.tag === "swing" ? "🌊 " : s.tag === "surge" ? "🚨 " : s.overnight ? "🌙 " : ""}{s.action}</span>
               <span className="nm">{s.name}</span>
               <span className="qp">{slotQP(s)}</span>
               <span className="why">{s.reason}</span>

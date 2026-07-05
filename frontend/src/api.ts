@@ -437,7 +437,7 @@ export interface PlanSlot {
   best_hours?: number[];       // UTC hours when this item's side of the book is busiest (best to place)
   overnight?: boolean;         // 2-touch mode: overnight lowball (place in the evening, sell next day)
   exp_units?: number;          // expected units to FILL on a dip night (printed-depth model) — units is what you PLACE
-  tag?: string;                // "range" (📐 band play) | "crash" (🔪 recovery play)
+  tag?: string;                // "range" | "crash" | "swing" | "surge"
   reason: string;
   live: boolean;               // a matching open order already exists on the GE
   sector?: string | null;
@@ -496,13 +496,15 @@ export interface PlanResponse {
   liquidity_clock: ClockHour[];// market-wide trade volume by UTC hour — when orders fill best
   overnight: OvernightPick[];  // OOS-proven overnight picks (place evening, sell next AM) — separate from the 8 slots
   mode?: string;               // 'active' (fast flips) | '2touch' (overnight-first)
+  surge_armed?: boolean;       // Surge Mode toggle was on for this plan
+  surge_event?: string | null; // the qualifying crash it deployed into (null = armed, no event)
   slots: PlanSlot[];           // the active 8-slot config: SELL/CUT holdings + BUYS
   holding: PlanSlot[];         // held OFF-MARKET (no slot) — waiting for a better price
   reconcile: ReconcileItem[];  // what to do with each current live order
   totals: { expected_realized: number; buy_capital: number; plan_gp_day: number; growth_day: number | null };
 }
-export const getPlan = (f: Filters, mode: string = "active") =>
-  get<PlanResponse>(`/api/plan?${qs(f)}&mode=${encodeURIComponent(mode)}`);
+export const getPlan = (f: Filters, mode: string = "active", surge: boolean = false) =>
+  get<PlanResponse>(`/api/plan?${qs(f)}&mode=${encodeURIComponent(mode)}${surge ? "&surge=1" : ""}`);
 
 // --- per-item chart-pattern rosters (range plays + crash-recovery plays) ----
 export interface RangePlay {

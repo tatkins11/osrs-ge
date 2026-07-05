@@ -496,12 +496,14 @@ def setarb() -> dict:
 
 @app.get("/api/plan")
 def plan(th: Thresholds = Depends(get_thresholds),
-         mode: str = Query("active", pattern="^(active|2touch)$")) -> dict:
+         mode: str = Query("active", pattern="^(active|2touch)$"),
+         surge: bool = Query(False)) -> dict:
     """The unified 8-slot decision engine: a SELL / HOLD / CUT verdict on every open position
     (with a competitive price + recovery read) plus BUYS for the free slots. mode=2touch swaps the
     presence-required fast flips for overnight-first allocation (place evening, collect morning).
+    surge=1 arms Surge Mode (opt-in concentrated crash-recovery deployment, one at a time).
     Reads live positions + open orders. Recommender only."""
-    res = build_plan(th, mode=mode)
+    res = build_plan(th, mode=mode, surge=surge)
     try:
         insert_plan_log(res)   # ~hourly snapshot for later calibration; never breaks the response
     except Exception:  # noqa: BLE001

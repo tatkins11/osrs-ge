@@ -108,12 +108,19 @@ export function Planner({
     setMode(m);
     localStorage.setItem("ge.plan.mode", m);
   };
+  // Surge Mode: opt-in, default OFF. Concentrates up to 70% of free cash into ONE qualifying
+  // crash-roster recovery. The q10 tail is -28% — this is the high-variance lever, armed knowingly.
+  const [surge, setSurge] = useState<boolean>(() => localStorage.getItem("ge.plan.surge") === "1");
+  const toggleSurge = () => {
+    const v = !surge;
+    setSurge(v);
+    localStorage.setItem("ge.plan.surge", v ? "1" : "0");
+  };
 
-  // set<->components conversion arb (slow-moving; refresh with the plan)
+  // set<->components conversion arb (slow-moving; refresh with the plan; shown in BOTH modes)
   useEffect(() => {
-    if (mode !== "2touch") return;
     getSetArb().then((d) => setSetArb(d.rows)).catch(() => setSetArb([]));
-  }, [refreshNonce, mode]);
+  }, [refreshNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,7 +130,7 @@ export function Planner({
     // site). Coalesce rapid changes into one fetch after things settle.
     const t = setTimeout(() => {
       setLoading(true);
-      getPlan(filters, mode)
+      getPlan(filters, mode, surge)
         .then((p) => !cancelled && setPlan(p))
         .catch((e) => !cancelled && setErr(String(e)))
         .finally(() => !cancelled && setLoading(false));
@@ -132,7 +139,7 @@ export function Planner({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [filters, refreshNonce, mode]);
+  }, [filters, refreshNonce, mode, surge]);
 
   if (err) return <div className="empty">Plan error: {err}</div>;
   if (!plan) return <div className="empty">{loading ? "Building your 8-slot plan…" : "No plan."}</div>;
@@ -202,8 +209,16 @@ export function Planner({
                   title="Fast flips for when you're AT the keyboard. Don't leave these working unattended."
                   onClick={() => pickMode("active")}>⚡ Active</button>
         </div>
-        {mode === "2touch" && <span className="dim">{session}</span>}
-        {mode === "active" && <span className="dim">fast flips — only while you're at the keyboard; switch to 🌙 before logging off</span>}
+        <button
+          className={`ord-act ${surge ? "" : "dim"}`}
+          style={surge ? { color: "var(--red)", borderColor: "var(--red)", boxShadow: "0 0 8px rgba(255,92,114,.25)" } : undefined}
+          title="Surge Mode (opt-in): when a crash-roster item is in a LIVE qualifying crash, deploy up to 70% of free cash into that single recovery. Median +17% per event, but the q10 tail is -28% — a full surge can lose ~50M. One at a time; envelope guards enforced."
+          onClick={toggleSurge}
+        >🚨 Surge {surge ? "ARMED" : "off"}</button>
+        {surge && plan?.surge_armed && !plan?.surge_event && <span className="dim">🚨 armed — no qualifying crash right now; fires automatically when one hits the envelope</span>}
+        {surge && plan?.surge_event && <span className="neg">🚨 SURGE LIVE: {plan.surge_event} — see the buy row below</span>}
+        {!surge && mode === "2touch" && <span className="dim">{session}</span>}
+        {!surge && mode === "active" && <span className="dim">fast flips — only while you're at the keyboard; switch to 🌙 before logging off</span>}
       </div>
       <div className="exp-banner">
         <b>8-slot plan.</b> Your live positions, open orders, and capital → one recommendation per slot:{" "}
@@ -306,7 +321,7 @@ export function Planner({
         <tbody>
           {buys.map((b) => (
             <tr key={b.item_id} className={b.item_id === selectedId ? "selected" : ""} onClick={() => onSelect(b.item_id)}>
-              <td className="left"><span className={`badge ${ACT_BADGE[b.action]}`}>{liveDot(b)}{b.tag === "range" ? "📐 " : b.tag === "crash" ? "🔪 " : b.overnight ? "🌙 " : ""}{b.action}</span></td>
+              <td className="left"><span className={`badge ${b.tag === "surge" ? "badge-STRONG_SELL" : ACT_BADGE[b.action]}`}>{liveDot(b)}{b.tag === "range" ? "📐 " : b.tag === "crash" ? "🔪 " : b.tag === "swing" ? "🌊 " : b.tag === "surge" ? "🚨 " : b.overnight ? "🌙 " : ""}{b.action}</span></td>
               <td className="name left">{b.name}</td>
               <td title={b.exp_units != null && b.exp_units < (b.units ?? 0) ? `Place ${b.units?.toLocaleString()}; the printed-depth model expects ~${b.exp_units.toLocaleString()} to actually fill on a dip night` : undefined}>
                 {(b.units ?? 0).toLocaleString()}

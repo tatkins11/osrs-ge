@@ -94,6 +94,20 @@ Z_SPIKE_MAX = 2.0        # don't flip-buy a blowoff top (price > +2 sigma vs its
 CHG24_SPIKE = 0.25       # don't chase a +25%/24h pump (it mean-reverts on you)
 CHG24_KNIFE = -0.05      # don't flip-buy an intraday knife (-5%/24h) — unless it sits on the alch floor
 # Items the GE restricts to ONE per slot per offer (you can't stack the offer). Only bonds.
+SURGE_FRAC = 0.70        # Surge Mode: share of free cash concentrated into ONE qualifying
+                         # crash-roster recovery (opt-in; the -28% q10 tail is the price of
+                         # 20%-class single-day returns at this bankroll)
+# League/seasonal-reward items pass statistical gates right up until their event cycle breaks
+# the regime (-44..-79% collapses live on 7/02) — never auto-slot them.
+EVENT_WORDS = ("trailblazer", "league", "shattered relics", "raging echoes",
+               "twisted teleport", "contract of", "echo ")
+
+
+def _eventy(nm) -> bool:
+    s = str(nm or "").lower()
+    return any(w in s for w in EVENT_WORDS)
+
+
 ONE_PER_SLOT = {"old school bond"}
 # Items that are NEVER worth flipping regardless of margin/liquidity — keep them out of BUY recs.
 # Old School Bond: confirmed in live play (2026-06-26) that re-trading a bought bond costs ~10% to
@@ -246,7 +260,7 @@ def _overnight_roster() -> dict[int, tuple[int, float]]:
         return {}
 
 
-def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> dict:
+def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", surge: bool = False) -> dict:
     th = th or Thresholds()
     own = con is None
     con = con or connect(read_only=True)
@@ -591,6 +605,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
     thin_skip = 0
     exit_skip = 0
     small_skip = 0
+    surge_event = None   # set when Surge Mode fires (2-touch only)
     if mode == "2touch" and free_slots > 0:
         # ---- 2-TOUCH MODE: overnight-first allocation --------------------------------------
         # The whole free-slot budget goes to the one OOS-PROVEN edge (78% win, +7% median/night,
@@ -607,6 +622,58 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         slot_bar = float(th.min_rt_profit or 0)
         if net_worth > 0 and free_gp > 0.5 * net_worth:
             slot_bar *= 0.5
+        # pattern/swing/surge all draw from the cached rosters (never block on a cold build)
+        try:
+            from .patterns import rosters as _pattern_rosters
+            pat = _pattern_rosters(cached_only=True)
+        except Exception:  # noqa: BLE001
+            pat = None
+
+        # ---- SURGE MODE (opt-in): ONE concentrated crash-roster recovery takes priority -------
+        # The only validated edge whose per-event return x full bankroll clears 50M-class days:
+        # crash-roster recoveries (pooled +17.2% med, 72% win; roster names 80-100% over 4+
+        # events). Deploys up to SURGE_FRAC of free cash into the single best LIVE event inside
+        # the envelope, capped by exit-liquidity and 80% NW. One surge at a time; q10 tail -28%.
+        surge_event = None
+        if surge and pat and free_slots > 0 and remaining > 0:
+            big_pos = any((p.get("cost_basis") or 0) >= 0.30 * net_worth for p in positions)
+            cands_s = [r for r in (pat.get("crash") or [])
+                       if r.get("crashing_now") and not r.get("broken") and not _eventy(r.get("name"))
+                       and float(r.get("win") or 0) >= 0.80 and int(r.get("crashes") or 0) >= 4]
+            cands_s.sort(key=lambda r: float(r["med_ret"]) * float(r["win"]), reverse=True)
+            if not big_pos and cands_s:
+                r_s = cands_s[0]
+                iid_s = int(r_s["item_id"])
+                if iid_s not in excl:
+                    s_rs = sig.get(iid_s, {})
+                    entry_s = _f(s_rs.get("buy_price")) or 0.0
+                    pu_s = (fill_uptime([iid_s]) or {}).get(iid_s, {})
+                    sud_s = pu_s.get("sell_units_day", 0.0)
+                    exit_cap_s = (CAPTURE * sud_s * MAX_UNWIND_DAYS) if sud_s > 0 else 0.0
+                    if entry_s > 0 and pu_s.get("sell", 0.0) >= MIN_SELL_UPTIME:
+                        units_s = int(min(SURGE_FRAC * remaining // entry_s, exit_cap_s,
+                                          0.8 * net_worth // entry_s, offer_cap(s_rs.get("name"))))
+                        tgt_s = entry_s * 1.15 / 0.98
+                        mgn_s = taxmod.net_sell(int(round(tgt_s)), bool(s_rs.get("exempt"))) - entry_s
+                        if units_s >= 1 and mgn_s > 0 and mgn_s * units_s >= slot_bar:
+                            cap_s = units_s * entry_s
+                            new_buys.append({
+                                "action": "BUY", "item_id": iid_s, "name": r_s["name"],
+                                "price": round(entry_s), "sell_target": round(tgt_s), "units": units_s,
+                                "capital": round(cap_s), "margin": round(mgn_s),
+                                "gp_day": round(mgn_s * units_s * float(r_s["win"])),
+                                "buy_h": None, "roundtrip_h": None, "live": False,
+                                "overnight": False, "tag": "surge",
+                                "reason": (f"SURGE — concentrated recovery: 5d {float(r_s['r5_now'])*100:+.0f}%, "
+                                           f"recovered {float(r_s['win'])*100:.0f}% of {r_s['crashes']} past crashes "
+                                           f"(med {float(r_s['med_ret'])*100:+.0f}%). Upside ~{mgn_s*units_s:,.0f}; "
+                                           f"TAIL: roster q10 -28% ≈ -{0.28*cap_s:,.0f}. One surge at a time."),
+                                "fill_freq": round(pu_s.get("buy", 0.0), 3),
+                                "sell_freq": round(pu_s.get("sell", 0.0), 3),
+                                "days_to_liquidate": round(units_s / (CAPTURE * sud_s), 1) if sud_s > 0 else None,
+                            })
+                            remaining -= cap_s
+                            surge_event = str(r_s["name"])
         oids = [int(o.get("item_id") or 0) for o in ocands]
         oprof = fill_uptime([i for i in oids if i and i not in excl]) if oids else {}
         cands2 = []
@@ -710,20 +777,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         # med, 72% win — tail is real, so <=15% NW and max 2 at once). Both compete AFTER the
         # overnight picks (the graded daily engine) and clear the same per-slot profit bar.
         if len(new_buys) < free_slots and remaining > 0:
-            try:
-                from .patterns import rosters as _pattern_rosters
-                pat = _pattern_rosters(cached_only=True)   # never block a plan on the ~45s cold build
-            except Exception:  # noqa: BLE001
-                pat = None
             if pat:
-                # League/seasonal-reward items pass the statistical gates right up until their
-                # event cycle breaks the regime (-44..-79% collapses live on 7/02). Blunt name
-                # filter: their history can't be trusted to repeat — keep them out of auto-slots.
-                EVENT_WORDS = ("trailblazer", "league", "shattered relics", "raging echoes",
-                               "twisted teleport", "contract of", "echo ")
-                def _eventy(nm) -> bool:
-                    s = str(nm or "").lower()
-                    return any(w in s for w in EVENT_WORDS)
                 plays = []
                 for pr_ in pat.get("range", []):
                     if pr_.get("at_band") and not pr_.get("broken") and not _eventy(pr_.get("name")):
@@ -782,6 +836,45 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
                     remaining -= units2 * entry
                     if kind_ == "crash":
                         added_crash += 1
+
+        # ---- SWING LANES fill whatever is left (the Liquidity Grid's intraday layer) ---------
+        # Stand the bid at the lane's own trailing-24h P20 band, the ask at its P80; cycles
+        # 0.5-3x/day at 80-100% backtested win. Small capital each, high efficiency — the
+        # engine that scales with bankroll.
+        if pat and len(new_buys) < free_slots and remaining > 0:
+            for sl in (pat.get("swing") or []):
+                if len(new_buys) >= free_slots or remaining <= 0:
+                    break
+                iid = int(sl.get("item_id") or 0)
+                if not iid or iid in excl or any(b["item_id"] == iid for b in new_buys) or _eventy(sl.get("name")):
+                    continue
+                bb, sb = sl.get("buy_band"), sl.get("sell_band")
+                if not bb or not sb or bb <= 0 or sb <= bb:
+                    continue
+                lane_units = float(sl.get("units") or 0)
+                units3 = int(min(lane_units, remaining // bb))
+                if units3 < 1:
+                    continue
+                mgn3 = taxmod.net_sell(int(sb), False) - bb
+                if mgn3 <= 0:
+                    continue
+                gpd3 = float(sl.get("gp_day") or 0) * (units3 / max(lane_units, 1.0))
+                if gpd3 < slot_bar * 0.5:              # per-DAY bar (lanes cycle multiple times)
+                    small_skip += 1
+                    continue
+                new_buys.append({
+                    "action": "BUY", "item_id": iid, "name": sl.get("name"),
+                    "price": round(float(bb)), "sell_target": round(float(sb)), "units": units3,
+                    "capital": round(units3 * bb), "margin": round(mgn3),
+                    "gp_day": round(gpd3),
+                    "buy_h": None, "roundtrip_h": None, "live": False,
+                    "overnight": False, "tag": "swing",
+                    "reason": (f"swing lane — cycles {float(sl.get('cyc_day') or 0):.1f}x/day at "
+                               f"{float(sl.get('win') or 0)*100:.0f}% win (16d backtest); stand the bid here, "
+                               f"re-list at {int(sb):,} when it fills"),
+                    "fill_freq": None, "sell_freq": None, "days_to_liquidate": None,
+                })
+                remaining -= units3 * bb
     elif free_slots > 0 and good_buy_ids:
         # Rank by modeled gp PER DAY (margin x the units you actually CYCLE per day), tilted by liquidity.
         # This is the true profit-rate objective: it rewards both deploying capital AND recycling it fast,
@@ -1009,6 +1102,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active") -> 
         "small_skipped": int(small_skip),
         "n_stale": int(n_stale), "stale_capital": round(stale_capital),
         "liquidity_clock": market_clock(), "overnight": overnight, "mode": mode,
+        "surge_armed": bool(surge), "surge_event": surge_event,
         "slots": slots, "holding": holding, "reconcile": reconcile,
         "totals": {
             "expected_realized": round(expected_realized),
