@@ -751,6 +751,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
         # liquidity ceiling, best-edge items first. EV stays quoted on expected fills only — the
         # reserve tranche costs nothing if untouched and buys a fat panic-dump at -4%+ if it hits.
         # Tail stays bounded: units_max already caps by exit-liquidity + the 20%-of-NW item cap.
+        budget0 = remaining + sum(c["place_units"] * c["price"] for c in slate)
         for c in sorted(slate, key=lambda c: c["ev_slot"] * c["boost"], reverse=True):
             if remaining <= c["price"]:
                 continue
@@ -758,6 +759,29 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
             if extra > 0:
                 c["place_units"] += extra
                 remaining -= extra * c["price"]
+        # THIN-POOL BOOST: when the qualified pool is too small to absorb the budget at normal
+        # ceilings (>35% would idle), relax the slate's per-item caps — good items take more:
+        #   x2 buy-limit windows (a standing overnight order lives through 2-3 GE limit resets),
+        #   4-day unwind (still bounded by REAL sell volume), 30% of net worth per item.
+        # Expectations stay depth-honest; this only widens the reserve on the best few names.
+        if slate and budget0 > 0 and remaining > 0.35 * budget0:
+            for c in sorted(slate, key=lambda c: c["ev_slot"] * c["boost"], reverse=True):
+                if remaining <= c["price"]:
+                    continue
+                o = c["o"]
+                sud_b = c["pr"].get("sell_units_day", 0.0)
+                relaxed = int(min(
+                    2.0 * float(o.get("on_units") or 0),
+                    (0.30 * net_worth // c["price"]) if net_worth > 0 else float("inf"),
+                    (per_slot_cap // c["price"]) if per_slot_cap > 0 else float("inf"),
+                    (CAPTURE * sud_b * 4.0) if sud_b > 0 else 0.0,
+                    offer_cap(o.get("name")),
+                ))
+                extra = int(min(relaxed - c["place_units"], remaining // c["price"]))
+                if extra > 0:
+                    c["place_units"] += extra
+                    c["boosted"] = True
+                    remaining -= extra * c["price"]
         for c in slate:
             o, pr = c["o"], c["pr"]
             place_units, exp_units = c["place_units"], min(c["exp_units"], c["place_units"])
@@ -769,6 +793,8 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                 why += f"; expect ~{exp_units:,} of {place_units:,} to fill"
                 if place_units > c["core_units"]:
                     why += f" ({place_units - c['core_units']:,} = deep-dip reserve soaking idle cash)"
+            if c.get("boosted"):
+                why += "; thin-pool boost: caps relaxed (2× limit windows, 4d unwind, ≤30% NW) — few items qualified, so the best take more"
             if c["boost"] > 1.0:
                 why += f"; PROVEN roster ({c['n_gr']} graded, {c['win_gr']:.0%} win)"
             elif c["boost"] < 1.0:
