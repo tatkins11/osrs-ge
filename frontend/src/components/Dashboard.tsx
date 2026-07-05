@@ -196,7 +196,7 @@ export function Dashboard({
               <h3>
                 💰 Today's income plan — conversions {gpShort(income.conversions_projected)}
                 <span className="dim" style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
-                  + overnight/plays {gpShort(t.plan_gp_day)} EV + session flips
+                  + overnight/plays {gpShort(plan.totals.plan_gp_day)} EV + session flips
                 </span>
               </h3>
               <table className="tbl" style={{ marginBottom: 14 }}>
