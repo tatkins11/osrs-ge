@@ -131,7 +131,7 @@ def derive_coarse_history(con=None) -> int:
                 ),
                 src AS (
                     SELECT item_id,
-                           make_timestamp((epoch(ts)::BIGINT / {sec}) * {sec} * 1000000) AS bts,
+                           make_timestamp((epoch(ts)::BIGINT // {sec}) * {sec} * 1000000) AS bts,
                            ts, avg_high, avg_low, high_vol, low_vol
                     FROM history
                     WHERE timestep = '1h' AND ts > (SELECT t FROM lastt)
