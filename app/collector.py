@@ -19,7 +19,7 @@ import pandas as pd
 
 from .api_client import OsrsPricesClient
 from .config import DEMO_MARKER, POLL_INTERVAL_SECONDS
-from .db import ensure_db, ensure_log_db, insert_history, insert_signal_log, insert_snapshots, stats, upsert_items, upsert_updates, utcnow
+from .db import connect, ensure_db, ensure_log_db, insert_history, insert_signal_log, insert_snapshots, stats, upsert_items, upsert_updates, utcnow
 
 log = logging.getLogger("collector")
 
@@ -109,6 +109,68 @@ def backfill_recent_1h(client: OsrsPricesClient, hours: int = 8) -> int:
     return total
 
 
+_COARSE_STEPS = ((21600, "6h", 5), (86400, "24h", 20))
+
+
+def derive_coarse_history(con=None) -> int:
+    """Roll our own 6h/24h bars from the 1h stream (volume-weighted). The bulk wiki API
+    only serves 5m/1h; the per-item timeseries backfill was one-shot, so 6h/24h froze at
+    2026-06-17 and silently staled every >=30d stat (level_health's mean_30d denominator
+    missed Master wand's spike-decay because its window predated the spike). Only complete
+    buckets with near-full collector uptime (nh floor) are written; idempotent via PK."""
+    own = con is None
+    con = con or connect()
+    total = 0
+    try:
+        for sec, step, minh in _COARSE_STEPS:
+            res = con.execute(f"""
+                INSERT INTO history (item_id, timestep, ts, avg_high, avg_low, high_vol, low_vol)
+                WITH lastt AS (
+                    SELECT coalesce(max(ts), TIMESTAMP '2000-01-01') AS t
+                    FROM history WHERE timestep = '{step}'
+                ),
+                src AS (
+                    SELECT item_id,
+                           make_timestamp((epoch(ts)::BIGINT / {sec}) * {sec} * 1000000) AS bts,
+                           ts, avg_high, avg_low, high_vol, low_vol
+                    FROM history
+                    WHERE timestep = '1h' AND ts > (SELECT t FROM lastt)
+                ),
+                hrs AS (   -- collector-uptime proxy: distinct hourly buckets present in the window
+                    SELECT bts, count(DISTINCT ts) AS nh FROM src GROUP BY bts
+                ),
+                agg AS (
+                    SELECT item_id, bts,
+                           CASE WHEN coalesce(sum(high_vol), 0) > 0
+                                THEN round(sum(avg_high * high_vol) / sum(high_vol))::BIGINT END AS avg_high,
+                           CASE WHEN coalesce(sum(low_vol), 0) > 0
+                                THEN round(sum(avg_low * low_vol) / sum(low_vol))::BIGINT END AS avg_low,
+                           coalesce(sum(high_vol), 0)::BIGINT AS high_vol,
+                           coalesce(sum(low_vol), 0)::BIGINT AS low_vol
+                    FROM src GROUP BY item_id, bts
+                )
+                SELECT a.item_id, '{step}', a.bts, a.avg_high, a.avg_low, a.high_vol, a.low_vol
+                FROM agg a JOIN hrs USING (bts)
+                WHERE hrs.nh >= {minh}
+                  AND a.bts > (SELECT t FROM lastt)
+                  AND a.bts + INTERVAL {sec} SECOND <= now()::TIMESTAMP
+                  AND (a.high_vol > 0 OR a.low_vol > 0)
+                ON CONFLICT DO NOTHING
+            """).fetchone()
+            total += int(res[0]) if res else 0
+        stale = con.execute("""
+            SELECT max(ts) < now()::TIMESTAMP - INTERVAL 18 HOUR FROM history WHERE timestep = '6h'
+        """).fetchone()[0]
+        if stale:
+            log.warning("6h history is stale (>18h behind) -- long-horizon stats are degrading")
+    finally:
+        if own:
+            con.close()
+    if total:
+        log.info("coarse history derived: %d rows (6h/24h from 1h stream)", total)
+    return total
+
+
 def collect_once(client: OsrsPricesClient | None = None, con=None) -> int:
     own = client is None
     client = client or OsrsPricesClient()
@@ -122,6 +184,10 @@ def collect_once(client: OsrsPricesClient | None = None, con=None) -> int:
             collect_history_1h(client, con=con)
         except Exception:
             log.exception("1h history append failed")
+        try:
+            derive_coarse_history(con=con)
+        except Exception:
+            log.exception("coarse 6h/24h derivation failed")
         if DEMO_MARKER.exists():
             DEMO_MARKER.unlink(missing_ok=True)  # real data supersedes any demo seed
         return n
