@@ -67,7 +67,10 @@ agg30 AS (   -- real 30-day range/mean from 6h bars
     SELECT b.item_id,
         min(b.mid) FILTER (WHERE b.ts >= mx6.t - INTERVAL 30 DAY) AS min_30d,
         max(b.mid) FILTER (WHERE b.ts >= mx6.t - INTERVAL 30 DAY) AS max_30d,
-        avg(b.mid) FILTER (WHERE b.ts >= mx6.t - INTERVAL 30 DAY) AS mean_30d
+        avg(b.mid) FILTER (WHERE b.ts >= mx6.t - INTERVAL 30 DAY) AS mean_30d,
+        -- long anchor: price vs own 90d median catches spike-riders AND spike-decayers
+        -- (backtest 6/24-7/06: filled recs at >=1.45x med90 went 0-for-4, median -23%)
+        median(b.mid) FILTER (WHERE b.ts >= mx6.t - INTERVAL 90 DAY) AS median_90d
     FROM base6 b CROSS JOIN mx6
     GROUP BY b.item_id
 ),
@@ -84,7 +87,7 @@ dropagg AS (   -- biggest 1-day drop in the last 30d + the bar it happened on (t
     GROUP BY d.item_id
 )
 SELECT a.item_id, a.mean_7d, a.median_7d, a.sd_7d,
-       a30.min_30d, a30.max_30d, a30.mean_30d,
+       a30.min_30d, a30.max_30d, a30.mean_30d, a30.median_90d,
        a.vol_hourly_7d, a.vol_24h, a.mid_1d_ago, a.margin_uptime, a.margin_median_7d, a.n_7d, a.slope_7d_raw,
        dd.worst_1d_drop, dd.worst_drop_ts
 FROM agg7 a

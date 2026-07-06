@@ -235,6 +235,8 @@ def enrich(df: pd.DataFrame, th: Thresholds, updates: pd.DataFrame | None = None
     mean30 = d["mean_30d"].astype("float64")
     d["value_discount"] = np.where(established > 0, (established - d["mid"]) / established, np.nan)  # +ve = below fair
     d["level_health"] = np.where(mean30 > 0, established / mean30, np.nan)   # ~1 stable; <1 = the level itself is falling
+    med90 = d["median_90d"].astype("float64") if "median_90d" in d.columns else pd.Series(np.nan, index=d.index)
+    d["ratio_90"] = np.where(med90 > 0, d["mid"] / med90, np.nan)            # >>1 = trading far above its own 90d level (spike-rider or spike-decayer)
     buy_px = d["sell_price"].astype("float64")                              # what you pay to buy now (instabuy)
     d["value_target"] = established                                         # fair value = 7d established level
     net_v = established - taxmod.sell_tax_array(established, exempt_arr)
@@ -341,7 +343,7 @@ TABLE_COLS = [
     "mean_7d", "sd_7d", "z_7d", "slope_7d", "pct_30d", "volatility_7d", "min_30d", "max_30d",
     "mr_entry", "mr_target", "mr_exp_margin", "mr_exp_roi", "mr_exp_profit", "confidence",
     "established", "drawdown", "crash_target", "crash_exp_margin", "crash_exp_roi", "crash_exp_profit", "crash_score", "is_crash",
-    "value_discount", "level_health", "value_target", "value_exp_margin", "value_exp_roi", "value_exp_profit",
+    "value_discount", "level_health", "ratio_90", "value_target", "value_exp_margin", "value_exp_roi", "value_exp_profit",
     "value_confidence", "value_horizon", "is_value_buy", "post_update_drop", "post_update_title",
     "alch_floor", "alch_support",
     "signal", "flip_ok", "tradeable", "flip_score", "reversion_score",
@@ -473,6 +475,9 @@ def overnight_table(th: Thresholds | None = None, con=None, limit: int = 100, d=
             & (buy_offer >= th.min_price) & (buy_offer <= th.max_price)
             & (d["drawdown"].abs() <= 0.06)                    # at fair value (bet on a FUTURE dump, not an existing crash)
             & d["level_health"].fillna(0).between(0.85, 1.3)   # stable established level (kills the noisy-median mirage)
+            & ~(d["ratio_90"] > 1.40)                          # not far above its own 90d median: spike-riders went 0-for-4
+                                                               # (med -23%) in the 6/24-7/06 rec backtest; decayers (Master
+                                                               # wand 1.60x) are the same trap on the way down. NaN passes.
             & (spread_pct <= 0.05)                             # tight spread -> can realistically sell back near the ask
             & vol.between(0.02, 0.8)
             & (d["on_margin"] > 0) & (d["on_roi"] >= th.min_roi)
