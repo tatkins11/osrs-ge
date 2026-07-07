@@ -692,9 +692,16 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
         # before the evening acquisition touch. Two shifts on the same 8 slots.
         now_ct = (pd.Timestamp(utcnow()).hour - 5) % 24
         if pat and 7 <= now_ct <= 16 and len(new_buys) < free_slots and remaining > 0:
+            # Two-pass: build the eligible set with each lane's REALIZABLE expected gp (after the
+            # 20%-NW unit cap), then rank on that -- not on the roster's full-volume number. A
+            # high-swing/low-win lane whose cap slashes it to 1 unit shouldn't out-prioritise a
+            # high-win lane that fills fully. ev_day is the winsorized-mean expectation (includes
+            # the losing pairs); the roster is EV-ranked at full units, the cap reorders it.
+            def _ev_full(dl):
+                v = dl.get("ev_day")
+                return float(v if v is not None else (dl.get("gp_day") or 0))   # fallback for pre-upgrade cached rosters
+            day_elig = []
             for dl in (pat.get("day") or []):
-                if len(new_buys) >= free_slots or remaining <= 0:
-                    break
                 iid = int(dl.get("item_id") or 0)
                 bh = int(dl.get("buy_hr") or 0)
                 if not iid or iid in excl or any(b["item_id"] == iid for b in new_buys) or _eventy(dl.get("name")):
@@ -706,20 +713,33 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                 if entry <= 0 or tgt <= entry:
                     continue
                 icap4 = (item_cap_gp // entry) if item_cap_gp > 0 else float("inf")   # same 20%-NW cap as every engine
-                units4 = int(min(float(dl.get("units") or 0), icap4, remaining // entry))
-                if units4 < 1:
+                units_cap = int(min(float(dl.get("units") or 0), icap4))              # cash-independent cap
+                if units_cap < 1:
                     continue
                 mgn4 = taxmod.net_sell(int(tgt), False) - entry
                 if mgn4 <= 0:
                     continue
-                gpd4 = float(dl.get("gp_day") or 0) * (units4 / max(float(dl.get("units") or 1), 1.0))
-                if gpd4 < slot_bar * 0.5:                  # per-DAY bar (lanes cycle daily)
+                scale = units_cap / max(float(dl.get("units") or 1), 1.0)
+                day_elig.append({"dl": dl, "iid": iid, "bh": bh, "entry": entry, "tgt": tgt,
+                                 "units_cap": units_cap, "mgn4": mgn4, "ev4": _ev_full(dl) * scale})
+            day_elig.sort(key=lambda c: -c["ev4"])          # highest realizable EXPECTED gp first
+            for c in day_elig:
+                if len(new_buys) >= free_slots or remaining <= 0:
+                    break
+                dl, entry, tgt, bh = c["dl"], c["entry"], c["tgt"], c["bh"]
+                units4 = int(min(c["units_cap"], remaining // entry))   # bind to remaining cash at placement
+                if units4 < 1:
+                    continue
+                scale = units4 / max(float(dl.get("units") or 1), 1.0)
+                ev4 = _ev_full(dl) * scale
+                if ev4 < slot_bar * 0.5:                    # per-DAY bar on EXPECTED gp (lanes cycle daily)
                     small_skip += 1
                     continue
+                gpd4 = float(dl.get("gp_day") or 0) * scale
                 new_buys.append({
-                    "action": "BUY", "item_id": iid, "name": dl.get("name"),
+                    "action": "BUY", "item_id": c["iid"], "name": dl.get("name"),
                     "price": round(entry), "sell_target": round(tgt), "units": units4,
-                    "capital": round(units4 * entry), "margin": round(mgn4),
+                    "capital": round(units4 * entry), "margin": round(c["mgn4"]),
                     "gp_day": round(gpd4),
                     "buy_h": None, "roundtrip_h": None, "live": False,
                     "overnight": False, "tag": "day",

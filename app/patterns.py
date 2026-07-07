@@ -306,10 +306,17 @@ def _day_scan(con) -> list[dict]:
         nets_te = pair_net(te, eh, xh)
         if len(nets_te) < 4:
             continue
-        med_te = float(np.median(nets_te))
-        win_te = float((np.array(nets_te) > 0).mean())
+        arr_te = np.array(nets_te, dtype=float)
+        med_te = float(np.median(arr_te))
+        win_te = float((arr_te > 0).mean())
         px = float(m["mid"])
-        if px <= 0 or med_te / px < 0.005 or win_te < 0.65:
+        # EXPECTED net per unit (not the median): the median pair of a 71%-win lane is a WINNER, so
+        # median*units overstates a low-win lane's true daily take. The winsorized mean includes the
+        # losing pairs (tail-clipped to +-10% of price so one crash day can't dominate) -> honest EV
+        # for ranking. Keep the discovery + validation on the median (the 2026-07-02 method), but
+        # drop any lane whose expected value is <=0 despite a positive median (fat-tail-loser trap).
+        mean_w = float(np.clip(arr_te, -0.10 * px, 0.10 * px).mean())
+        if px <= 0 or med_te / px < 0.005 or win_te < 0.65 or mean_w <= 0:
             continue
         # live placement guidance: the last 5 days' typical prices at the lane's hours
         recent = piv_lo.index[-5:]
@@ -320,12 +327,12 @@ def _day_scan(con) -> list[dict]:
         out.append({
             "item_id": int(iid), "name": name_of.get(int(iid), str(iid)),
             "buy_hr": int(eh), "sell_hr": int(xh),
-            "oos_med_pct": round(med_te / px, 4), "win": round(win_te, 3),
-            "units": int(units), "gp_day": round(med_te * units),
+            "oos_med_pct": round(med_te / px, 4), "oos_mean_pct": round(mean_w / px, 4), "win": round(win_te, 3),
+            "units": int(units), "gp_day": round(med_te * units), "ev_day": round(mean_w * units),
             "capital": round(units * entry_px),
             "entry_px": round(entry_px), "target_px": round(target_px),
         })
-    out.sort(key=lambda r: -r["gp_day"])
+    out.sort(key=lambda r: -r["ev_day"])   # rank by EXPECTED daily gp (winsorized mean), not median
     return out[:30]
 
 
