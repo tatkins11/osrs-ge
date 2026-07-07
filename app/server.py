@@ -67,25 +67,27 @@ except Exception:
 
 
 # The pattern/day/swing/crash rosters live in a PER-PROCESS module cache. The planner
-# (this process) reads them with cached_only=True so it never blocks the plan on a ~1min
-# rebuild -- but that means if THIS process's cache is cold, every pattern/day/swing/surge
-# lane silently vanishes from the plan (root cause of the 2026-07-06 "0 day lanes" night:
-# the cache only warmed when someone happened to hit /api/patterns first). Warm it on
-# startup and re-warm on a timer (cache TTL is 12h) in a daemon thread so the planner
-# always has a fresh roster without ever blocking a request. Single uvicorn worker, so one
-# warmer keeps the one cache hot.
+# (this process) reads them with cached_only=True so it never blocks the plan on the ~1min
+# pandas build -- but if THIS process's cache is cold, every pattern/day/swing/surge lane
+# silently vanishes from the plan (root cause of the 2026-07-06 "0 day lanes" night: the
+# cache only warmed when someone happened to hit /api/patterns first). We do NOT rebuild in
+# this single-vCPU worker (the build holds the GIL and stalls request serving); instead the
+# collector persists the roster to a shared file and the planner's cached_only path loads it.
+# This daemon just pre-loads that file into the module cache on startup and refreshes it every
+# 30min (a cheap JSON read, no build) so the first plan of the day is never cold.
 def _roster_warmer() -> None:
     import time as _time
     from .patterns import rosters
     while True:
         try:
-            r = rosters()  # force build/refresh THIS process's cache
-            log.info("rosters warmed: day=%d swing=%d range=%d crash=%d",
-                     len(r.get("day") or []), len(r.get("swing") or []),
-                     len(r.get("range") or []), len(r.get("crash") or []))
+            r = rosters(cached_only=True)   # cheap: loads the collector-persisted artifact
+            if r is not None:
+                log.info("rosters loaded from disk: day=%d swing=%d range=%d crash=%d",
+                         len(r.get("day") or []), len(r.get("swing") or []),
+                         len(r.get("range") or []), len(r.get("crash") or []))
         except Exception:
-            log.exception("roster warm failed; retrying next cycle")
-        _time.sleep(6 * 3600)   # re-warm well inside the 12h cache TTL
+            log.exception("roster preload failed; retrying next cycle")
+        _time.sleep(1800)
 
 
 def _start_roster_warmer() -> None:

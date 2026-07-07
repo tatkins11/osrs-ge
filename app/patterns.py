@@ -16,16 +16,53 @@ joins them to LIVE prices so the UI can flag what's actionable right now.
 """
 from __future__ import annotations
 
+import json
 import time
 
 import numpy as np
 import pandas as pd
 
 from . import tax as taxmod
+from .config import DATA_DIR
 from .db import connect
 
 _CACHE: dict = {"ts": 0.0, "out": None}
 _TTL = 12 * 3600.0
+
+# Cross-process warm: the roster build is a ~1min pandas job, too heavy to run in the
+# single-vCPU API worker (it holds the GIL and stalls request serving). The collector
+# builds it (nightly + on startup) and persists it here; the API's planner reads this
+# file on a cold cache instead of building. Shared volume -> both containers see it.
+_ROSTER_FILE = DATA_DIR / "rosters.json"
+_FILE_TTL = 24 * 3600.0   # ignore a persisted roster older than this (collector rebuilds >=daily)
+
+
+def _to_jsonable(o):
+    if isinstance(o, np.integer):
+        return int(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    if isinstance(o, np.bool_):
+        return bool(o)
+    return str(o)
+
+
+def _persist(out: dict) -> None:
+    try:
+        tmp = _ROSTER_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(out, default=_to_jsonable))
+        tmp.replace(_ROSTER_FILE)   # atomic swap so a reader never sees a half-written file
+    except Exception:  # noqa: BLE001 -- persistence is best-effort; never break the build
+        pass
+
+
+def _load_persisted() -> dict | None:
+    try:
+        if not _ROSTER_FILE.exists() or time.time() - _ROSTER_FILE.stat().st_mtime > _FILE_TTL:
+            return None
+        return json.loads(_ROSTER_FILE.read_text())
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _load(con) -> pd.DataFrame:
@@ -300,7 +337,12 @@ def rosters(con=None, cached_only: bool = False) -> dict | None:
     if _CACHE["out"] is not None and now - _CACHE["ts"] < _TTL:
         return _CACHE["out"]
     if cached_only:
-        return None
+        # cold in-memory cache: load the collector-persisted artifact (cheap) rather than
+        # building here. Keeps the planner's hot path off the ~1min build entirely.
+        disk = _load_persisted()
+        if disk is not None:
+            _CACHE["ts"], _CACHE["out"] = now, disk
+        return disk
     own = con is None
     con = con or connect(read_only=True)
     try:
@@ -373,4 +415,5 @@ def rosters(con=None, cached_only: bool = False) -> dict | None:
     out = {"range": rng_rows, "crash": crash_rows, "swing": swing_rows, "day": day_rows,
            "built_at": pd.Timestamp.utcnow().isoformat()}
     _CACHE["ts"], _CACHE["out"] = now, out
+    _persist(out)   # share with the API process (its planner reads this on a cold cache)
     return out

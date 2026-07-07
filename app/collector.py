@@ -269,6 +269,15 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
             log.info("sector map refreshed: %d", _refresh_sectors())
         except Exception:
             log.exception("startup sector-map refresh failed")
+        try:  # build+persist the pattern rosters so the API's planner has them right after a deploy
+            from . import patterns
+            derive_coarse_history()          # ensure 6h/24h are current before the roster reads them
+            r = patterns.rosters()
+            log.info("rosters built at startup: day=%d swing=%d range=%d crash=%d",
+                     len(r.get("day") or []), len(r.get("swing") or []),
+                     len(r.get("range") or []), len(r.get("crash") or []))
+        except Exception:
+            log.exception("startup roster build failed")
         current_day = utcnow().date()
         current_hour = None
         while True:
