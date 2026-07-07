@@ -804,6 +804,29 @@ def ingest_offers(events: list[dict], coins_observed: int | None = None) -> dict
                            completed_ts=COALESCE(completed_ts, ?) WHERE order_id=?""",
                     [item_id, side, price, total, filled, spent, state, slot, ts, (ts if terminal else None), oid],
                 )
+                # RETRO-TAG: the originating plan rec is often logged a few minutes AFTER the order
+                # first appears (he places in-game from a plan he viewed; the next ~hourly plan_log
+                # snapshot stamps the rec later). Insert-time backward-only matching misses that, so
+                # while a live buy is still untagged, re-attempt the match each cycle with a small
+                # forward window. Live case 2026-07-06: Echo crystal filled at 23:02, rec logged 23:33
+                # -> stayed 'untagged' and polluted the engine-attribution table.
+                if side == "buy":
+                    try:
+                        cur = con.execute("SELECT opened_ts, tag FROM orders WHERE order_id=?", [oid]).fetchone()
+                        if cur and cur[1] is None and cur[0] is not None:
+                            o_open = cur[0]
+                            tg = con.execute(
+                                """SELECT tag FROM plan_log
+                                   WHERE action='BUY' AND item_id=? AND tag IS NOT NULL
+                                     AND ts BETWEEN ? AND ? AND price BETWEEN ? AND ?
+                                   ORDER BY abs(epoch(ts) - epoch(?::TIMESTAMP)) LIMIT 1""",
+                                [item_id, o_open - timedelta(hours=24), o_open + timedelta(hours=2),
+                                 int(price * 0.95), int(price * 1.05), o_open],
+                            ).fetchone()
+                            if tg and tg[0]:
+                                con.execute("UPDATE orders SET tag=? WHERE order_id=? AND tag IS NULL", [tg[0], oid])
+                    except duckdb.Error:
+                        pass
             n += 1
             made += _log_fill_delta(con, oid, ts, f"GE auto · slot {e.get('slot')}")  # log newly-filled qty (partial or full)
             _reconcile_order_cash(con, oid)   # apply this offer's cash delta to free_gp (reserve / proceeds / return)

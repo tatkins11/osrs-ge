@@ -66,6 +66,39 @@ except Exception:
     log.exception("could not initialise trades DB")
 
 
+# The pattern/day/swing/crash rosters live in a PER-PROCESS module cache. The planner
+# (this process) reads them with cached_only=True so it never blocks the plan on a ~1min
+# rebuild -- but that means if THIS process's cache is cold, every pattern/day/swing/surge
+# lane silently vanishes from the plan (root cause of the 2026-07-06 "0 day lanes" night:
+# the cache only warmed when someone happened to hit /api/patterns first). Warm it on
+# startup and re-warm on a timer (cache TTL is 12h) in a daemon thread so the planner
+# always has a fresh roster without ever blocking a request. Single uvicorn worker, so one
+# warmer keeps the one cache hot.
+def _roster_warmer() -> None:
+    import time as _time
+    from .patterns import rosters
+    while True:
+        try:
+            r = rosters()  # force build/refresh THIS process's cache
+            log.info("rosters warmed: day=%d swing=%d range=%d crash=%d",
+                     len(r.get("day") or []), len(r.get("swing") or []),
+                     len(r.get("range") or []), len(r.get("crash") or []))
+        except Exception:
+            log.exception("roster warm failed; retrying next cycle")
+        _time.sleep(6 * 3600)   # re-warm well inside the 12h cache TTL
+
+
+def _start_roster_warmer() -> None:
+    import threading
+    threading.Thread(target=_roster_warmer, name="roster-warmer", daemon=True).start()
+
+
+try:
+    _start_roster_warmer()
+except Exception:
+    log.exception("could not start roster warmer")
+
+
 def get_thresholds(
     bankroll: int = Query(DEFAULT_BANKROLL),   # free gp; clamped >=0 below (a stale negative must not 422)
     min_volume: int = Query(DEFAULT_MIN_VOLUME, ge=0),
