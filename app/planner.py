@@ -735,6 +735,15 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                 if ev4 < slot_bar * 0.5:                    # per-DAY bar on EXPECTED gp (lanes cycle daily)
                     small_skip += 1
                     continue
+                cap4 = units4 * entry
+                # capital-efficiency floor: a lane priced so high it fits in ~1 unit captures only a
+                # sliver of its edge while tying up a full 20%-NW slot (Nightmare staff: 45M/1 unit for
+                # ~0.4% expected). The cap scales EV and capital together, so ev4/cap4 == the lane's
+                # expected return %; require it to clear 0.6% or the cash is better held for the
+                # overnight (~+7.5%/night). Cheap lanes that fill fully are unaffected.
+                if cap4 > 0 and ev4 / cap4 < 0.006:
+                    small_skip += 1
+                    continue
                 gpd4 = float(dl.get("gp_day") or 0) * scale
                 new_buys.append({
                     "action": "BUY", "item_id": c["iid"], "name": dl.get("name"),
