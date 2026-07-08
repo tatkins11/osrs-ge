@@ -668,3 +668,53 @@ export const updateTrade = (id: number, patch: { qty?: number; price?: number; n
       return r.json();
     }
   );
+
+// --- Market Desk: analyst write-ups + auto-graded prediction ledger ----------
+export interface DeskItemRow {
+  item_id: number; name: string;
+  mid: number | null; chg: number | null;
+  chg_1d?: number | null; chg_7d?: number | null; chg_30d?: number | null;
+  gpv?: number | null; vol_ratio?: number | null; z_7d?: number | null;
+  pct_30d?: number | null; ratio_90?: number | null; value_discount?: number | null;
+}
+export interface DeskInternals {
+  universe: number; advancers: number; decliners: number; flat: number;
+  ad_ratio: number | null; pct_positive: number | null; median_move_pct: number | null;
+  pct_above_30d_mid: number | null; near_30d_high: number; near_30d_low: number;
+  avg_volatility_7d: number | null;
+}
+export interface DeskRegime {
+  label: string; breadth: string | null; volatility: string | null;
+  pct_positive: number | null; leading_sector: string | null; lagging_sector?: string | null;
+}
+export interface DeskPacket {
+  period: string; label: string; generated_ts: string;
+  internals: DeskInternals; regime: DeskRegime;
+  movers: { gainers: DeskItemRow[]; losers: DeskItemRow[] };
+  volume: { accumulation: DeskItemRow[]; distribution: DeskItemRow[] };
+  extremes: { stretched_rich: DeskItemRow[]; deep_value: DeskItemRow[] };
+  events: { ts: string; title: string; category?: string }[];
+  sectors?: unknown;
+}
+export interface DeskIssue { id: number; ts: string; packet: DeskPacket | null; prose: string | null }
+export interface Prediction {
+  id: number; period: string; created_ts: string; item_id: number; name: string;
+  rule: string; direction: number; ref_price: number; target_price: number;
+  horizon_days: number; confidence: number; rationale: string;
+  resolved_ts?: string | null; actual_price?: number | null; fwd_pct?: number | null;
+  dir_ok?: boolean | null; hit?: boolean | null; outcome: string;
+}
+export interface DeskScorecard {
+  n: number; resolved: number; open?: number;
+  dir_accuracy?: number; target_hit_rate?: number;
+  edge_median_pct?: number; edge_mean_pct?: number; brier?: number;
+  calibration?: { band: string; n: number; realized_dir: number }[];
+  by_rule?: { rule: string; n: number; dir_acc: number; hit_rate: number; edge_med_pct: number }[];
+}
+export interface MarketDeskResponse {
+  latest: { daily?: DeskIssue; weekly?: DeskIssue; monthly?: DeskIssue };
+  open_predictions: Prediction[];
+  resolved_predictions: Prediction[];
+  scorecard: DeskScorecard;
+}
+export const getMarketDesk = () => get<MarketDeskResponse>("/api/market-desk");

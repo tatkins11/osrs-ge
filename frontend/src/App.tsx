@@ -4,6 +4,7 @@ import { gpShort } from "./format";
 import { Dashboard } from "./components/Dashboard";
 import { Planner } from "./components/Planner";
 import { GrowthTracker } from "./components/GrowthTracker";
+import { MarketDesk } from "./components/MarketDesk";
 import { ProvenItems } from "./components/ProvenItems";
 import { Controls } from "./components/Controls";
 import { CrashTable } from "./components/CrashTable";
@@ -17,7 +18,7 @@ import { SectorGrid } from "./components/SectorGrid";
 import { SectorPanel } from "./components/SectorPanel";
 import { VolumeTable } from "./components/VolumeTable";
 
-type Tab = "today" | "flips" | "allocate" | "growth" | "proven" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "orders" | "portfolio";
+type Tab = "today" | "flips" | "allocate" | "growth" | "desk" | "proven" | "invest" | "crashes" | "movers" | "overnight" | "sectors" | "all" | "orders" | "portfolio";
 
 const DEFAULT_FILTERS: Filters = {
   bankroll: 250_000_000,
@@ -39,6 +40,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "flips", label: "Flips" },
   { id: "allocate", label: "8-Slot Plan" },
   { id: "growth", label: "Growth" },
+  { id: "desk", label: "Market Desk" },
   { id: "proven", label: "Proven" },
   { id: "invest", label: "Invest" },
   { id: "crashes", label: "Crashes" },
@@ -309,6 +311,13 @@ export default function App() {
           <>
             <div className="table-wrap">
               <GrowthTracker filters={filters} refreshNonce={nonce} />
+            </div>
+            <div className="panel-wrap" />
+          </>
+        ) : tab === "desk" ? (
+          <>
+            <div className="table-wrap">
+              <MarketDesk refreshNonce={nonce} />
             </div>
             <div className="panel-wrap" />
           </>

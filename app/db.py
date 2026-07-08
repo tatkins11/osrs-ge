@@ -9,6 +9,7 @@ All timestamps are stored as naive UTC.
 from __future__ import annotations
 
 import functools
+import json
 import logging
 import threading
 import time
@@ -424,6 +425,36 @@ CREATE TABLE IF NOT EXISTS study_results (  -- research.py diagnostics persisted
     ret_ci_lo      DOUBLE,    -- item-block bootstrap CI low on median_ret — edge is real only if this > 0
     ret_ci_hi      DOUBLE,    -- item-block bootstrap CI high on median_ret
     reached_target DOUBLE     -- fraction that reached the fair-value target on a liquid bar (NULL where N/A)
+);
+CREATE SEQUENCE IF NOT EXISTS digests_id_seq;
+CREATE TABLE IF NOT EXISTS digests (   -- Market Desk: one archived issue (facts packet + optional analyst prose)
+    id      BIGINT PRIMARY KEY DEFAULT nextval('digests_id_seq'),
+    ts      TIMESTAMP,
+    period  VARCHAR,     -- daily | weekly | monthly
+    packet  VARCHAR,     -- the grounded facts packet (JSON) the write-up + calls were built from
+    prose   VARCHAR      -- the analyst narrative (NULL until the narrative layer fills it)
+);
+CREATE SEQUENCE IF NOT EXISTS predictions_id_seq;
+CREATE TABLE IF NOT EXISTS predictions (   -- Market Desk: falsifiable calls, auto-graded at horizon
+    id           BIGINT PRIMARY KEY DEFAULT nextval('predictions_id_seq'),
+    digest_id    BIGINT,
+    period       VARCHAR,
+    created_ts   TIMESTAMP,
+    item_id      INTEGER,
+    name         VARCHAR,
+    rule         VARCHAR,     -- reversion_up | reversion_down (validated edges only)
+    direction    INTEGER,     -- +1 up / -1 down
+    ref_price    BIGINT,      -- mid at the call
+    target_price BIGINT,      -- the level the call is aiming for
+    horizon_days INTEGER,
+    confidence   DOUBLE,      -- stated prior (recalibrated against the scorecard over time)
+    rationale    VARCHAR,
+    resolved_ts  TIMESTAMP,   -- set when graded
+    actual_price BIGINT,      -- mid at horizon
+    fwd_pct      DOUBLE,      -- realised move vs ref at horizon
+    dir_ok       BOOLEAN,     -- was the direction right?
+    hit          BOOLEAN,     -- did price reach the target within the window?
+    outcome      VARCHAR      -- pending | hit | dir | miss
 );
 """
 _TRADE_COLS = ["id", "ts", "item_id", "side", "qty", "price", "note"]
@@ -1033,6 +1064,117 @@ def get_study_results_df() -> pd.DataFrame:
         return con.execute("SELECT * FROM study_results ORDER BY ts").df()
     except duckdb.Error:
         return pd.DataFrame(columns=_STUDY_COLS)
+    finally:
+        con.close()
+
+
+# --- Market Desk: digests (archived issues) + predictions (auto-graded calls) ------------------
+_DIGEST_COLS = ["id", "ts", "period", "packet", "prose"]
+_PRED_COLS = ["id", "digest_id", "period", "created_ts", "item_id", "name", "rule", "direction",
+              "ref_price", "target_price", "horizon_days", "confidence", "rationale",
+              "resolved_ts", "actual_price", "fwd_pct", "dir_ok", "hit", "outcome"]
+
+
+def insert_digest(period: str, packet: dict, prose: str | None = None, ts=None) -> int:
+    """Archive one Market Desk issue (facts packet + optional prose). Returns the new digest id."""
+    ts = ts or utcnow()
+    try:
+        con = connect_trades()
+    except RuntimeError:
+        return 0
+    try:
+        _ensure_schema(con)
+        rid = con.execute(
+            "INSERT INTO digests (ts, period, packet, prose) VALUES (?, ?, ?, ?) RETURNING id",
+            [ts, str(period), json.dumps(packet, default=str), (str(prose) if prose else None)],
+        ).fetchone()
+        return int(rid[0]) if rid else 0
+    except duckdb.Error:
+        return 0
+    finally:
+        con.close()
+
+
+def record_digest_prose(digest_id: int, prose: str) -> None:
+    """Fill in the analyst narrative for an existing issue (the narrative layer calls this)."""
+    try:
+        con = connect_trades()
+    except RuntimeError:
+        return
+    try:
+        _ensure_schema(con)
+        con.execute("UPDATE digests SET prose=? WHERE id=?", [str(prose), int(digest_id)])
+    except duckdb.Error:
+        pass
+    finally:
+        con.close()
+
+
+def get_digests_df() -> pd.DataFrame:
+    try:
+        con = connect_trades(read_only=True)
+    except RuntimeError:
+        return pd.DataFrame(columns=_DIGEST_COLS)
+    try:
+        return con.execute("SELECT * FROM digests ORDER BY ts").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=_DIGEST_COLS)
+    finally:
+        con.close()
+
+
+def insert_prediction(digest_id: int, period: str, call: dict, horizon_days: int, ts=None) -> bool:
+    """Store one falsifiable call as pending (graded later by predictions.grade)."""
+    ts = ts or utcnow()
+    try:
+        con = connect_trades()
+    except RuntimeError:
+        return False
+    try:
+        _ensure_schema(con)
+        con.execute(
+            "INSERT INTO predictions (digest_id, period, created_ts, item_id, name, rule, direction, "
+            "ref_price, target_price, horizon_days, confidence, rationale, outcome) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+            [int(digest_id), str(period), ts, int(call["item_id"]), str(call.get("name") or ""),
+             str(call["rule"]), int(call["direction"]), int(call["ref_price"]), int(call["target_price"]),
+             int(horizon_days), float(call["confidence"]), str(call.get("rationale") or "")],
+        )
+        return True
+    except (duckdb.Error, KeyError, ValueError, TypeError):
+        return False
+    finally:
+        con.close()
+
+
+def get_predictions_df() -> pd.DataFrame:
+    try:
+        con = connect_trades(read_only=True)
+    except RuntimeError:
+        return pd.DataFrame(columns=_PRED_COLS)
+    try:
+        return con.execute("SELECT * FROM predictions ORDER BY created_ts").df()
+    except duckdb.Error:
+        return pd.DataFrame(columns=_PRED_COLS)
+    finally:
+        con.close()
+
+
+def update_prediction_outcome(pred_id: int, resolved_ts, actual_price: int, fwd_pct: float,
+                              dir_ok: bool, hit: bool, outcome: str) -> None:
+    try:
+        con = connect_trades()
+    except RuntimeError:
+        return
+    try:
+        _ensure_schema(con)
+        con.execute(
+            "UPDATE predictions SET resolved_ts=?, actual_price=?, fwd_pct=?, dir_ok=?, hit=?, outcome=? "
+            "WHERE id=?",
+            [resolved_ts, int(actual_price), float(fwd_pct), bool(dir_ok), bool(hit), str(outcome), int(pred_id)],
+        )
+    except duckdb.Error:
+        pass
     finally:
         con.close()
 

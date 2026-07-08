@@ -331,6 +331,16 @@ def run(interval: int = POLL_INTERVAL_SECONDS) -> None:
                         log.info("pattern rosters warmed")
                     except Exception:
                         log.exception("pattern roster warm failed")
+                    try:  # Market Desk: grade matured calls, then publish today's issue(s)
+                        from . import predictions
+                        log.info("predictions graded: %d", predictions.grade())
+                        log.info("daily digest: %s", predictions.record("daily"))
+                        if day.weekday() == 0:      # Monday -> weekly issue
+                            log.info("weekly digest: %s", predictions.record("weekly"))
+                        if day.day == 1:            # 1st of month -> monthly issue
+                            log.info("monthly digest: %s", predictions.record("monthly"))
+                    except Exception:
+                        log.exception("market desk digest/grade failed")
                     current_day = day
             except Exception:
                 log.exception("catalog refresh failed")

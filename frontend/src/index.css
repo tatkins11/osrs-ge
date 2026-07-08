@@ -543,3 +543,49 @@ table.tbl thead th.sortable .arrow { color: var(--accent); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(148, 180, 220, 0.14); border-radius: 6px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: rgba(148, 180, 220, 0.28); }
+
+/* --- Market Desk (analyst write-ups + prediction ledger) ------------------- */
+.desk { padding: 4px 2px 32px; max-width: 1180px; }
+.desk .card {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--border); border-radius: 12px;
+}
+.desk .hint {
+  font-size: 12px; color: var(--muted); background: var(--bg-2);
+  border: 1px solid var(--border); border-left: 2px solid var(--accent);
+  border-radius: 6px; padding: 7px 10px;
+}
+.desk .hint code { font-family: var(--mono); color: var(--accent); }
+.desk-body { align-items: start; }
+@media (max-width: 900px) { .desk-body { grid-template-columns: 1fr !important; } }
+
+/* the written column — reads like an analyst note */
+.desk-prose { font-size: 14px; line-height: 1.62; color: #c6d2e0; }
+.desk-prose .desk-title {
+  font-size: 22px; font-weight: 750; letter-spacing: -0.2px; margin: 12px 0 6px;
+  color: #eaf1f9; line-height: 1.2;
+}
+.desk-prose .desk-h {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.1px;
+  color: var(--accent); margin: 20px 0 6px; padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+}
+.desk-prose p { margin: 8px 0; }
+.desk-prose strong { color: #eaf1f9; font-weight: 650; }
+.desk-prose ul { list-style: none; }
+.desk-prose ul li { position: relative; padding-left: 16px; }
+.desk-prose ul li::before { content: "▹"; position: absolute; left: 0; color: var(--accent); }
+
+/* compact tables for movers + the prediction ledger */
+table.mini { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.mini th {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted);
+  font-weight: 650; text-align: right; padding: 3px 6px; border-bottom: 1px solid var(--border);
+}
+table.mini td { padding: 4px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; text-align: right; }
+table.mini td:first-child { color: #d5dfec; }
+table.mini tr:last-child td { border-bottom: 0; }
+.desk .badge { font-size: 9px; padding: 1px 6px; border-radius: 4px; font-weight: 700; letter-spacing: 0.4px; }
+.desk .badge.pos { background: rgba(46, 224, 138, 0.12); border: 1px solid rgba(46, 224, 138, 0.36); }
+.desk .badge.neg { background: rgba(255, 92, 114, 0.12); border: 1px solid rgba(255, 92, 114, 0.36); }
+.desk .badge.muted { background: rgba(148, 163, 184, 0.10); border: 1px solid rgba(148, 163, 184, 0.24); }

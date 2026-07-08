@@ -27,7 +27,7 @@ from .config import (
     TAX_MIN_PRICE,
     TAX_RATE,
 )
-from .db import add_order, delete_order, delete_trade, ensure_trades_db, get_free_gp, get_items_df, get_orders_df, get_updates_df, ingest_offers, insert_plan_log, insert_trade, purge_terminal_orders, record_net_worth, set_free_gp, stats, update_order_fields, update_trade
+from .db import add_order, delete_order, delete_trade, ensure_trades_db, get_digests_df, get_free_gp, get_items_df, get_orders_df, get_predictions_df, get_updates_df, ingest_offers, insert_plan_log, insert_trade, purge_terminal_orders, record_net_worth, set_free_gp, stats, update_order_fields, update_trade
 from .signals import (
     TABLE_COLS,
     Thresholds,
@@ -518,6 +518,45 @@ def income_plan() -> dict:
     from .income import build
     fg = get_free_gp()
     return build(float(fg or 0))
+
+
+@app.get("/api/market-desk")
+def market_desk() -> dict:
+    """The Market Desk: the latest daily/weekly/monthly issue (facts packet + analyst prose),
+    the open + recently-resolved predictions, and the standing track-record scorecard.
+    Read-only — the collector generates issues nightly."""
+    import json as _json
+    from . import predictions as pred
+
+    def _clean(df):
+        df = df.copy()
+        for c in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[c]):
+                df[c] = df[c].apply(lambda x: None if pd.isna(x) else x.isoformat())
+        return df.astype(object).where(pd.notna(df), None).to_dict("records")
+
+    digs = get_digests_df()
+    latest: dict = {}
+    if digs is not None and not digs.empty:
+        for period in ("daily", "weekly", "monthly"):
+            sub = digs[digs["period"] == period]
+            if sub.empty:
+                continue
+            row = sub.sort_values("ts").iloc[-1]
+            try:
+                packet = _json.loads(row["packet"]) if row["packet"] else None
+            except Exception:  # noqa: BLE001
+                packet = None
+            latest[period] = {"id": int(row["id"]), "ts": str(row["ts"]), "packet": packet,
+                              "prose": (None if pd.isna(row.get("prose")) else row.get("prose"))}
+    preds = get_predictions_df()
+    open_calls, resolved = [], []
+    if preds is not None and not preds.empty:
+        preds = preds.sort_values("created_ts", ascending=False)
+        open_calls = _clean(preds[preds["outcome"].isna() | (preds["outcome"] == "pending")].head(20))
+        resolved = _clean(preds[preds["outcome"].isin(["hit", "dir", "miss"])].head(30))
+    return {"latest": latest, "open_predictions": open_calls,
+            "resolved_predictions": resolved, "scorecard": pred.scorecard()}
 
 
 @app.get("/api/setarb")
