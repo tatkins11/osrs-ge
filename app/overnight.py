@@ -210,8 +210,15 @@ def fill_stats(item_ids, con, disc: float, buy_hour: int = 2, sell_hour: int = 1
     return out
 
 
-DISC_GRID = (0.04, 0.06, 0.08, 0.10, 0.12, 0.15)
-SWEEP_LOOKBACK_DAYS = 180   # recent regime; also keeps the per-plan sweep affordable on 1 vCPU
+# Grid floors at 2%: the 2026-07 fill audit showed the typical overnight dip is only ~2% (median
+# 2.0%, p90 7.7%), so offers at 4%+ below the bid fill <10% of nights -- median deployment was 8%
+# and 2 of 3 nights caught nothing. A 28d backtest put EV-per-item-night at 3.0% for a 2% discount
+# vs 1.2% at 8% (the 5x higher fill rate dwarfs the thinner per-fill margin). Deep rungs stay for
+# genuinely volatile items whose own history still peaks there; the per-item sweep + shallowest-
+# within-10%-of-best-EV chooser picks each item's own depth.
+DISC_GRID = (0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.12, 0.15)
+SWEEP_LOOKBACK_DAYS = 45    # regime-current (was 180 -- old dumpy months made deep offers look fillable);
+                            # ~45 nights x ~50% fill at shallow depths is plenty above the >=4-fill guard
 _SWEEP_CACHE: dict[int, tuple[float, dict]] = {}   # item_id -> (expiry_epoch, result)
 _SWEEP_TTL = 3600.0         # fill odds move nightly, not per page view
 DEPTH_SHARE = 0.5           # share of the printed at/below-offer depth we expect to capture.
