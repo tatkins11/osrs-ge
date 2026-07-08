@@ -137,7 +137,9 @@ def extremes(d: pd.DataFrame, chg: str, n: int = 6) -> dict:
     liq = d[(d["gpv"].fillna(0) >= _PRED_MIN_GPV) & (d["mid_now"].fillna(0) >= _PRED_MIN_PX)]
     rich = liq[liq["ratio_90"].between(1.40, 2.5) & liq["level_health"].fillna(0).between(0.6, 1.6)]
     rich = rich.sort_values("ratio_90", ascending=False).head(n)
-    cheap = liq[(liq["value_discount"].fillna(0) >= 0.06) & liq["level_health"].fillna(0).between(0.85, 1.3)]
+    # cap the discount at 30%: a "50% below fair" print is almost always a new/illiquid item whose
+    # 7d 'established' level is itself noise, not a clean value setup. Real reversion is 6-30% cheap.
+    cheap = liq[liq["value_discount"].fillna(0).between(0.06, 0.30) & liq["level_health"].fillna(0).between(0.85, 1.3)]
     cheap = cheap.sort_values("value_discount", ascending=False).head(n)
     return {"stretched_rich": [_row(r, chg) for _, r in rich.iterrows()],
             "deep_value": [_row(r, chg) for _, r in cheap.iterrows()]}
