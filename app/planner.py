@@ -647,6 +647,28 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
         except Exception:  # noqa: BLE001
             pat = None
 
+        # REGIME GUARD (shared anti-burn shield for the timing engines): the day/swing lanes buy at
+        # an item's historically cheap price, but "cheap for this item lately" is a trap if the whole
+        # item has spiked (>1.40x its own 90d median -> spike-rider/decayer) or its level is falling
+        # (health<0.85 -> knife). The overnight already gates on these; day/swing did NOT, so they
+        # could catch a correcting item at "its low". This lookup lets both apply the same guard.
+        # Buying at the right intraday LOW is not protection on its own -- the LEVEL has to be sound.
+        _reg: dict = {}
+        try:
+            if ms is not None and not ms.empty and "ratio_90" in ms.columns:
+                _reg = ms.set_index("item_id")[["ratio_90", "level_health"]].to_dict("index")
+        except Exception:  # noqa: BLE001
+            _reg = {}
+
+        def _regime_ok(iid: int) -> bool:
+            rg = _reg.get(int(iid)) or {}
+            r90 = rg.get("ratio_90"); lh = rg.get("level_health")
+            if r90 is not None and pd.notna(r90) and r90 > 1.40:      # elevated vs its own 90d level
+                return False
+            if lh is not None and pd.notna(lh) and lh < 0.85:         # the established level is falling
+                return False
+            return True
+
         # ---- SURGE MODE (opt-in): ONE concentrated crash-roster recovery takes priority -------
         # The only validated edge whose per-event return x full bankroll clears 50M-class days:
         # crash-roster recoveries (pooled +17.2% med, 72% win; roster names 80-100% over 4+
@@ -708,6 +730,7 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
             def _ev_full(dl):
                 v = dl.get("ev_day")
                 return float(v if v is not None else (dl.get("gp_day") or 0))   # fallback for pre-upgrade cached rosters
+            regime_skip = 0
             day_elig = []
             for dl in (pat.get("day") or []):
                 iid = int(dl.get("item_id") or 0)
@@ -715,6 +738,9 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                 if not iid or iid in excl or any(b["item_id"] == iid for b in new_buys) or _eventy(dl.get("name")):
                     continue
                 if bh < now_ct - 1:                        # this lane's cheap hour already passed today
+                    continue
+                if not _regime_ok(iid):                    # spiking or falling -> don't buy the knife at "its low"
+                    regime_skip += 1
                     continue
                 entry = _f(dl.get("entry_px")) or 0.0
                 tgt = _f(dl.get("target_px")) or 0.0
@@ -971,6 +997,8 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                     break
                 iid = int(sl.get("item_id") or 0)
                 if not iid or iid in excl or any(b["item_id"] == iid for b in new_buys) or _eventy(sl.get("name")):
+                    continue
+                if not _regime_ok(iid):                    # same anti-burn guard: no spiking/falling items
                     continue
                 bb, sb = sl.get("buy_band"), sl.get("sell_band")
                 if not bb or not sb or bb <= 0 or sb <= bb:
