@@ -125,6 +125,14 @@ def _f(x):
     return float(x) if x is not None and pd.notna(x) else None
 
 
+def _fmt_hr(h) -> str:
+    """24h CT hour -> friendly '9 AM' / '1 PM' / '12 AM' (midnight) / '1 AM'."""
+    h = int(h) % 24
+    ap = "AM" if h < 12 else "PM"
+    h12 = h % 12 or 12
+    return f"{h12} {ap}"
+
+
 def _trusted_cash(free_gp: float) -> tuple[float, bool, float | None]:
     """Clamp the SIZING cash against recent history. free_gp is dead-reckoned from streamed offer
     events, so one accounting slip can inflate it wildly (343M vs ~77M real on 6/30 — every buy that
@@ -752,9 +760,9 @@ def build_plan(th: Thresholds | None = None, con=None, mode: str = "active", sur
                     "gp_day": round(gpd4),
                     "buy_h": None, "roundtrip_h": None, "live": False,
                     "overnight": False, "tag": "day",
-                    "reason": (f"day lane — this item's own cheap hour is ~{bh}:00 CT; list at {int(tgt):,} "
-                               f"for its ~{int(dl.get('sell_hr') or 0)}:00 lift (OOS {float(dl.get('oos_med_pct') or 0)*100:+.1f}%/cycle, "
-                               f"win {float(dl.get('win') or 0)*100:.0f}%)"),
+                    "reason": (f"day lane — buys at its cheap ~{_fmt_hr(bh)} CT (while you're at work); "
+                               f"list at {int(tgt):,} for its ~{_fmt_hr(dl.get('sell_hr') or 0)} CT peak "
+                               f"(OOS {float(dl.get('oos_med_pct') or 0)*100:+.1f}%/cycle, win {float(dl.get('win') or 0)*100:.0f}%)"),
                     "fill_freq": None, "sell_freq": None, "days_to_liquidate": None,
                 })
                 remaining -= units4 * entry

@@ -221,12 +221,15 @@ def _swing_scan(con) -> list[dict]:
 
 
 def _day_scan(con) -> list[dict]:
-    """DAY LANES (per-item hour-of-day seasonality, OOS-validated 2026-07-05): each item has its
-    own intraday clock. For every liquid item, train the best (buy_hr, sell_hr) Central-time pair
-    on the FIRST half of the 16d 5-min archive, then VALIDATE on the second half; keep only lanes
-    surviving OOS at >=0.5% net/cycle and >=65% win (72 items passed; top-8 = 6.8M gp/day OOS at
-    85% win). Buys cluster 9-11am + 2pm CT (morning/lunch dips), sells at 1pm + 7pm (lift peaks).
-    Day lanes work the slots 10am-7pm while overnight works 9pm-9am: two shifts, no conflict."""
+    """DAY LANES (per-item hour-of-day seasonality, OOS-validated 2026-07-05; night exits added
+    2026-07-08): each item has its own intraday clock. For every liquid item, train the best
+    (buy_hr, sell_hr) Central-time pair on the FIRST half of the 16d 5-min archive, then VALIDATE
+    on the second half; keep only lanes surviving OOS at >=0.5% net/cycle and >=65% win. Buys fill
+    while you're at work (8am-3pm CT); sells run to 1am CT because the diurnal study found many
+    items peak late (10pm-1am), which a 7pm cut was missing (night beat the 7pm cap 2.7x, 37/42
+    items sold after 7pm). The 2am->2am session keeps a morning buy and a post-midnight sell in the
+    same trading day. Place the buy before work, place the sell when you're home -- it fills at the
+    night peak."""
     items = con.execute("SELECT item_id, name, buy_limit FROM items").df()
     name_of = dict(zip(items.item_id, items["name"]))
     limit_of = dict(zip(items.item_id, items["buy_limit"]))
@@ -249,14 +252,17 @@ def _day_scan(con) -> list[dict]:
     sn["ts"] = pd.to_datetime(sn["ts"])
     for c in ("avg_high", "avg_low", "high_vol", "low_vol"):
         sn[c] = sn[c].astype("float64")
-    sn["hr"] = (sn["ts"].dt.hour - 5) % 24        # Central (CDT; the nightly rebuild keeps it fresh)
-    sn["day"] = sn["ts"].dt.normalize()
-    mid_ts = sn["ts"].min() + (sn["ts"].max() - sn["ts"].min()) / 2
+    ct = sn["ts"] - pd.Timedelta(hours=5)         # Central (CDT; the nightly rebuild keeps it fresh)
+    sn["hr"] = ct.dt.hour
+    # SESSION = a 2am->2am CT trading day, so a morning BUY and a post-midnight SELL land in the
+    # same session (the diurnal study found many items peak at 10pm-1am CT, past a plain-calendar cut).
+    sn["day"] = (ct - pd.Timedelta(hours=2)).dt.normalize()
+    mid_ts = sn["day"].min() + (sn["day"].max() - sn["day"].min()) / 2
     g = sn.groupby(["item_id", "day", "hr"]).agg(
         lo_vwap=("avg_low", "mean"), lo_v=("low_vol", "sum"),
         hi_vwap=("avg_high", "mean"), hi_v=("high_vol", "sum"),
     ).reset_index()
-    ENTRY_HRS = (9, 10, 11, 12, 13, 14)
+    ENTRY_HRS = (8, 9, 10, 11, 12, 13, 14, 15)   # buy fills while you're at work (8am-3pm CT)
     umeta = uni.set_index("item_id").to_dict("index")
     out = []
     for iid, gi in g.groupby("item_id"):
@@ -291,7 +297,11 @@ def _day_scan(con) -> list[dict]:
         for eh in ENTRY_HRS:
             if eh not in piv_lo.columns:
                 continue
-            for xh in range(eh + 2, 20):
+            # sell hours run from eh+2 up to 1am CT (ordinal 25); ordinals >=24 wrap past midnight
+            # (24->0, 25->1) but stay in the SAME session, so the peak that lands at midnight-1am is
+            # reachable. The scan still picks whatever exit is best -- afternoon or night.
+            for xh_ord in range(eh + 2, 26):
+                xh = xh_ord % 24
                 if xh not in piv_hi.columns:
                     continue
                 nets = pair_net(tr, eh, xh)
