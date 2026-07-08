@@ -134,7 +134,11 @@ def extremes(d: pd.DataFrame, chg: str, n: int = 6) -> dict:
     -- a newly-released item's 90d median includes near-zero pre-release prints, so its ratio_90
     blows up to 100x+ (Dual sai hit 129x). Those are data artifacts, not rich trades; cap at 2.5x.
     Deep-value side already requires a stable level (health) so it isn't a falling knife."""
-    liq = d[(d["gpv"].fillna(0) >= _PRED_MIN_GPV) & (d["mid_now"].fillna(0) >= _PRED_MIN_PX)]
+    # A reversion candidate must be stretched over TIME yet STABLE right now -- never mid-knife.
+    # Items in a violent intraday move (Iorwerth +118%, Mixed hide legs -44%) have stale refs and
+    # are exactly the falling knives / rockets the regime shield exists to avoid.
+    liq = d[(d["gpv"].fillna(0) >= _PRED_MIN_GPV) & (d["mid_now"].fillna(0) >= _PRED_MIN_PX)
+            & (d["chg_1d"].abs().fillna(0) <= 0.15)]
     rich = liq[liq["ratio_90"].between(1.40, 2.5) & liq["level_health"].fillna(0).between(0.6, 1.6)]
     rich = rich.sort_values("ratio_90", ascending=False).head(n)
     # cap the discount at 30%: a "50% below fair" print is almost always a new/illiquid item whose
