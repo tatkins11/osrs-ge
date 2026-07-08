@@ -545,7 +545,10 @@ table.tbl thead th.sortable .arrow { color: var(--accent); }
 ::-webkit-scrollbar-thumb:hover { background: rgba(148, 180, 220, 0.28); }
 
 /* --- Market Desk (analyst write-ups + prediction ledger) ------------------- */
-.desk { padding: 4px 2px 32px; max-width: 1180px; }
+/* the tab's own scroll container: .table-wrap is a bare flex column, so (like .dash / .portfolio /
+   .sector-wrap) the page root must claim the height and scroll, or tall content is clipped. */
+.desk { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px 40px; }
+.desk > * { max-width: 1180px; margin-left: auto; margin-right: auto; }
 .desk .card {
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
   border: 1px solid var(--border); border-radius: 12px;
