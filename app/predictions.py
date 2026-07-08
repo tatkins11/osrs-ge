@@ -79,10 +79,15 @@ def generate(packet: dict, con=None) -> list[dict]:
             "_score": vd,
         })
 
-    calls.sort(key=lambda c: -c["_score"])
-    for c in calls:
+    # Balance the slate: rank WITHIN each rule (their scores aren't comparable — ratio_90 ~1.4-2.5
+    # vs value_discount ~0.06-0.3, so a raw sort would always be all-downs) and take a mix.
+    half = max(1, MAX_CALLS // 2)
+    downs = sorted([c for c in calls if c["rule"] == "reversion_down"], key=lambda c: -c["_score"])[:half]
+    ups = sorted([c for c in calls if c["rule"] == "reversion_up"], key=lambda c: -c["_score"])[:half]
+    out = (downs + ups)[:MAX_CALLS]
+    for c in out:
         c.pop("_score", None)
-    return calls[:MAX_CALLS]
+    return out
 
 
 def record(period: str, con=None, prose: str | None = None) -> dict:

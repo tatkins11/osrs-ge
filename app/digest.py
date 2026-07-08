@@ -125,10 +125,20 @@ def volume_anomalies(d: pd.DataFrame, chg: str, n: int = 6) -> dict:
             "distribution": [_row(r, chg) for _, r in distrib.iterrows()]}
 
 
+_PRED_MIN_GPV = 50_000_000    # a call needs real exit liquidity, not just "notable" turnover
+_PRED_MIN_PX = 5_000          # no penny junk (Jerboa tail @ 340 is not a tradeable reversion)
+
+
 def extremes(d: pd.DataFrame, chg: str, n: int = 6) -> dict:
-    """Technically stretched names: richest vs own 90d level, and deepest value discounts."""
-    rich = d[d["ratio_90"].notna()].sort_values("ratio_90", ascending=False).head(n)
-    cheap = d[d["value_discount"].notna()].sort_values("value_discount", ascending=False).head(n)
+    """GENUINE reversion candidates: liquid, real price, SANE stretch. The ratio_90 cap is critical
+    -- a newly-released item's 90d median includes near-zero pre-release prints, so its ratio_90
+    blows up to 100x+ (Dual sai hit 129x). Those are data artifacts, not rich trades; cap at 2.5x.
+    Deep-value side already requires a stable level (health) so it isn't a falling knife."""
+    liq = d[(d["gpv"].fillna(0) >= _PRED_MIN_GPV) & (d["mid_now"].fillna(0) >= _PRED_MIN_PX)]
+    rich = liq[liq["ratio_90"].between(1.40, 2.5) & liq["level_health"].fillna(0).between(0.6, 1.6)]
+    rich = rich.sort_values("ratio_90", ascending=False).head(n)
+    cheap = liq[(liq["value_discount"].fillna(0) >= 0.06) & liq["level_health"].fillna(0).between(0.85, 1.3)]
+    cheap = cheap.sort_values("value_discount", ascending=False).head(n)
     return {"stretched_rich": [_row(r, chg) for _, r in rich.iterrows()],
             "deep_value": [_row(r, chg) for _, r in cheap.iterrows()]}
 
