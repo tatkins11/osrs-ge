@@ -835,12 +835,14 @@ def ingest_offers(events: list[dict], coins_observed: int | None = None) -> dict
                            completed_ts=COALESCE(completed_ts, ?) WHERE order_id=?""",
                     [item_id, side, price, total, filled, spent, state, slot, ts, (ts if terminal else None), oid],
                 )
-                # RETRO-TAG: the originating plan rec is often logged a few minutes AFTER the order
-                # first appears (he places in-game from a plan he viewed; the next ~hourly plan_log
-                # snapshot stamps the rec later). Insert-time backward-only matching misses that, so
-                # while a live buy is still untagged, re-attempt the match each cycle with a small
-                # forward window. Live case 2026-07-06: Echo crystal filled at 23:02, rec logged 23:33
-                # -> stayed 'untagged' and polluted the engine-attribution table.
+                # RETRO-TAG: the originating plan rec is often logged AFTER the order first appears
+                # (he places in-game from a plan he viewed; plan_log snapshots ~hourly with a 55-min
+                # dedup, so the exact slate he acted on frequently isn't the logged one). While a live
+                # buy is still untagged, re-attempt the match each cycle. Forward window is 12h (was
+                # 2h): the 2026-07-08 evening cohort stayed untagged because its recs only hit
+                # plan_log at the NEXT morning's touch (8:58am reconcile re-recs of the same standing
+                # orders, same item + price) — same-item ±5% within the same trading day is reliably
+                # the plan's own call, so inherit it.
                 if side == "buy":
                     try:
                         cur = con.execute("SELECT opened_ts, tag FROM orders WHERE order_id=?", [oid]).fetchone()
@@ -851,7 +853,7 @@ def ingest_offers(events: list[dict], coins_observed: int | None = None) -> dict
                                    WHERE action='BUY' AND item_id=? AND tag IS NOT NULL
                                      AND ts BETWEEN ? AND ? AND price BETWEEN ? AND ?
                                    ORDER BY abs(epoch(ts) - epoch(?::TIMESTAMP)) LIMIT 1""",
-                                [item_id, o_open - timedelta(hours=24), o_open + timedelta(hours=2),
+                                [item_id, o_open - timedelta(hours=24), o_open + timedelta(hours=12),
                                  int(price * 0.95), int(price * 1.05), o_open],
                             ).fetchone()
                             if tg and tg[0]:
@@ -1124,7 +1126,9 @@ def get_digests_df() -> pd.DataFrame:
 
 
 def insert_prediction(digest_id: int, period: str, call: dict, horizon_days: int, ts=None) -> bool:
-    """Store one falsifiable call as pending (graded later by predictions.grade)."""
+    """Store one falsifiable call as pending (graded later by predictions.grade). Dedup: if the
+    same item+rule already has an OPEN call, skip — re-publishing an issue intraday (or the nightly
+    run after a manual one) must not stack identical calls and double-count the scorecard."""
     ts = ts or utcnow()
     try:
         con = connect_trades()
@@ -1132,6 +1136,12 @@ def insert_prediction(digest_id: int, period: str, call: dict, horizon_days: int
         return False
     try:
         _ensure_schema(con)
+        dup = con.execute(
+            "SELECT count(*) FROM predictions WHERE item_id=? AND rule=? AND outcome='pending'",
+            [int(call["item_id"]), str(call["rule"])],
+        ).fetchone()
+        if dup and dup[0]:
+            return False
         con.execute(
             "INSERT INTO predictions (digest_id, period, created_ts, item_id, name, rule, direction, "
             "ref_price, target_price, horizon_days, confidence, rationale, outcome) "
