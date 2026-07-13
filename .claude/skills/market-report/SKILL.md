@@ -39,6 +39,8 @@ Structure (markdown headings):
 ## Scorecard — open count, matured grades (hit/dir/miss + calibration once any exist), and honest live marks on standing calls.
 ```
 
+**Weekly issues** cover the completed Monday–Sunday week (run on Monday; the `chg_7d` lens is the week's move). Retitle sections to a retrospective — "The Week in Internals", "Themes of the Week", "The Standout Trades", "The Book" (how the week's calls are marking) — and ALWAYS end with a **## The Week Ahead** section: what to watch Monday–Sunday, grounded in dated facts (which open calls mature this week, contested calls to watch, live event/theme threads, and the regime trend). It is context and watch-items, not new fabricated predictions — the actual predictions remain the tracked calls. Monthly issues follow the same shape at 30-day scope with a **## The Month Ahead**. Weekly/monthly runs typically add 0 new calls (dedup vs the open book); that's expected — review the standing book instead of forcing fresh calls.
+
 ## Step 3 — Store the prose
 
 Write a scratchpad Python file with the column embedded (this avoids ssh quoting hell — the established pattern):
