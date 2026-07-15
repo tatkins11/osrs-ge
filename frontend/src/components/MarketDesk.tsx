@@ -118,7 +118,7 @@ function outcomeBadge(o: string): ReactNode {
   return <span className={`badge ${m.c}`}>{m.t}</span>;
 }
 
-function PredRow({ p }: { p: Prediction }) {
+function PredRow({ p, graded }: { p: Prediction; graded?: boolean }) {
   const arrow = p.direction > 0 ? "▲" : "▼";
   return (
     <tr>
@@ -126,6 +126,9 @@ function PredRow({ p }: { p: Prediction }) {
       <td className={p.direction > 0 ? "pos" : "neg"}>{arrow}</td>
       <td style={{ textAlign: "right" }} className="muted">{gp(p.ref_price)}</td>
       <td style={{ textAlign: "right" }}>{gp(p.target_price)}</td>
+      {graded && (
+        <td style={{ textAlign: "right" }}>{p.actual_price != null ? gp(p.actual_price) : "—"}</td>
+      )}
       <td style={{ textAlign: "center" }} className="muted">{p.horizon_days}d</td>
       <td style={{ textAlign: "center" }}>{Math.round(p.confidence * 100)}%</td>
       <td style={{ textAlign: "center" }}>{outcomeBadge(p.outcome)}</td>
@@ -207,8 +210,8 @@ export function MarketDesk({ refreshNonce }: { refreshNonce: number }) {
                   <div className="k" style={{ marginBottom: 6 }}>Recently graded</div>
                   <table className="mini"><thead><tr>
                     <th style={{ textAlign: "left" }}>Item</th><th></th><th style={{ textAlign: "right" }}>Ref</th>
-                    <th style={{ textAlign: "right" }}>Target</th><th>Hz</th><th>Conv</th><th>Result</th><th style={{ textAlign: "right" }}>Move</th>
-                  </tr></thead><tbody>{resolved.slice(0, 12).map((p) => <PredRow key={p.id} p={p} />)}</tbody></table>
+                    <th style={{ textAlign: "right" }}>Target</th><th style={{ textAlign: "right" }}>Graded&nbsp;at</th><th>Hz</th><th>Conv</th><th>Result</th><th style={{ textAlign: "right" }}>Move</th>
+                  </tr></thead><tbody>{resolved.slice(0, 12).map((p) => <PredRow key={p.id} p={p} graded />)}</tbody></table>
                 </div>
               )}
             </div>
