@@ -128,7 +128,11 @@ def grade(con=None) -> int:
         return 0
     pend["created_ts"] = pd.to_datetime(pend["created_ts"])
     now = pd.Timestamp.utcnow().tz_localize(None)
-    due = pend[pend["created_ts"] + pd.to_timedelta(pend["horizon_days"], unit="D") <= now]
+    # Mature by CALENDAR day, not exact timestamp: the desk runs once each morning, so a call
+    # created on day D grades on the morning of D+horizon (over all price data available by then,
+    # ~horizon days) instead of sitting until an evening/overnight run hits its precise timestamp.
+    due_by = pend["created_ts"].dt.normalize() + pd.to_timedelta(pend["horizon_days"], unit="D")
+    due = pend[due_by <= now]
     if due.empty:
         return 0
     own = con is None
