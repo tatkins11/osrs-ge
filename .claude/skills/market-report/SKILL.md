@@ -69,4 +69,5 @@ Give the user: the title, 2-3 headline findings, the new calls, notable scorecar
 
 - The pipeline (facts, calls, grading) is deterministic and validated: calls come only from the validated reversion edges with liquidity/regime guards; momentum is deliberately excluded. Do not add new call types here — that requires a backtest first.
 - The collector auto-publishes facts-only digests nightly; this skill's fresh publish supersedes it for the day (call dedup keeps the ledger clean).
+- Grading matures by CALENDAR day (a call created day D grades on the morning of D+horizon), so Step 1's `grade()` picks up that morning's maturities in the single daily run — the scorecard section should reflect any freshly-graded calls, not defer them to an evening run.
 - Weekly runs Mondays / monthly on the 1st by convention, but publishing any period on demand is fine.
