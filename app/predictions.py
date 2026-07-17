@@ -155,7 +155,12 @@ def grade(con=None) -> int:
             end_mid = float(path["mid"].iloc[-1])
             fwd = end_mid / ref - 1.0 if ref > 0 else 0.0
             dir_ok = (fwd > 0) if direction > 0 else (fwd < 0)
-            hit = bool(path["avg_high"].max() >= target) if direction > 0 else bool(path["avg_low"].min() <= target)
+            reached = bool(path["avg_high"].max() >= target) if direction > 0 else bool(path["avg_low"].min() <= target)
+            # A genuine HIT = reached the target AND still in the right direction at the horizon. An
+            # item that spiked to target then round-tripped to a loss is NOT a win for someone who
+            # only checks the market a couple times a day; it grades on where it ENDED. (2026-07-17:
+            # caught Large mahogany graded HIT while ending -20.6%.)
+            hit = bool(reached and dir_ok)
             outcome = "hit" if hit else ("dir" if dir_ok else "miss")   # hit target / right direction / wrong
             update_prediction_outcome(int(r.id), resolved_ts=t1, actual_price=round(end_mid),
                                       fwd_pct=round(fwd, 4), dir_ok=bool(dir_ok), hit=bool(hit), outcome=outcome)
