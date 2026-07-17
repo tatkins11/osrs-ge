@@ -549,6 +549,13 @@ table.tbl thead th.sortable .arrow { color: var(--accent); }
    .sector-wrap) the page root must claim the height and scroll, or tall content is clipped. */
 .desk { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px 40px; }
 .desk > * { max-width: 1180px; margin-left: auto; margin-right: auto; }
+.desk-closed {
+  font-size: 13px; line-height: 1.5; color: #d9c26a;
+  background: rgba(240, 180, 62, 0.08); border: 1px solid rgba(240, 180, 62, 0.30);
+  border-left: 3px solid var(--amber, #f0b43e); border-radius: 8px;
+  padding: 9px 13px; margin-bottom: 14px;
+}
+.desk-closed strong { color: #f0d78a; }
 .desk .card {
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
   border: 1px solid var(--border); border-radius: 12px;

@@ -161,6 +161,10 @@ export function MarketDesk({ refreshNonce }: { refreshNonce: number }) {
 
   return (
     <div className="desk">
+      <div className="desk-closed">
+        📕 <strong>Market Desk closed 2026&#8288;-&#8288;07&#8288;-&#8288;17.</strong> This is a completed, frozen record — the final column and its
+        complete scorecard are below. No further updates; the data is preserved.
+      </div>
       <div className="desk-head" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
         <h2 style={{ margin: 0 }}>📰 Market Desk</h2>
         <div className="tabs">
